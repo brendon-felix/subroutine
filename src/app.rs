@@ -15,6 +15,8 @@ pub fn run() -> Result<()> {
 
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("cmd-shift-w", Quit, None),
+            KeyBinding::new("ctrl-shift-w", Quit, None),
             KeyBinding::new("cmd-p", ToggleCommandPalette, None),
         ]);
         let task_store = cx.new(move |cx| TaskStore::new(cx));
