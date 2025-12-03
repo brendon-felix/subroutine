@@ -50,11 +50,6 @@ pub fn save_token_cache(token: &AccessToken) -> Result<()> {
     Ok(())
 }
 
-// pub fn clear_token_cache() {
-//     let path = get_token_cache_path();
-//     let _ = std::fs::remove_file(path);
-// }
-
 pub async fn perform_authorization(
     client_id: String,
     client_secret: String,

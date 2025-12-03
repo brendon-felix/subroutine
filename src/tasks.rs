@@ -1,7 +1,5 @@
-use anyhow::Result;
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, Utc};
+use chrono::{DateTime, Utc};
 use ticks::{
-    TickTick,
     projects::ProjectID,
     tasks::{Task, TaskID, TaskPriority},
 };
@@ -109,40 +107,40 @@ impl TaskData {
 //     // Reschedule(RescheduleTarget),
 // }
 
-pub async fn fetch_all_tasks(client: &TickTick) -> Result<Vec<Task>> {
-    let project_tasks = client
-        .get_all_tasks_in_projects()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to fetch tasks from projects: {:?}", e))?;
-    let inbox_id = ProjectID("inbox".to_string());
-    let inbox_tasks = client
-        .get_project_data(&inbox_id)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to fetch inbox tasks: {:?}", e))?
-        .tasks;
+// pub async fn fetch_all_tasks(client: &TickTick) -> Result<Vec<Task>> {
+//     let project_tasks = client
+//         .get_all_tasks_in_projects()
+//         .await
+//         .map_err(|e| anyhow::anyhow!("Failed to fetch tasks from projects: {:?}", e))?;
+//     let inbox_id = ProjectID("inbox".to_string());
+//     let inbox_tasks = client
+//         .get_project_data(&inbox_id)
+//         .await
+//         .map_err(|e| anyhow::anyhow!("Failed to fetch inbox tasks: {:?}", e))?
+//         .tasks;
 
-    let mut all_tasks: Vec<Task> = project_tasks
-        .into_iter()
-        .chain(inbox_tasks.into_iter())
-        .collect();
+//     let mut all_tasks: Vec<Task> = project_tasks
+//         .into_iter()
+//         .chain(inbox_tasks.into_iter())
+//         .collect();
 
-    sort_tasks(&mut all_tasks);
+//     sort_tasks(&mut all_tasks);
 
-    Ok(all_tasks)
-}
+//     Ok(all_tasks)
+// }
 
-pub fn get_local_date(dt: DateTime<Utc>) -> NaiveDate {
-    dt.with_timezone(&Local).date_naive()
-}
+// pub fn get_local_date(dt: DateTime<Utc>) -> NaiveDate {
+//     dt.with_timezone(&Local).date_naive()
+// }
 
-pub fn with_local_hms(date: NaiveDate, hour: u32, min: u32, sec: u32) -> DateTime<Utc> {
-    let local_dt = date
-        .and_hms_opt(hour, min, sec)
-        .unwrap()
-        .and_local_timezone(Local)
-        .unwrap();
-    local_dt.with_timezone(&Utc)
-}
+// pub fn with_local_hms(date: NaiveDate, hour: u32, min: u32, sec: u32) -> DateTime<Utc> {
+//     let local_dt = date
+//         .and_hms_opt(hour, min, sec)
+//         .unwrap()
+//         .and_local_timezone(Local)
+//         .unwrap();
+//     local_dt.with_timezone(&Utc)
+// }
 
 // pub fn is_overdue(now: DateTime<Utc>, task: &Task) -> bool {
 //     let today_start = with_local_hms(get_local_date(now), 0, 0, 0);
@@ -185,41 +183,41 @@ pub fn with_local_hms(date: NaiveDate, hour: u32, min: u32, sec: u32) -> DateTim
 //     &task.project_id.0 == &project_id.0
 // }
 
-pub async fn create_task(client: &TickTick, data: TaskData) -> Result<(), String> {
-    let mut builder = ticks::tasks::Task::builder(client, data.title.as_ref().unwrap());
-    let project_id = data
-        .project_id
-        .clone()
-        .unwrap_or(ProjectID("inbox".to_string()));
-    builder = builder.project_id(project_id);
+// pub async fn create_task(client: &TickTick, data: TaskData) -> Result<(), String> {
+//     let mut builder = ticks::tasks::Task::builder(client, data.title.as_ref().unwrap());
+//     let project_id = data
+//         .project_id
+//         .clone()
+//         .unwrap_or(ProjectID("inbox".to_string()));
+//     builder = builder.project_id(project_id);
 
-    if let Some(c) = data.content {
-        builder = builder.content(&c);
-    }
+//     if let Some(c) = data.content {
+//         builder = builder.content(&c);
+//     }
 
-    if let Some(due_date) = data.due_date {
-        builder = builder.due_date(due_date);
-        builder = builder.start_date(due_date);
-        // if time is 12:00 AM, set as all-day
-        let time = due_date.with_timezone(&chrono::Local).time();
-        if time == NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
-            builder = builder.is_all_day(true);
-        }
-    }
+//     if let Some(due_date) = data.due_date {
+//         builder = builder.due_date(due_date);
+//         builder = builder.start_date(due_date);
+//         // if time is 12:00 AM, set as all-day
+//         let time = due_date.with_timezone(&chrono::Local).time();
+//         if time == NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+//             builder = builder.is_all_day(true);
+//         }
+//     }
 
-    if let Some(priority) = data.priority {
-        builder = builder.priority(priority);
-    }
+//     if let Some(priority) = data.priority {
+//         builder = builder.priority(priority);
+//     }
 
-    if let Some(repeat_flag) = data.repeat_flag {
-        builder = builder.repeat_flag(&repeat_flag);
-    }
+//     if let Some(repeat_flag) = data.repeat_flag {
+//         builder = builder.repeat_flag(&repeat_flag);
+//     }
 
-    match builder.build_and_publish().await {
-        Ok(_) => Ok(()),
-        Err(e) => Err(format!("Failed to create task: {:?}", e)),
-    }
-}
+//     match builder.build_and_publish().await {
+//         Ok(_) => Ok(()),
+//         Err(e) => Err(format!("Failed to create task: {:?}", e)),
+//     }
+// }
 
 // pub async fn edit_task(client: &TickTick, data: TaskData) -> Result<(), String> {
 //     // Get a fresh task instance from the API with proper client context
@@ -286,109 +284,109 @@ pub async fn create_task(client: &TickTick, data: TaskData) -> Result<(), String
 //     }
 // }
 
-pub async fn delete_task(client: &TickTick, data: TaskData) -> Result<(), String> {
-    // Get a fresh task instance from the API with proper client context
-    let project_id = data.project_id.clone().unwrap();
-    let task_id = data.task_id.clone().unwrap();
-    match client.get_project_data(&project_id).await {
-        Ok(project_data) => {
-            // Find the task in the project data
-            if let Some(task) = project_data.tasks.into_iter().find(|t| {
-                let t_id = t.get_id();
-                t_id == &task_id
-            }) {
-                match task.delete().await {
-                    Ok(_) => Ok(()),
-                    Err(e) => Err(format!("Failed to delete task: {:?}", e)),
-                }
-            } else {
-                Err("Task not found in project".to_string())
-            }
-        }
-        Err(e) => Err(format!("Failed to get project data: {:?}", e)),
-    }
-}
+// pub async fn delete_task(client: &TickTick, data: TaskData) -> Result<(), String> {
+//     // Get a fresh task instance from the API with proper client context
+//     let project_id = data.project_id.clone().unwrap();
+//     let task_id = data.task_id.clone().unwrap();
+//     match client.get_project_data(&project_id).await {
+//         Ok(project_data) => {
+//             // Find the task in the project data
+//             if let Some(task) = project_data.tasks.into_iter().find(|t| {
+//                 let t_id = t.get_id();
+//                 t_id == &task_id
+//             }) {
+//                 match task.delete().await {
+//                     Ok(_) => Ok(()),
+//                     Err(e) => Err(format!("Failed to delete task: {:?}", e)),
+//                 }
+//             } else {
+//                 Err("Task not found in project".to_string())
+//             }
+//         }
+//         Err(e) => Err(format!("Failed to get project data: {:?}", e)),
+//     }
+// }
 
-pub fn sort_tasks(tasks: &mut Vec<Task>) {
-    tasks.sort_by(|a, b| {
-        use chrono::{DateTime, Datelike, Utc};
+// pub fn sort_tasks(tasks: &mut Vec<Task>) {
+//     tasks.sort_by(|a, b| {
+//         use chrono::{DateTime, Datelike, Utc};
 
-        // Helper to check if a datetime is the epoch (unset)
-        let is_unset = |dt: &DateTime<Utc>| dt.timestamp() == 0;
+//         // Helper to check if a datetime is the epoch (unset)
+//         let is_unset = |dt: &DateTime<Utc>| dt.timestamp() == 0;
 
-        // Helper to compare dates by day only (year, month, day)
-        let compare_by_day = |dt_a: &DateTime<Utc>, dt_b: &DateTime<Utc>| {
-            match dt_a.year().cmp(&dt_b.year()) {
-                std::cmp::Ordering::Equal => {}
-                other => return other,
-            }
-            match dt_a.month().cmp(&dt_b.month()) {
-                std::cmp::Ordering::Equal => {}
-                other => return other,
-            }
-            dt_a.day().cmp(&dt_b.day())
-        };
+//         // Helper to compare dates by day only (year, month, day)
+//         let compare_by_day = |dt_a: &DateTime<Utc>, dt_b: &DateTime<Utc>| {
+//             match dt_a.year().cmp(&dt_b.year()) {
+//                 std::cmp::Ordering::Equal => {}
+//                 other => return other,
+//             }
+//             match dt_a.month().cmp(&dt_b.month()) {
+//                 std::cmp::Ordering::Equal => {}
+//                 other => return other,
+//             }
+//             dt_a.day().cmp(&dt_b.day())
+//         };
 
-        // Compare due dates (unset dates go to the end)
-        let due_cmp = match (is_unset(&a.due_date), is_unset(&b.due_date)) {
-            (true, true) => std::cmp::Ordering::Equal,
-            (true, false) => std::cmp::Ordering::Greater,
-            (false, true) => std::cmp::Ordering::Less,
-            (false, false) => {
-                // First compare by day
-                let day_cmp = compare_by_day(&a.due_date, &b.due_date);
-                if day_cmp != std::cmp::Ordering::Equal {
-                    return day_cmp;
-                }
+//         // Compare due dates (unset dates go to the end)
+//         let due_cmp = match (is_unset(&a.due_date), is_unset(&b.due_date)) {
+//             (true, true) => std::cmp::Ordering::Equal,
+//             (true, false) => std::cmp::Ordering::Greater,
+//             (false, true) => std::cmp::Ordering::Less,
+//             (false, false) => {
+//                 // First compare by day
+//                 let day_cmp = compare_by_day(&a.due_date, &b.due_date);
+//                 if day_cmp != std::cmp::Ordering::Equal {
+//                     return day_cmp;
+//                 }
 
-                // Same day: prioritize non all-day tasks before all-day tasks
-                match (a.is_all_day, b.is_all_day) {
-                    (true, false) => return std::cmp::Ordering::Greater,
-                    (false, true) => return std::cmp::Ordering::Less,
-                    _ => {}
-                }
+//                 // Same day: prioritize non all-day tasks before all-day tasks
+//                 match (a.is_all_day, b.is_all_day) {
+//                     (true, false) => return std::cmp::Ordering::Greater,
+//                     (false, true) => return std::cmp::Ordering::Less,
+//                     _ => {}
+//                 }
 
-                // Same day and same all-day status: compare by time
-                a.due_date.cmp(&b.due_date)
-            }
-        };
+//                 // Same day and same all-day status: compare by time
+//                 a.due_date.cmp(&b.due_date)
+//             }
+//         };
 
-        if due_cmp != std::cmp::Ordering::Equal {
-            return due_cmp;
-        }
+//         if due_cmp != std::cmp::Ordering::Equal {
+//             return due_cmp;
+//         }
 
-        // If due dates are equal (including time), compare start dates (unset dates go to the end)
-        let start_cmp = match (is_unset(&a.start_date), is_unset(&b.start_date)) {
-            (true, true) => std::cmp::Ordering::Equal,
-            (true, false) => std::cmp::Ordering::Greater,
-            (false, true) => std::cmp::Ordering::Less,
-            (false, false) => {
-                // First compare by day
-                let day_cmp = compare_by_day(&a.start_date, &b.start_date);
-                if day_cmp != std::cmp::Ordering::Equal {
-                    return day_cmp;
-                }
+//         // If due dates are equal (including time), compare start dates (unset dates go to the end)
+//         let start_cmp = match (is_unset(&a.start_date), is_unset(&b.start_date)) {
+//             (true, true) => std::cmp::Ordering::Equal,
+//             (true, false) => std::cmp::Ordering::Greater,
+//             (false, true) => std::cmp::Ordering::Less,
+//             (false, false) => {
+//                 // First compare by day
+//                 let day_cmp = compare_by_day(&a.start_date, &b.start_date);
+//                 if day_cmp != std::cmp::Ordering::Equal {
+//                     return day_cmp;
+//                 }
 
-                // Same day: prioritize non all-day tasks before all-day tasks
-                match (a.is_all_day, b.is_all_day) {
-                    (true, false) => return std::cmp::Ordering::Greater,
-                    (false, true) => return std::cmp::Ordering::Less,
-                    _ => {}
-                }
+//                 // Same day: prioritize non all-day tasks before all-day tasks
+//                 match (a.is_all_day, b.is_all_day) {
+//                     (true, false) => return std::cmp::Ordering::Greater,
+//                     (false, true) => return std::cmp::Ordering::Less,
+//                     _ => {}
+//                 }
 
-                // Same day and same all-day status: compare by time
-                a.start_date.cmp(&b.start_date)
-            }
-        };
+//                 // Same day and same all-day status: compare by time
+//                 a.start_date.cmp(&b.start_date)
+//             }
+//         };
 
-        if start_cmp != std::cmp::Ordering::Equal {
-            return start_cmp;
-        }
+//         if start_cmp != std::cmp::Ordering::Equal {
+//             return start_cmp;
+//         }
 
-        // If all dates are equal, sort by sort_order
-        a.sort_order.cmp(&b.sort_order)
-    });
-}
+//         // If all dates are equal, sort by sort_order
+//         a.sort_order.cmp(&b.sort_order)
+//     });
+// }
 
 // #[derive(Debug, Clone)]
 // pub enum RepeatFreq {
