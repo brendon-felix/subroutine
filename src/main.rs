@@ -8,5 +8,5 @@ mod views;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    app::Subroutine::run()
+    app::run()
 }
