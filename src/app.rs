@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use gpui::{
-    App, AppContext, Application, Bounds, KeyBinding, Menu, MenuItem, SharedString, WindowBounds,
-    WindowOptions, actions, px, size,
+    App, AppContext, Application, Bounds, Focusable, KeyBinding, Menu, MenuItem, SharedString,
+    WindowBounds, WindowOptions, actions, px, size,
 };
 use gpui_component::{Root, Theme, ThemeRegistry};
 use gpui_component_assets::Assets;
@@ -60,7 +60,9 @@ pub fn init(cx: &mut App) {
             let app_view =
                 // cx.new(|cx| RootView::new(task_store.clone(), ui_store.clone(), window, cx));
                 cx.new(|cx| RootView::new(task_store.clone(), window, cx));
-            cx.new(|cx| Root::new(app_view, window, cx))
+            window.focus(&app_view.focus_handle(cx));
+            let root = cx.new(|cx| Root::new(app_view, window, cx));
+            root
         })
         .unwrap();
 
