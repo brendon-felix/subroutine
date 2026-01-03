@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use ticks::{
+    TickTick,
     projects::ProjectID,
     tasks::{Task, TaskID, TaskPriority},
 };
@@ -28,12 +29,17 @@ pub struct TaskData {
 #[allow(dead_code)]
 impl TaskData {
     pub fn from_task(task: &Task) -> Self {
+        let due_date = if task.due_date.timestamp() == 0 {
+            None
+        } else {
+            Some(task.due_date)
+        };
         Self {
             title: Some(task.title.clone()),
             task_id: Some(task.get_id().clone()),
             project_id: Some(task.project_id.clone()),
             content: Some(task.content.clone()),
-            due_date: Some(task.due_date),
+            due_date,
             priority: Some(task.priority),
             repeat_flag: if task.repeat_flag.is_empty() {
                 None
@@ -79,6 +85,12 @@ impl TaskData {
     }
 }
 
+impl Into<TaskData> for Task {
+    fn into(self) -> TaskData {
+        TaskData::from_task(&self)
+    }
+}
+
 // pub fn patch_task(task: &Task, data: TaskData) -> TaskData {
 //     let mut new_data = TaskData::from_task(task);
 
@@ -107,27 +119,27 @@ impl TaskData {
 //     // Reschedule(RescheduleTarget),
 // }
 
-// pub async fn fetch_all_tasks(client: &TickTick) -> Result<Vec<Task>> {
-//     let project_tasks = client
-//         .get_all_tasks_in_projects()
-//         .await
-//         .map_err(|e| anyhow::anyhow!("Failed to fetch tasks from projects: {:?}", e))?;
-//     let inbox_id = ProjectID("inbox".to_string());
-//     let inbox_tasks = client
-//         .get_project_data(&inbox_id)
-//         .await
-//         .map_err(|e| anyhow::anyhow!("Failed to fetch inbox tasks: {:?}", e))?
-//         .tasks;
+pub async fn fetch_all_tasks(client: &TickTick) -> anyhow::Result<Vec<Task>> {
+    let project_tasks = client
+        .get_all_tasks_in_projects()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to fetch tasks from projects: {:?}", e))?;
+    let inbox_id = ProjectID("inbox".to_string());
+    let inbox_tasks = client
+        .get_project_data(&inbox_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to fetch inbox tasks: {:?}", e))?
+        .tasks;
 
-//     let mut all_tasks: Vec<Task> = project_tasks
-//         .into_iter()
-//         .chain(inbox_tasks.into_iter())
-//         .collect();
+    let mut all_tasks: Vec<Task> = project_tasks
+        .into_iter()
+        .chain(inbox_tasks.into_iter())
+        .collect();
 
-//     sort_tasks(&mut all_tasks);
+    sort_tasks(&mut all_tasks);
 
-//     Ok(all_tasks)
-// }
+    Ok(all_tasks)
+}
 
 // pub fn get_local_date(dt: DateTime<Utc>) -> NaiveDate {
 //     dt.with_timezone(&Local).date_naive()
@@ -307,86 +319,120 @@ impl TaskData {
 //     }
 // }
 
-// pub fn sort_tasks(tasks: &mut Vec<Task>) {
-//     tasks.sort_by(|a, b| {
-//         use chrono::{DateTime, Datelike, Utc};
+pub fn task_data_compare(task1: &TaskData, task2: &TaskData) -> std::cmp::Ordering {
+    use chrono::Datelike;
 
-//         // Helper to check if a datetime is the epoch (unset)
-//         let is_unset = |dt: &DateTime<Utc>| dt.timestamp() == 0;
+    // Helper to compare dates by day only (year, month, day)
+    let compare_by_day = |dt_a: &DateTime<Utc>, dt_b: &DateTime<Utc>| {
+        match dt_a.year().cmp(&dt_b.year()) {
+            std::cmp::Ordering::Equal => {}
+            other => return other,
+        }
+        match dt_a.month().cmp(&dt_b.month()) {
+            std::cmp::Ordering::Equal => {}
+            other => return other,
+        }
+        dt_a.day().cmp(&dt_b.day())
+    };
 
-//         // Helper to compare dates by day only (year, month, day)
-//         let compare_by_day = |dt_a: &DateTime<Utc>, dt_b: &DateTime<Utc>| {
-//             match dt_a.year().cmp(&dt_b.year()) {
-//                 std::cmp::Ordering::Equal => {}
-//                 other => return other,
-//             }
-//             match dt_a.month().cmp(&dt_b.month()) {
-//                 std::cmp::Ordering::Equal => {}
-//                 other => return other,
-//             }
-//             dt_a.day().cmp(&dt_b.day())
-//         };
+    // Compare due dates (missing dates go to the end)
+    match (&task1.due_date, &task2.due_date) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (Some(due1), Some(due2)) => {
+            // First compare by day
+            let day_cmp = compare_by_day(due1, due2);
+            if day_cmp != std::cmp::Ordering::Equal {
+                return day_cmp;
+            }
 
-//         // Compare due dates (unset dates go to the end)
-//         let due_cmp = match (is_unset(&a.due_date), is_unset(&b.due_date)) {
-//             (true, true) => std::cmp::Ordering::Equal,
-//             (true, false) => std::cmp::Ordering::Greater,
-//             (false, true) => std::cmp::Ordering::Less,
-//             (false, false) => {
-//                 // First compare by day
-//                 let day_cmp = compare_by_day(&a.due_date, &b.due_date);
-//                 if day_cmp != std::cmp::Ordering::Equal {
-//                     return day_cmp;
-//                 }
+            // Same day: compare by time
+            due1.cmp(due2)
+        }
+    }
+}
 
-//                 // Same day: prioritize non all-day tasks before all-day tasks
-//                 match (a.is_all_day, b.is_all_day) {
-//                     (true, false) => return std::cmp::Ordering::Greater,
-//                     (false, true) => return std::cmp::Ordering::Less,
-//                     _ => {}
-//                 }
+pub fn sort_tasks(tasks: &mut Vec<Task>) {
+    tasks.sort_by(|a, b| {
+        use chrono::{DateTime, Datelike, Utc};
 
-//                 // Same day and same all-day status: compare by time
-//                 a.due_date.cmp(&b.due_date)
-//             }
-//         };
+        // Helper to check if a datetime is the epoch (unset)
+        let is_unset = |dt: &DateTime<Utc>| dt.timestamp() == 0;
 
-//         if due_cmp != std::cmp::Ordering::Equal {
-//             return due_cmp;
-//         }
+        // Helper to compare dates by day only (year, month, day)
+        let compare_by_day = |dt_a: &DateTime<Utc>, dt_b: &DateTime<Utc>| {
+            match dt_a.year().cmp(&dt_b.year()) {
+                std::cmp::Ordering::Equal => {}
+                other => return other,
+            }
+            match dt_a.month().cmp(&dt_b.month()) {
+                std::cmp::Ordering::Equal => {}
+                other => return other,
+            }
+            dt_a.day().cmp(&dt_b.day())
+        };
 
-//         // If due dates are equal (including time), compare start dates (unset dates go to the end)
-//         let start_cmp = match (is_unset(&a.start_date), is_unset(&b.start_date)) {
-//             (true, true) => std::cmp::Ordering::Equal,
-//             (true, false) => std::cmp::Ordering::Greater,
-//             (false, true) => std::cmp::Ordering::Less,
-//             (false, false) => {
-//                 // First compare by day
-//                 let day_cmp = compare_by_day(&a.start_date, &b.start_date);
-//                 if day_cmp != std::cmp::Ordering::Equal {
-//                     return day_cmp;
-//                 }
+        // Compare due dates (unset dates go to the end)
+        let due_cmp = match (is_unset(&a.due_date), is_unset(&b.due_date)) {
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            (false, false) => {
+                // First compare by day
+                let day_cmp = compare_by_day(&a.due_date, &b.due_date);
+                if day_cmp != std::cmp::Ordering::Equal {
+                    return day_cmp;
+                }
 
-//                 // Same day: prioritize non all-day tasks before all-day tasks
-//                 match (a.is_all_day, b.is_all_day) {
-//                     (true, false) => return std::cmp::Ordering::Greater,
-//                     (false, true) => return std::cmp::Ordering::Less,
-//                     _ => {}
-//                 }
+                // Same day: prioritize non all-day tasks before all-day tasks
+                match (a.is_all_day, b.is_all_day) {
+                    (true, false) => return std::cmp::Ordering::Greater,
+                    (false, true) => return std::cmp::Ordering::Less,
+                    _ => {}
+                }
 
-//                 // Same day and same all-day status: compare by time
-//                 a.start_date.cmp(&b.start_date)
-//             }
-//         };
+                // Same day and same all-day status: compare by time
+                a.due_date.cmp(&b.due_date)
+            }
+        };
 
-//         if start_cmp != std::cmp::Ordering::Equal {
-//             return start_cmp;
-//         }
+        if due_cmp != std::cmp::Ordering::Equal {
+            return due_cmp;
+        }
 
-//         // If all dates are equal, sort by sort_order
-//         a.sort_order.cmp(&b.sort_order)
-//     });
-// }
+        // If due dates are equal (including time), compare start dates (unset dates go to the end)
+        let start_cmp = match (is_unset(&a.start_date), is_unset(&b.start_date)) {
+            (true, true) => std::cmp::Ordering::Equal,
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, true) => std::cmp::Ordering::Less,
+            (false, false) => {
+                // First compare by day
+                let day_cmp = compare_by_day(&a.start_date, &b.start_date);
+                if day_cmp != std::cmp::Ordering::Equal {
+                    return day_cmp;
+                }
+
+                // Same day: prioritize non all-day tasks before all-day tasks
+                match (a.is_all_day, b.is_all_day) {
+                    (true, false) => return std::cmp::Ordering::Greater,
+                    (false, true) => return std::cmp::Ordering::Less,
+                    _ => {}
+                }
+
+                // Same day and same all-day status: compare by time
+                a.start_date.cmp(&b.start_date)
+            }
+        };
+
+        if start_cmp != std::cmp::Ordering::Equal {
+            return start_cmp;
+        }
+
+        // If all dates are equal, sort by sort_order
+        a.sort_order.cmp(&b.sort_order)
+    });
+}
 
 // #[derive(Debug, Clone)]
 // pub enum RepeatFreq {
