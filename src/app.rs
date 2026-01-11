@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use gpui::{
     App, AppContext, Application, Bounds, Focusable, KeyBinding, Menu, MenuItem, SharedString,
-    WindowBounds, WindowOptions, actions, px, size,
+    TitlebarOptions, WindowBounds, WindowOptions, actions, point, px, size,
 };
 use gpui_component::{Root, Theme, ThemeRegistry};
 use gpui_component_assets::Assets;
@@ -28,7 +28,11 @@ pub fn init(cx: &mut App) {
     gpui_component::init(cx);
     components::init(cx);
 
-    let theme_name = SharedString::from("Molokai Dark");
+    // let theme_name = SharedString::from("Gruvbox Dark");
+    let theme_name = SharedString::from("Ayu Dark");
+    // let theme_name = SharedString::from("Solarized Dark");
+    // let theme_name = SharedString::from("Solarized Light");
+    // let theme_name = SharedString::from("Molokai Dark");
     // Load and watch themes from ./themes directory
     if let Err(e) = ThemeRegistry::watch_dir(PathBuf::from("./themes"), cx, move |cx| {
         if let Some(theme) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
@@ -45,11 +49,18 @@ pub fn init(cx: &mut App) {
     let task_store = cx.new(move |cx| TaskStore::new(cx));
     // let ui_store = cx.new(|_cx| UiStateStore::new());
 
+    let mut titlebar_options = TitlebarOptions::default();
+    titlebar_options.appears_transparent = true;
+    titlebar_options.traffic_light_position = Some(point(px(16.), px(16.)));
+
     let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
     let window_options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(titlebar_options),
+        // titlebar: None,
         focus: true,
         show: true,
+        window_min_size: Some(size(px(600.0), px(280.0))),
         ..Default::default()
     };
 
