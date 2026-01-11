@@ -1,108 +1,63 @@
+use std::time::Duration;
+
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render, Subscription,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render, SharedString,
     Window, actions, div, px,
 };
 use gpui::{KeyBinding, prelude::*};
-use gpui_component::Root;
-use gpui_component::resizable::{h_resizable, resizable_panel};
-use gpui_component::sidebar::SidebarToggleButton;
-use gpui_component::{h_flex, v_flex};
+use gpui_component::divider::Divider;
+use gpui_component::label::Label;
+use gpui_component::{
+    ActiveTheme,
+    Root,
+    WindowExt,
+    // resizable::{h_resizable, resizable_panel},
+    switch::Switch,
+    v_flex,
+};
+use gpui_transitions::WindowUseTransition;
+// use gpui_transitions::WindowUseTransition;
 
 // use crate::app::ToggleCommandPalette;
 use crate::components::command_palette::{
-    CloseCommandPalette, Command, CommandPalette, CommandPaletteState, SelectCommand,
+    CloseCommandPalette, Command, CommandPalette, CommandPaletteExt, CommandPaletteState,
+    SelectCommand,
 };
-use crate::stores::task_store::ApiError;
+use crate::components::resizable::{h_resizable, resizable_panel};
 // use crate::stores::ui_store::{TaskSelected, ViewChanged};
 use crate::stores::TaskStore;
-use crate::views::{RightSidebarView, TaskListView};
+use crate::transitions::ease_out;
+// use crate::transitions::ease_out;
+use crate::views::MainView;
+use crate::views::main_view::MainViewMode;
 
 actions!(root_view, [ToggleCommandPalette, ToggleSideBar]);
 
 pub struct RootView {
-    // ui_store: Entity<UiStateStore>,
-    // focus_view: Entity<FocusMode>,
-    // left_sidebar: Entity<LeftSidebarView>,
-    task_list: Entity<TaskListView>,
-    right_sidebar: Entity<RightSidebarView>,
+    main_view: Entity<MainView>,
+    // right_sidebar: Entity<RightSidebarView>,
+    right_sidebar_collapsed: bool,
     focus_handle: FocusHandle,
     cmd_palette: Option<Entity<CommandPaletteState>>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl RootView {
-    pub fn new(
-        task_store: Entity<TaskStore>,
-        // ui_store: Entity<UiStateStore>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        // let left_sidebar = cx.new(|cx| LeftSidebarView::new(ui_store.clone(), cx));
-        // let task_list = cx.new(|cx| TaskListView::new(task_store.clone(), ui_store.clone(), cx));
-        let task_list = cx.new(|cx| TaskListView::new(task_store.clone(), cx));
-        // let right_sidebar = cx.new(|cx| RightSidebarView::new(ui_store.clone(), window, cx));
-        let right_sidebar = cx.new(|cx| RightSidebarView::new(window, cx));
-
-        let focus_handle = cx.focus_handle();
-        let mut subscriptions = Vec::new();
-
+    pub fn new(task_store: Entity<TaskStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("cmd-p", ToggleCommandPalette, None),
             KeyBinding::new("alt-]", ToggleSideBar, None),
         ]);
 
-        subscriptions.push(cx.subscribe(
-            &task_store,
-            |_this, _task_store, event: &ApiError, cx| {
-                eprintln!("API Error: {}", event.message);
-                cx.notify();
-            },
-        ));
-
-        // subscriptions.push(
-        //     cx.subscribe(&left_sidebar, |_this, _left_sidebar, _event: &(), cx| {
-        //         cx.notify();
-        //     }),
-        // );
-
-        // subscriptions.push(cx.subscribe(
-        //     &right_sidebar,
-        //     |_this, _right_sidebar, _event: &(), cx| {
-        //         // cx.notify();
-        //     },
-        // ));
-
-        // subscriptions.push(cx.subscribe(
-        //     &ui_store,
-        //     |this, _ui_store, _event: &TaskSelected, cx| {
-        //         // Auto-open right sidebar when task is selected
-        //         this.right_sidebar.update(cx, |sidebar, cx| {
-        //             if sidebar.is_collapsed() {
-        //                 sidebar.set_collapsed(false, cx);
-        //             }
-        //         });
-        //         cx.notify();
-        //     },
-        // ));
-
-        // subscriptions.push(
-        //     cx.subscribe(&ui_store, |this, _ui_store, _event: &ViewChanged, cx| {
-        //         // When view changes, update task list and trigger re-render
-        //         cx.notify();
-        //         this.task_list.update(cx, |_task_list, cx| {
-        //             cx.notify();
-        //         });
-        //     }),
-        // );
+        let main_view = cx.new(|cx| MainView::new(task_store.clone(), window, cx));
+        // let right_sidebar = cx.new(|cx| RightSidebarView::new(window, cx));
+        let focus_handle = cx.focus_handle();
 
         Self {
-            // ui_store,
-            // left_sidebar,
-            task_list,
-            right_sidebar,
+            main_view,
+            // right_sidebar,
+            right_sidebar_collapsed: false,
             focus_handle,
             cmd_palette: None,
-            _subscriptions: subscriptions,
         }
     }
 
@@ -112,40 +67,38 @@ impl RootView {
             self.cmd_palette = None;
             window.focus(&self.focus_handle);
         } else {
-            let commands = self.create_commands(cx);
-            // let entity = cx.entity().clone();
-            let state = cx.new(|cx| CommandPaletteState::new(commands, window, cx));
-            // let cmd_palette = cx.new(|cx| {
-            //     CommandPalette::new(state, window, cx).on_close(move |_, cx| {
-            //         cx.update_entity(&entity, |this: &mut CommandPaletteStory, cx| {
-            //             this.cmd_palette = None;
-            //             cx.notify();
-            //             cx.activate(true);
-            //         });
-            //     })
-            // });
-            self.cmd_palette = Some(state);
+            let cmd_palette = self.command_palette(window, cx);
+            self.cmd_palette = Some(cmd_palette);
         }
     }
 
-    fn create_commands(&self, _cx: &mut Context<Self>) -> Vec<Command> {
+    pub fn open_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.open_sheet(cx, |sheet, _, _| {
+            sheet.title("Navigation").child("Sheet content goes here")
+        })
+    }
+}
+
+impl CommandPaletteExt for RootView {
+    fn commands(&self, cx: &mut Context<Self>) -> Vec<Command> {
         // let entity = cx.entity().clone();
         vec![
-            // Command::new("file-new", "New File")
-            //     .description("Create a new file")
-            //     // .icon("file-plus")
-            //     .shortcut("Cmd+N")
-            //     .on_select(|_window, _cx| {}),
-            // Command::new("file-open", "Open File")
-            //     .description("Open an existing file")
-            //     // .icon("folder-open")
-            //     .shortcut("Cmd+O")
-            //     .on_select(|_window, _cx| {}),
-            // Command::new("file-save", "Save File")
-            //     .description("Save the current file")
-            //     // .icon("save")
-            //     .shortcut("Cmd+S")
-            //     .on_select(|_window, _cx| {}),
+            Command::new("test-view", "Switch to Test View").on_select({
+                let entity = self.main_view.clone();
+                move |_window, cx| {
+                    cx.update_entity(&entity, |main_view, cx| {
+                        main_view.set_mode(MainViewMode::Test, cx);
+                    });
+                }
+            }),
+            Command::new("test-view", "Switch to Task List View").on_select({
+                let entity = self.main_view.clone();
+                move |_window, cx| {
+                    cx.update_entity(&entity, |main_view, cx| {
+                        main_view.set_mode(MainViewMode::TaskList, cx);
+                    });
+                }
+            }),
             // Command::new("edit-copy", "Copy")
             //     .description("Copy selected text")
             //     // .icon("copy")
@@ -165,13 +118,8 @@ impl RootView {
                 .description("Show or hide the sidebar")
                 // .icon("sidebar")
                 .shortcut("alt-]")
-                .on_select({
-                    let entity = self.right_sidebar.clone();
-                    move |_, cx| {
-                        cx.update_entity(&entity, |sidebar, cx| {
-                            sidebar.toggle_collapsed(cx);
-                        });
-                    }
+                .on_select(|window, cx| {
+                    window.dispatch_action(Box::new(ToggleSideBar), cx);
                 }),
             Command::new("app-quit", "Quit Application")
                 .description("Exit the application")
@@ -194,40 +142,46 @@ impl EventEmitter<()> for RootView {}
 
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // let ui_state = self.ui_store.read(cx);
-        // let has_selected_task = ui_state.selected_task.is_some();
-        // let left_sidebar_collapsed = self.left_sidebar.read(cx).is_collapsed();
-        let right_sidebar_collapsed = self.right_sidebar.read(cx).is_collapsed();
+        // let right_sidebar_collapsed = self.right_sidebar.read(cx).is_collapsed();
+        // let right_sidebar_collapsed = self.right_sidebar.read(cx).is_collapsed();
 
-        let content = div()
-            .size_full()
-            // .bg(rgb(0x191919))
-            // .text_color(rgb(0xC8C8C8))
-            .flex()
-            .track_focus(&self.focus_handle)
-            .on_action(cx.listener(
-                |this: &mut RootView, _action: &ToggleSideBar, _window, cx| {
-                    this.right_sidebar.update(cx, |sidebar, cx| {
-                        sidebar.toggle_collapsed(cx);
-                    });
-                },
-            ))
-            .on_action(cx.listener(
-                |this: &mut RootView, _action: &ToggleCommandPalette, window, cx| {
+        let slide_transition = Some(
+            window
+                .use_keyed_transition(
+                    "right-sidebar-slide",
+                    cx,
+                    Duration::from_millis(200),
+                    move |_window, _cx| px(200.),
+                )
+                .continuous(true)
+                .with_easing(ease_out),
+        );
+
+        let content = div().size_full().flex().child(
+            div()
+                .size_full()
+                .flex()
+                .track_focus(&self.focus_handle)
+                .on_action(
+                    cx.listener(|this: &mut RootView, _: &ToggleSideBar, window, cx| {
+                        // // this.right_sidebar.update(cx, |sidebar, cx| {
+                        // //     sidebar.toggle_collapsed(cx);
+                        // // });
+                        // this.open_sheet(window, cx);
+                        this.right_sidebar_collapsed = !this.right_sidebar_collapsed;
+                        cx.notify();
+                    }),
+                )
+                .on_action(cx.listener(|this, _: &ToggleCommandPalette, window, cx| {
                     this.toggle_command_palette(window, cx);
-                },
-            ))
-            .on_action(cx.listener(
-                |this: &mut RootView, _action: &CloseCommandPalette, window, cx| {
+                }))
+                .on_action(cx.listener(|this, _: &CloseCommandPalette, window, cx| {
                     this.cmd_palette = None;
-                    // this.focus_handle.focus(window);
                     window.focus(&this.focus_handle);
                     cx.notify();
-                },
-            ))
-            .on_action(
-                cx.listener(|this: &mut RootView, _action: &SelectCommand, window, cx| {
-                    // println!("Command selected, closing palette.");
+                }))
+                .on_action(cx.listener(|this, _: &SelectCommand, window, cx| {
+                    println!("Command selected, closing palette.");
                     if let Some(cmd_palette) = &this.cmd_palette {
                         let executed = cx.update_entity(
                             cmd_palette,
@@ -242,85 +196,100 @@ impl Render for RootView {
                         }
                     }
                     cx.notify();
-                }),
-            )
-            .child(
-                // Main content area with left sidebar overlay
-                div()
-                    .size_full()
-                    .flex()
-                    // .child(self.left_sidebar.clone())
-                    .child(
-                        // Two-panel resizable layout for center and right
-                        h_resizable("main-layout")
-                            .on_resize(cx.listener(|_this, _state, _window, cx| {
-                                cx.notify();
-                            }))
-                            .child(
-                                // Center content panel
-                                resizable_panel().child(
-                                    v_flex()
+                }))
+                .child(
+                    h_resizable("root-layout")
+                        .on_resize(cx.listener(|_this, _state, _window, cx| {
+                            cx.notify();
+                        }))
+                        .child(
+                            // Center content panel
+                            resizable_panel().child(
+                                div()
+                                    .size_full()
+                                    .p_2()
+                                    .when(!self.right_sidebar_collapsed, |div| div.pr_1())
+                                    .bg(cx.theme().group_box)
+                                    // .bg(gpui::red())
+                                    .child(
+                                        div()
+                                            .size_full()
+                                            .bg(cx.theme().background)
+                                            .border_1()
+                                            .border_color(cx.theme().border)
+                                            .rounded_lg()
+                                            .child(self.main_view.clone()),
+                                    ),
+                            ),
+                        )
+                        // .child(
+                        //     // Right sidebar panel
+                        //     resizable_panel()
+                        //         .size(px(350.0))
+                        //         .size_range(px(250.0)..px(500.0))
+                        //         // .visible(!right_sidebar_collapsed && has_selected_task)
+                        //         .visible(!right_sidebar_collapsed)
+                        //         .child(self.right_sidebar.clone()),
+                        // ),
+                        .child(
+                            // Right sidebar panel
+                            resizable_panel()
+                                .size(px(200.0))
+                                .size_range(px(200.0)..px(500.0))
+                                .visible(!self.right_sidebar_collapsed)
+                                .child(
+                                    div()
                                         .size_full()
+                                        .p_2()
+                                        .pl_1()
+                                        .bg(cx.theme().group_box)
                                         .child(
-                                            // Header area with toggle buttons
-                                            h_flex()
-                                                .p_2()
-                                                .gap_2()
-                                                // .child(
-                                                //     SidebarToggleButton::left()
-                                                //         .collapsed(left_sidebar_collapsed)
-                                                //         .on_click(cx.listener(
-                                                //             |this, _event, _window, cx| {
-                                                //                 this.left_sidebar.update(
-                                                //                     cx,
-                                                //                     |sidebar, cx| {
-                                                //                         sidebar
-                                                //                             .toggle_collapsed(cx);
-                                                //                     },
-                                                //                 );
-                                                //             },
-                                                //         )),
-                                                // )
-                                                .child(div().flex_1()) // Spacer
-                                                .child(
-                                                    SidebarToggleButton::right()
-                                                        .collapsed(right_sidebar_collapsed)
-                                                        .on_click(cx.listener(
-                                                            |this, _event, _window, cx| {
-                                                                this.right_sidebar.update(
-                                                                    cx,
-                                                                    |sidebar, cx| {
-                                                                        sidebar
-                                                                            .toggle_collapsed(cx);
-                                                                    },
-                                                                );
-                                                            },
-                                                        )),
-                                                ),
-                                        )
-                                        .child(
-                                            // Task list content
                                             div()
-                                                .flex_1()
-                                                .overflow_hidden()
-                                                .child(self.task_list.clone()),
+                                                .size_full()
+                                                .bg(cx.theme().background)
+                                                .border_1()
+                                                .border_color(cx.theme().border)
+                                                .rounded_lg()
+                                                .child(
+                                                    // right sidebar content
+                                                    v_flex()
+                                                        .overflow_hidden()
+                                                        .size_full()
+                                                        .gap_3()
+                                                        .p_4()
+                                                        .child(Label::new("Settings").text_lg())
+                                                        .child(Divider::horizontal())
+                                                        .child(
+                                                            Switch::new("dark-mode-switch")
+                                                                .checked(cx.theme().is_dark())
+                                                                .label("Dark mode")
+                                                                .on_click(cx.listener(
+                                                                    |_view, _checked, _, cx| {
+                                                                        // view.is_enabled = *checked;
+                                                                        cx.notify();
+                                                                    },
+                                                                )),
+                                                        )
+                                                        .child(
+                                                            Switch::new("alerts-switch")
+                                                                .checked(true)
+                                                                .label("Enable alerts")
+                                                                .on_click(cx.listener(
+                                                                    |_view, _checked, _, cx| {
+                                                                        // view.is_enabled = *checked;
+                                                                        cx.notify();
+                                                                    },
+                                                                )),
+                                                        ), // .child(Divider::horizontal()),
+                                                ),
                                         ),
                                 ),
-                            )
-                            .child(
-                                // Right sidebar panel
-                                resizable_panel()
-                                    .size(px(350.0))
-                                    .size_range(px(250.0)..px(500.0))
-                                    // .visible(!right_sidebar_collapsed && has_selected_task)
-                                    .visible(!right_sidebar_collapsed)
-                                    .child(self.right_sidebar.clone()),
-                            ),
-                    ),
-            )
-            .when(self.cmd_palette.is_some(), |content| {
-                content.child(CommandPalette::new(self.cmd_palette.clone().unwrap()))
-            });
+                        ),
+                )
+                .when_some(self.cmd_palette.as_ref(), |content, cmd_palette| {
+                    content.child(CommandPalette::new(cmd_palette.clone()))
+                }),
+        );
 
         content
             .children(Root::render_dialog_layer(window, cx))

@@ -95,8 +95,6 @@ impl CommandPaletteState {
                         .get(*ix)
                         .cloned()
                     {
-                        // println!("Confirmed command: {}", selected_cmd.name);
-                        // cx.emit(SelectCommand);
                         cx.dispatch_action(&SelectCommand);
                     }
                 }
@@ -229,7 +227,7 @@ impl Render for CommandPaletteState {
                         //     div.style().refine(&user_style);
                         //     div
                         // })
-                        .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
+                        .on_any_mouse_down(|_event, _window, cx| {
                             cx.stop_propagation();
                             // Click outside command palette - do nothing for now
                         })
@@ -351,5 +349,18 @@ impl RenderOnce for CommandPalette {
             .absolute()
             .inset_0()
             .child(self.state.clone())
+    }
+}
+
+pub trait CommandPaletteExt: Sized {
+    fn commands(&self, cx: &mut Context<Self>) -> Vec<Command>;
+
+    fn command_palette(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<CommandPaletteState> {
+        let commands = self.commands(cx);
+        cx.new(|cx| CommandPaletteState::new(commands, window, cx))
     }
 }

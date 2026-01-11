@@ -1,15 +1,16 @@
 use gpui::{
-    App, Context, Entity, EventEmitter, IntoElement, Render, Styled, Subscription, Window, div,
+    App, Context, ElementId, Entity, EventEmitter, IntoElement, Render, Styled, Subscription,
+    Window, div,
 };
 use gpui::{Edges, prelude::*, px};
-use gpui_component::checkbox::Checkbox;
 // use gpui_component::checkbox::Checkbox;
 use gpui_component::label::Label;
 // use gpui_component::list::{List, ListDelegate, ListEvent, ListItem, ListState};
 // use gpui_component::skeleton::Skeleton;
-use gpui_component::{Selectable, StyledExt, h_flex};
+use gpui_component::{ActiveTheme, Selectable, StyledExt, h_flex};
 // use ticks::tasks::TaskPriority;
 
+use crate::components::checkbox::Checkbox;
 use crate::components::custom_list::{List, ListDelegate, ListEvent, ListItem, ListState};
 // use crate::list_rewrite::{List, ListDelegate, ListEvent, ListItem, ListState};
 use crate::stores::TaskStore;
@@ -100,62 +101,16 @@ impl TaskListDelegate {
 }
 
 impl ListDelegate for TaskListDelegate {
-    type Item = ListItem;
-
     fn items_count(&self, _cx: &App) -> usize {
         self.current_tasks().len()
     }
-
-    // fn perform_search(
-    //     &mut self,
-    //     query: &str,
-    //     window: &mut Window,
-    //     cx: &mut Context<ListState<Self>>,
-    // ) -> gpui::Task<()> {
-    //     self.search_query = query.to_string();
-
-    //     if query.is_empty() {
-    //         self.is_searching = false;
-    //         self.filtered_tasks.clear();
-    //     } else {
-    //         self.is_searching = true;
-    //         self.filtered_tasks = self
-    //             .tasks_data
-    //             .iter()
-    //             .filter(|task| {
-    //                 let title = task
-    //                     .title
-    //                     .as_ref()
-    //                     .map(|t| t.to_lowercase())
-    //                     .unwrap_or_default();
-    //                 title.contains(&query.to_lowercase())
-    //             })
-    //             .cloned()
-    //             .collect();
-    //         self.filtered_tasks.sort_by(task_data_compare);
-    //     }
-    //     gpui::Task::ready(())
-    // }
-
-    // fn cancel(&mut self, _window: &mut Window, _cx: &mut Context<ListState<Self>>) {
-    //     // cx.notify();
-    // }
-
-    // fn confirm(
-    //     &mut self,
-    //     _secondary: bool,
-    //     _window: &mut Window,
-    //     cx: &mut Context<ListState<Self>>,
-    // ) {
-    //     // cx.notify();
-    // }
 
     fn render_item(
         &mut self,
         ix: usize,
         _window: &mut Window,
         cx: &mut Context<ListState<TaskListDelegate>>,
-    ) -> Option<Self::Item> {
+    ) -> Option<ListItem> {
         self.current_tasks().get(ix).map(|task| {
             let default_title = "Untitled Task".to_string();
             let title = task
@@ -166,6 +121,8 @@ impl ListDelegate for TaskListDelegate {
                 .replace('\r', " ");
             let is_selected = Some(ix) == self.selected_index;
 
+            // let theme = cx.theme();
+
             // // Choose icon based on priority
             // let icon_color = match task.priority {
             //     Some(TaskPriority::High) => rgb(0xff4444),
@@ -175,6 +132,7 @@ impl ListDelegate for TaskListDelegate {
             // };
 
             ListItem::new(ix)
+                .rounded_md()
                 .child(
                     h_flex()
                         .items_center()
@@ -186,7 +144,24 @@ impl ListDelegate for TaskListDelegate {
                                 .min_w_0()
                                 .flex_1()
                                 // .child(Icon::new(IconName::CircleCheck).text_color(icon_color))
-                                .child(Checkbox::new("checkbox"))
+                                .child(
+                                    Checkbox::new(ElementId::NamedInteger(
+                                        "checkbox".into(),
+                                        ix as u64,
+                                    ))
+                                    // .bg(theme.background)
+                                    // .checked(task..is_some())
+                                    // .border_color(gpui::rgb(0xFF0000))
+                                    .on_click(
+                                        |checked, _window, cx| {
+                                            cx.stop_propagation();
+                                            println!("Checkbox clicked: {}", checked);
+                                        },
+                                    ), // .on_hover(cx.listener(|this, e, window, cx| {
+                                       //     cx.notify();
+                                       // }))
+                                       // .hover(|style| style.border_color(gpui::rgb(0xFF0000))),
+                                )
                                 .child(Label::new(title).truncate()),
                         )
                         // .child(div().flex_1())
@@ -218,19 +193,6 @@ impl ListDelegate for TaskListDelegate {
         })
     }
 
-    // fn loading(&self, cx: &App) -> bool {
-    //     self.task_store.read(cx).is_loading()
-    //     // true
-    // }
-
-    // fn render_loading(
-    //     &mut self,
-    //     window: &mut Window,
-    //     cx: &mut Context<ListState<Self>>,
-    // ) -> impl IntoElement {
-    //     Loading
-    // }
-
     fn set_selected_index(
         &mut self,
         ix: Option<usize>,
@@ -238,23 +200,6 @@ impl ListDelegate for TaskListDelegate {
         // cx: &mut Context<ListState<Self>>,
     ) {
         self.selected_index = ix;
-
-        // // Update selected task in UI store for keyboard navigation (don't open details)
-        // if let Some(index_path) = ix {
-        //     if let Some(task) = self.current_tasks().get(index_path) {
-        //         self.ui_store.update(cx, |ui_store, cx| {
-        //             ui_store.set_selected_task(Some(task.clone()));
-        //             cx.emit(TaskSelected);
-        //         });
-        //     }
-        // } else {
-        //     self.ui_store.update(cx, |ui_store, cx| {
-        //         ui_store.set_selected_task(None);
-        //         cx.emit(TaskSelected);
-        //     });
-        // }
-
-        // cx.notify();
     }
 
     // fn render_empty(
@@ -324,24 +269,6 @@ impl TaskListView {
                 cx.notify();
             },
         ));
-
-        // // Subscribe to view changes to clear selection and update task list
-        // subscriptions.push(
-        //     cx.subscribe(&ui_store, |this, _ui_store, _event: &ViewChanged, cx| {
-        //         this.update_task_list(cx);
-        //         this.clear_selection(cx);
-        //         cx.notify();
-        //     }),
-        // );
-
-        // // Subscribe to UI state changes to update task list when needed
-        // subscriptions.push(cx.subscribe(
-        //     &ui_store,
-        //     |this, _ui_store, _event: &UiStateChanged, cx| {
-        //         this.update_task_list(cx);
-        //         cx.notify();
-        //     },
-        // ));
 
         Self {
             task_store,
@@ -434,7 +361,7 @@ impl Render for TaskListView {
             .flex_col()
             // .p_4()
             .gap_3()
-            .paddings(Edges::all(px(12.0)))
+            .p_0p5()
             .child(
                 div()
                     .flex()

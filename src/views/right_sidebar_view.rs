@@ -1,8 +1,9 @@
 use gpui::prelude::*;
-use gpui::{Context, EventEmitter, IntoElement, Render, Subscription, Window, div, rgb};
+use gpui::{Context, EventEmitter, IntoElement, Render, Window, div, rgb};
 // use gpui_component::input::InputState;
 use gpui_component::label::Label;
 use gpui_component::v_flex;
+
 // use ticks::tasks::TaskPriority;
 
 // use crate::stores::ui_store::{TaskSelected, UiStateChanged, UiStateStore};
@@ -13,7 +14,6 @@ pub struct RightSidebarView {
     // ui_store: Entity<UiStateStore>,
     collapsed: bool,
     // last_selected_task_id: Option<String>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl RightSidebarView {
@@ -79,7 +79,7 @@ impl RightSidebarView {
             // ui_store,
             collapsed: false,
             // last_selected_task_id: None,
-            _subscriptions: vec![],
+            // _subscriptions: vec![],
         }
     }
 
@@ -153,7 +153,7 @@ impl Render for RightSidebarView {
         div()
             .size_full()
             // .bg(rgb(0x191919))
-            .border_l_1()
+            // .border_l_1()
             .border_color(rgb(0x303030))
             .child(
                 v_flex()

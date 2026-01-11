@@ -1,22 +1,17 @@
-use gpui::{
-    AnyElement, App, Context, IntoElement, ParentElement, StatefulInteractiveElement, Styled,
-    Window,
-};
-use gpui_component::{ActiveTheme, Icon, IconName, Selectable, h_flex};
+use gpui::{AnyElement, App, Context, IntoElement, ParentElement, Styled, Window};
+use gpui_component::{ActiveTheme, Icon, IconName, h_flex};
 
-use crate::components::custom_list::ListState;
+use crate::components::custom_list::{ListItem, ListState};
 
 /// A delegate for the List.
 #[allow(unused)]
 pub trait ListDelegate: Sized + 'static {
-    type Item: Selectable + IntoElement + Styled + StatefulInteractiveElement;
-
     fn render_item(
         &mut self,
         ix: usize,
         window: &mut Window,
         cx: &mut Context<ListState<Self>>,
-    ) -> Option<Self::Item>;
+    ) -> Option<ListItem>;
 
     fn render_empty(
         &mut self,

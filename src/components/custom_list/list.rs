@@ -1,16 +1,16 @@
 use std::ops::Range;
 
 use gpui::{
-    Action, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, KeyBinding, ParentElement, Pixels, Render, RenderOnce,
-    ScrollStrategy, Size, StatefulInteractiveElement, Styled, Window, actions, div,
-    prelude::FluentBuilder, px,
+    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement, Pixels,
+    Render, RenderOnce, ScrollStrategy, Size, Styled, Window, actions, div, prelude::FluentBuilder,
+    px,
 };
-use gpui_component::{Selectable, scroll::Scrollbar, v_flex};
+use gpui_component::{scroll::Scrollbar, v_flex};
 use serde::Deserialize;
 
 use crate::components::custom_list::{
-    ListDelegate,
+    ListDelegate, SelectedPosition,
     virtual_list::{VirtualListScrollHandle, v_virtual_list},
 };
 
@@ -30,7 +30,8 @@ actions!(
         SelectLeft,
         SelectRight,
         SelectFirst,
-        SelectLast
+        SelectLast,
+        EnterVisualMode,
     ]
 );
 
@@ -52,6 +53,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("g", SelectFirst, context),
         KeyBinding::new("end", SelectLast, context),
         KeyBinding::new("G", SelectLast, context),
+        KeyBinding::new("v", EnterVisualMode, context),
+        KeyBinding::new("V", EnterVisualMode, context),
     ]);
 }
 
@@ -84,15 +87,21 @@ impl Default for ListOptions {
     }
 }
 
+enum ListMode {
+    Normal,
+    Visual(usize),
+}
+
 pub struct ListState<D: ListDelegate> {
     pub focus_handle: FocusHandle,
     options: ListOptions,
     delegate: D,
+    mode: ListMode,
     scroll_handle: VirtualListScrollHandle,
     deferred_scroll_to_index: Option<(usize, ScrollStrategy)>,
-    // rows_cache: RowsCache,
     num_entries: usize,
     selected_index: Option<usize>,
+    mouse_cursor_hidden: bool,
 }
 
 impl<D> ListState<D>
@@ -104,10 +113,12 @@ where
             focus_handle: cx.focus_handle(),
             options: ListOptions::default(),
             delegate,
+            mode: ListMode::Normal,
             scroll_handle: VirtualListScrollHandle::new(),
             deferred_scroll_to_index: None,
             num_entries: 0,
             selected_index: None,
+            mouse_cursor_hidden: false,
         }
     }
 
@@ -183,10 +194,20 @@ where
     }
 
     fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        cx.propagate();
-        self._set_selected_index(None, window, cx);
-        self.delegate.cancel(window, cx);
-        cx.emit(ListEvent::Cancel);
+        // cx.propagate();
+        match self.mode {
+            ListMode::Visual(_) => {
+                if let Some(ix) = self.selected_index {
+                    self._set_selected_index(Some(ix), window, cx);
+                }
+                self.mode = ListMode::Normal;
+            }
+            ListMode::Normal => {
+                self._set_selected_index(None, window, cx);
+                self.delegate.cancel(window, cx);
+                cx.emit(ListEvent::Cancel);
+            }
+        }
         cx.notify();
     }
 
@@ -206,6 +227,7 @@ where
     fn select_item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = Some(ix);
         self.delegate.set_selected_index(Some(ix));
+        self.mouse_cursor_hidden = true;
         self.scroll_to_selected_item(window, cx);
         cx.emit(ListEvent::Select(ix));
         cx.notify();
@@ -245,6 +267,14 @@ where
         }
     }
 
+    pub fn enter_visual(&mut self) {
+        // if let Some(ix) = self.selected_index {
+        //     self.delegate.set_selected_index(Some(ix));
+        //     cx.notify();
+        // }
+        self.mode = ListMode::Visual(self.selected_index.unwrap_or(0));
+    }
+
     fn prepare_items_if_needed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.num_entries = self.delegate.items_count(cx)
     }
@@ -255,44 +285,80 @@ where
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + Styled {
-        let selected = self.selected_index.map(|s| s == ix).unwrap_or(false);
+        let selected: Option<SelectedPosition> = match self.mode {
+            ListMode::Normal => self.selected_index.and_then(|selected_ix| {
+                if selected_ix == ix {
+                    Some(SelectedPosition::Single)
+                } else {
+                    None
+                }
+            }),
+            ListMode::Visual(start_ix) => {
+                // position is either Single, FirstRow, MiddleRow, LastRow
+                if let Some(selected_ix) = self.selected_index {
+                    let first_ix = start_ix.min(selected_ix);
+                    let last_ix = start_ix.max(selected_ix);
+                    match (first_ix.cmp(&ix), last_ix.cmp(&ix)) {
+                        (std::cmp::Ordering::Equal, std::cmp::Ordering::Equal) => {
+                            Some(SelectedPosition::Single)
+                        }
+                        (std::cmp::Ordering::Equal, _) => Some(SelectedPosition::FirstRow),
+                        (_, std::cmp::Ordering::Equal) => Some(SelectedPosition::LastRow),
+                        (std::cmp::Ordering::Less, std::cmp::Ordering::Greater) => {
+                            Some(SelectedPosition::MiddleRow)
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+        };
+
+        let ix = ix;
         div()
             .size_full()
             .children(self.delegate.render_item(ix, window, cx).map(|item| {
                 item.size_full()
                     .flex()
                     .items_center()
-                    .selected(selected)
-                    .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
-                        this.selected_index = Some(ix);
-                        this.confirm(
-                            &Confirm {
-                                secondary: e.modifiers().secondary(),
-                            },
-                            window,
-                            cx,
-                        );
-                    }))
+                    .selected_position(selected)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _: &MouseDownEvent, _window, _cx| {
+                            this.selected_index = Some(ix);
+                            this.mode = ListMode::Normal;
+                        }),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                            if let Some(ix_before) = this.selected_index {
+                                if ix != ix_before {
+                                    return;
+                                }
+                            }
+                            this.selected_index = Some(ix);
+                            this.mode = ListMode::Normal;
+                            this.confirm(
+                                &Confirm {
+                                    // secondary: event.modifiers().secondary(),
+                                    secondary: false,
+                                },
+                                window,
+                                cx,
+                            );
+                        }),
+                    )
             }))
     }
 
     fn render_items(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // let sizes: Rc<Vec<Size<Pixels>>> = (0..self.num_entries)
-        //     .into_iter()
-        //     .map(|_ix| Size::new(px(200.0), px(50.0)))
-        //     .collect::<Vec<_>>()
-        //     .into();
         let scroll_handle = self.scroll_handle.clone();
         let scrollbar_visible = self.options.scrollbar_visible;
 
         v_flex()
             .h_full()
-            // .overflow_y_scrollbar()
-            // .flex_grow()
-            // .relative()
-            // .size_full()
-            // .when_some(self.options.max_height, |this, h| this.max_h(h))
-            // .overflow_hidden()
             .when(self.num_entries == 0, |this| {
                 this.child(self.delegate.render_empty(window, cx))
             })
@@ -346,6 +412,7 @@ impl<D> Render for ListState<D>
 where
     D: ListDelegate,
 {
+    #[rustfmt::skip]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.prepare_items_if_needed(window, cx);
         if let Some((ix, strategy)) = self.deferred_scroll_to_index.take() {
@@ -360,18 +427,13 @@ where
             .size_full()
             .relative()
             .overflow_hidden()
-            .on_action(cx.listener(|this, _: &Cancel, window, cx| this.cancel(window, cx)))
-            .on_action(
-                cx.listener(|this, confirm: &Confirm, window, cx| {
-                    this.confirm(confirm, window, cx)
-                }),
-            )
-            .on_action(cx.listener(|this, _: &SelectDown, window, cx| this.select_next(window, cx)))
-            .on_action(cx.listener(|this, _: &SelectUp, window, cx| this.select_prev(window, cx)))
-            .on_action(
-                cx.listener(|this, _: &SelectFirst, window, cx| this.select_first(window, cx)),
-            )
-            .on_action(cx.listener(|this, _: &SelectLast, window, cx| this.select_last(window, cx)))
+            .on_action(cx.listener(|this, _: &Cancel, window, cx|      this.cancel(window, cx)))
+            .on_action(cx.listener(|this, c: &Confirm, window, cx|     this.confirm(c, window, cx)))
+            .on_action(cx.listener(|this, _: &SelectDown, window, cx|  this.select_next(window, cx)))
+            .on_action(cx.listener(|this, _: &SelectUp, window, cx|    this.select_prev(window, cx)))
+            .on_action(cx.listener(|this, _: &SelectFirst, window, cx| this.select_first(window, cx)))
+            .on_action(cx.listener(|this, _: &SelectLast, window, cx|  this.select_last(window, cx)))
+            .on_action(cx.listener(|this, _: &EnterVisualMode, _window, _cx| this.enter_visual()))
             .child(self.render_items(window, cx))
     }
 }

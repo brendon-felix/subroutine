@@ -58,14 +58,12 @@ impl CommandList {
 }
 
 impl ListDelegate for CommandList {
-    type Item = ListItem;
-
     fn render_item(
         &mut self,
         ix: usize,
         _window: &mut Window,
         _cx: &mut Context<ListState<Self>>,
-    ) -> Option<Self::Item> {
+    ) -> Option<ListItem> {
         let item = self.filtered_commands.get(ix)?;
         // let is_selected = Some(ix) == self.selected_ix;
         ListItem::new(ix)
