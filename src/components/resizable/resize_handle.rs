@@ -123,10 +123,7 @@ impl<T: 'static, E: 'static + Render> Element for ResizeHandle<T, E> {
             let hover = *hover_transition.evaluate(window, cx);
             let hover_amount = hover * HOVER_FADE_STRENGTH;
             // let bg_color = gpui::hsla(0., 0., 1. - hover_amount, 1.);
-            let bg_color = cx
-                .theme()
-                .group_box
-                .blend(cx.theme().primary_foreground.alpha(hover_amount));
+            let bg_color = cx.theme().primary_foreground.alpha(hover_amount);
             // let border_color = gpui::hsla(0., 0.8, 0.8 - hover_amount * 0.5, 1.);
 
             let mut el = div()

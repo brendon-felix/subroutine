@@ -1,13 +1,12 @@
 use gpui::{
-    App, Context, ElementId, Entity, EventEmitter, IntoElement, Render, Styled, Subscription,
-    Window, div,
+    App, AppContext, Context, ElementId, Entity, EventEmitter, InteractiveElement, IntoElement,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window, div,
 };
-use gpui::{Edges, prelude::*, px};
 // use gpui_component::checkbox::Checkbox;
 use gpui_component::label::Label;
 // use gpui_component::list::{List, ListDelegate, ListEvent, ListItem, ListState};
 // use gpui_component::skeleton::Skeleton;
-use gpui_component::{ActiveTheme, Selectable, StyledExt, h_flex};
+use gpui_component::{Selectable, h_flex};
 // use ticks::tasks::TaskPriority;
 
 use crate::components::checkbox::Checkbox;

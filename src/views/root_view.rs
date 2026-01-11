@@ -1,21 +1,13 @@
-use std::time::Duration;
+// use std::time::Duration;
 
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render, SharedString,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Pixels, Render,
     Window, actions, div, px,
 };
 use gpui::{KeyBinding, prelude::*};
 use gpui_component::divider::Divider;
 use gpui_component::label::Label;
-use gpui_component::{
-    ActiveTheme,
-    Root,
-    WindowExt,
-    // resizable::{h_resizable, resizable_panel},
-    switch::Switch,
-    v_flex,
-};
-use gpui_transitions::WindowUseTransition;
+use gpui_component::{ActiveTheme, Root, switch::Switch, v_flex};
 // use gpui_transitions::WindowUseTransition;
 
 // use crate::app::ToggleCommandPalette;
@@ -26,7 +18,6 @@ use crate::components::command_palette::{
 use crate::components::resizable::{h_resizable, resizable_panel};
 // use crate::stores::ui_store::{TaskSelected, ViewChanged};
 use crate::stores::TaskStore;
-use crate::transitions::ease_out;
 // use crate::transitions::ease_out;
 use crate::views::MainView;
 use crate::views::main_view::MainViewMode;
@@ -71,31 +62,33 @@ impl RootView {
             self.cmd_palette = Some(cmd_palette);
         }
     }
-
-    pub fn open_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        window.open_sheet(cx, |sheet, _, _| {
-            sheet.title("Navigation").child("Sheet content goes here")
-        })
-    }
 }
 
 impl CommandPaletteExt for RootView {
-    fn commands(&self, cx: &mut Context<Self>) -> Vec<Command> {
+    fn commands(&self, _cx: &mut Context<Self>) -> Vec<Command> {
         // let entity = cx.entity().clone();
         vec![
+            Command::new("home-view", "Switch to Home View").on_select({
+                let entity = self.main_view.clone();
+                move |_window, cx| {
+                    cx.update_entity(&entity, |main_view, cx| {
+                        main_view.set_mode(MainViewMode::Home, cx);
+                    });
+                }
+            }),
+            Command::new("task-view", "Switch to Task List View").on_select({
+                let entity = self.main_view.clone();
+                move |_window, cx| {
+                    cx.update_entity(&entity, |main_view, cx| {
+                        main_view.set_mode(MainViewMode::TaskList, cx);
+                    });
+                }
+            }),
             Command::new("test-view", "Switch to Test View").on_select({
                 let entity = self.main_view.clone();
                 move |_window, cx| {
                     cx.update_entity(&entity, |main_view, cx| {
                         main_view.set_mode(MainViewMode::Test, cx);
-                    });
-                }
-            }),
-            Command::new("test-view", "Switch to Task List View").on_select({
-                let entity = self.main_view.clone();
-                move |_window, cx| {
-                    cx.update_entity(&entity, |main_view, cx| {
-                        main_view.set_mode(MainViewMode::TaskList, cx);
                     });
                 }
             }),
@@ -143,19 +136,18 @@ impl EventEmitter<()> for RootView {}
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // let right_sidebar_collapsed = self.right_sidebar.read(cx).is_collapsed();
-        // let right_sidebar_collapsed = self.right_sidebar.read(cx).is_collapsed();
 
-        let slide_transition = Some(
-            window
-                .use_keyed_transition(
-                    "right-sidebar-slide",
-                    cx,
-                    Duration::from_millis(200),
-                    move |_window, _cx| px(200.),
-                )
-                .continuous(true)
-                .with_easing(ease_out),
-        );
+        // let slide_transition = Some(
+        //     window
+        //         .use_keyed_transition(
+        //             "right-sidebar-slide",
+        //             cx,
+        //             Duration::from_millis(200),
+        //             move |_window, _cx| px(200.),
+        //         )
+        //         .continuous(true)
+        //         .with_easing(ease_out),
+        // );
 
         let content = div().size_full().flex().child(
             div()
@@ -163,7 +155,7 @@ impl Render for RootView {
                 .flex()
                 .track_focus(&self.focus_handle)
                 .on_action(
-                    cx.listener(|this: &mut RootView, _: &ToggleSideBar, window, cx| {
+                    cx.listener(|this: &mut RootView, _: &ToggleSideBar, _window, cx| {
                         // // this.right_sidebar.update(cx, |sidebar, cx| {
                         // //     sidebar.toggle_collapsed(cx);
                         // // });
@@ -204,19 +196,17 @@ impl Render for RootView {
                         }))
                         .child(
                             // Center content panel
-                            resizable_panel().child(
+                            resizable_panel().size_range(px(380.0)..Pixels::MAX).child(
                                 div()
                                     .size_full()
                                     .p_2()
                                     .when(!self.right_sidebar_collapsed, |div| div.pr_1())
-                                    .bg(cx.theme().group_box)
+                                    .bg(cx.theme().secondary)
                                     // .bg(gpui::red())
                                     .child(
                                         div()
                                             .size_full()
                                             .bg(cx.theme().background)
-                                            .border_1()
-                                            .border_color(cx.theme().border)
                                             .rounded_lg()
                                             .child(self.main_view.clone()),
                                     ),
@@ -234,7 +224,7 @@ impl Render for RootView {
                         .child(
                             // Right sidebar panel
                             resizable_panel()
-                                .size(px(200.0))
+                                .size(px(250.0))
                                 .size_range(px(200.0)..px(500.0))
                                 .visible(!self.right_sidebar_collapsed)
                                 .child(
@@ -242,13 +232,11 @@ impl Render for RootView {
                                         .size_full()
                                         .p_2()
                                         .pl_1()
-                                        .bg(cx.theme().group_box)
+                                        .bg(cx.theme().secondary)
                                         .child(
                                             div()
                                                 .size_full()
                                                 .bg(cx.theme().background)
-                                                .border_1()
-                                                .border_color(cx.theme().border)
                                                 .rounded_lg()
                                                 .child(
                                                     // right sidebar content
@@ -257,7 +245,11 @@ impl Render for RootView {
                                                         .size_full()
                                                         .gap_3()
                                                         .p_4()
-                                                        .child(Label::new("Settings").text_lg())
+                                                        .child(
+                                                            Label::new("Settings")
+                                                                .text_lg()
+                                                                .font(gpui::font("Georgia")),
+                                                        )
                                                         .child(Divider::horizontal())
                                                         .child(
                                                             Switch::new("dark-mode-switch")
