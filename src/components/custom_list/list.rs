@@ -332,7 +332,7 @@ where
                     )
                     .on_mouse_up(
                         MouseButton::Left,
-                        cx.listener(move |this, event: &MouseUpEvent, window, cx| {
+                        cx.listener(move |this, _event: &MouseUpEvent, window, cx| {
                             if let Some(ix_before) = this.selected_index {
                                 if ix != ix_before {
                                     return;

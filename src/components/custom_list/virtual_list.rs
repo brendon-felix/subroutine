@@ -13,22 +13,46 @@ use std::{
     cmp,
     ops::{Deref, Range},
     rc::Rc,
+    time::Duration,
 };
 
 use gpui::{
-    div, point, px, size, Along, AnyElement, App, AvailableSpace, Axis, Bounds, ContentMask,
-    Context, DeferredScrollToItem, Div, Element, ElementId, Entity, GlobalElementId, Half, Hitbox,
+    Along, AnyElement, App, AvailableSpace, Axis, Bounds, ContentMask, Context,
+    DeferredScrollToItem, Div, Element, ElementId, Entity, GlobalElementId, Half, Hitbox,
     InteractiveElement, IntoElement, IsZero as _, ListSizingBehavior, Pixels, Point, Render,
     ScrollHandle, ScrollStrategy, Size, Stateful, StatefulInteractiveElement, StyleRefinement,
-    Styled, Window,
+    Styled, Window, div, point, px, size,
 };
-use gpui_component::{scroll::ScrollbarHandle, AxisExt};
+use gpui_component::{AxisExt, scroll::ScrollbarHandle};
+use gpui_transitions::{Transition, WindowUseTransition};
 use smallvec::SmallVec;
+
+use crate::transitions;
+
+struct ScrollAnimation {
+    id: ElementId,
+    from: Point<Pixels>,
+    duration: Duration,
+}
+
+impl ScrollAnimation {
+    fn new(id: ElementId, from: Point<Pixels>, duration: Duration) -> Self {
+        Self { id, from, duration }
+    }
+
+    /// Can only be used during prepaint, paint, or render methonds.
+    fn transition(&self, window: &mut Window, cx: &mut App) -> Transition<Point<Pixels>> {
+        window
+            .use_keyed_transition(self.id.clone(), cx, self.duration, |_window, _cx| self.from)
+            .with_easing(transitions::ease_out_cubic)
+    }
+}
 
 struct VirtualListScrollHandleState {
     axis: Axis,
     items_count: usize,
     pub deferred_scroll_to_item: Option<DeferredScrollToItem>,
+    pub active_animation: Option<ScrollAnimation>,
 }
 
 /// A scroll handle for [`VirtualList`].
@@ -85,6 +109,7 @@ impl VirtualListScrollHandle {
                 axis: Axis::Vertical,
                 items_count: 0,
                 deferred_scroll_to_item: None,
+                active_animation: None,
             })),
             base_handle: ScrollHandle::default(),
         }
@@ -547,12 +572,33 @@ impl Element for VirtualList {
 
         let mut scroll_offset = self.scroll_handle.offset();
         if let Some(scroll_to_item) = scroll_state.deferred_scroll_to_item.take() {
-            scroll_offset = self.scroll_to_deferred_item(
+            let final_offset = self.scroll_to_deferred_item(
                 scroll_offset,
                 layout.item_size_with_gap,
                 &content_bounds,
                 scroll_to_item,
             );
+            let id = ElementId::NamedChild(
+                Box::new(self.id.clone()),
+                "virtual_list_scroll_animation".into(),
+            );
+            let duration = Duration::from_millis(400);
+            let animation = ScrollAnimation::new(id, scroll_offset, duration);
+            let transition = animation.transition(window, cx);
+            transition.update(cx, |this, cx| {
+                *this = final_offset;
+                cx.notify();
+            });
+            scroll_state.active_animation = Some(animation);
+        }
+
+        if let Some(active_animation) = &scroll_state.active_animation {
+            let transition = active_animation.transition(window, cx);
+            scroll_offset = *transition.evaluate(window, cx);
+
+            if transition.evaluate_delta(cx) >= 1.0 {
+                scroll_state.active_animation = None;
+            }
         }
 
         scroll_offset = scroll_offset
