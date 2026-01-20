@@ -3,14 +3,23 @@ use crate::{
         TaskStore,
         task_store::{ApiError, TaskCreated},
     },
-    views::{TaskListView, TestView},
+    tasks::TaskData,
+    views::{TaskListView, TestView, task_list_view::NavigateToView},
 };
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, IntoElement, ParentElement, Render,
-    Styled, Subscription, Window, div, prelude::FluentBuilder,
+    Styled, Subscription, Window, div, prelude::FluentBuilder, px,
 };
-use gpui_component::{ActiveTheme, button::Button, divider::Divider, h_flex, label::Label, v_flex};
+use gpui_component::{
+    ActiveTheme, IconName,
+    button::{Button, ButtonVariants},
+    divider::Divider,
+    h_flex,
+    label::Label,
+    v_flex,
+};
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MainViewMode {
     Home,
     TaskList,
@@ -27,8 +36,8 @@ pub struct MainView {
 
 impl MainView {
     pub fn new(task_store: Entity<TaskStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let task_list = cx.new(|cx| TaskListView::new(task_store.clone(), cx));
-        let test_view = cx.new(|cx| TestView::new(cx));
+        let task_list = cx.new(|cx| TaskListView::new(task_store.clone(), window, cx));
+        let test_view = cx.new(|cx| TestView::new(task_store.clone(), cx));
 
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle);
@@ -46,6 +55,13 @@ impl MainView {
             &task_store,
             |_this, _task_store, _event: &TaskCreated, cx| {
                 cx.notify();
+            },
+        ));
+
+        subscriptions.push(cx.subscribe(
+            &task_list,
+            |this, _task_list, event: &NavigateToView, cx| {
+                this.set_mode(event.mode, cx);
             },
         ));
 
@@ -70,11 +86,24 @@ impl MainView {
             .justify_center()
             .gap_4()
             .child(
+                div().flex().absolute().top_2().right_2().child(
+                    Button::new("home-to-tasks-btn")
+                        .w(px(112.0))
+                        .icon(IconName::Inbox)
+                        .ghost()
+                        .label("Task List")
+                        .on_click(cx.listener(|this, _event, _window, cx| {
+                            this.set_mode(MainViewMode::TaskList, cx);
+                        })),
+                ),
+            )
+            .child(
                 v_flex()
                     .child(
                         Label::new("Welcome to Subroutine")
                             .text_3xl()
                             .content_stretch()
+                            // .font(gpui::font("Hoefler Text")),
                             .font(gpui::font("Georgia")),
                     )
                     .child(Divider::horizontal().color(cx.theme().accent).w_full()),
@@ -87,20 +116,19 @@ impl MainView {
             )
             .child(
                 v_flex()
-                    .font(gpui::font("Georgia").italic())
+                    // .font(gpui::font("Georgia").italic())
+                    // .font(gpui::font("Monaco").italic())
                     .gap_4()
                     .children([
                         h_flex().gap_4().justify_between().children([
                             Button::new("home-btn-0")
                                 .flex_1()
                                 .outline()
-                                .p_4()
                                 .label("analysis paralysis")
                                 .text_color(cx.theme().red_light),
                             Button::new("home-btn-1")
                                 .flex_1()
                                 .outline()
-                                .p_4()
                                 .label("overstimulated")
                                 .text_color(cx.theme().yellow_light),
                         ]),
@@ -108,13 +136,11 @@ impl MainView {
                             Button::new("home-btn-2")
                                 .flex_1()
                                 .outline()
-                                .p_4()
                                 .label("hyperfocused")
                                 .text_color(cx.theme().green_light),
                             Button::new("home-btn-3")
                                 .flex_1()
                                 .outline()
-                                .p_4()
                                 .label("an instense emotion")
                                 .text_color(cx.theme().magenta_light),
                         ]),

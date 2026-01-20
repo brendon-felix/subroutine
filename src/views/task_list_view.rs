@@ -1,12 +1,14 @@
 use gpui::{
     App, AppContext, Context, ElementId, Entity, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window, div,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
 };
+use gpui_component::button::{Button, ButtonVariants};
 // use gpui_component::checkbox::Checkbox;
 use gpui_component::label::Label;
+use gpui_component::select::{Select, SelectState};
 // use gpui_component::list::{List, ListDelegate, ListEvent, ListItem, ListState};
 // use gpui_component::skeleton::Skeleton;
-use gpui_component::{Selectable, h_flex};
+use gpui_component::{ActiveTheme, IconName, IndexPath, Selectable, h_flex, v_flex};
 // use ticks::tasks::TaskPriority;
 
 use crate::components::checkbox::Checkbox;
@@ -18,6 +20,12 @@ use crate::stores::task_store::{ApiError, TaskCreated, TaskDeleted, TasksUpdated
 //     DetailsOpenRequested, TaskSelected, UiStateChanged, UiStateStore, ViewChanged,
 // };
 use crate::tasks::{TaskData, task_data_compare};
+use crate::views::main_view::MainViewMode;
+
+#[derive(Clone, Debug)]
+pub struct NavigateToView {
+    pub mode: MainViewMode,
+}
 
 pub struct TaskListDelegate {
     tasks_data: Vec<TaskData>,
@@ -41,6 +49,7 @@ impl TaskListDelegate {
             .cloned()
             .collect();
         tasks_data.sort_by(task_data_compare);
+        println!("Task view initialized with {} tasks", tasks_data.len());
         Self {
             tasks_data,
             filtered_tasks: Vec::new(),
@@ -225,6 +234,7 @@ pub struct TaskListView {
     task_store: Entity<TaskStore>,
     // ui_store: Entity<UiStateStore>,
     list_state: Option<Entity<ListState<TaskListDelegate>>>,
+    task_list_selection: Option<Entity<SelectState<Vec<&'static str>>>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -232,6 +242,7 @@ impl TaskListView {
     pub fn new(
         task_store: Entity<TaskStore>,
         // ui_store: Entity<UiStateStore>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut subscriptions = Vec::new();
@@ -273,6 +284,23 @@ impl TaskListView {
             task_store,
             // ui_store,
             list_state: None,
+            task_list_selection: cx
+                .new(|cx| {
+                    SelectState::new(
+                        vec![
+                            "All Tasks",
+                            "Completed",
+                            "Pending",
+                            "High Priority",
+                            "Due Today",
+                        ],
+                        Some(IndexPath::new(0)),
+                        window,
+                        cx,
+                    )
+                    // .selected_index(Some(0))
+                })
+                .into(),
             _subscriptions: subscriptions,
         }
     }
@@ -346,29 +374,65 @@ impl TaskListView {
     }
 }
 
-impl EventEmitter<()> for TaskListView {}
+impl EventEmitter<NavigateToView> for TaskListView {}
 
 impl Render for TaskListView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_list_state(window, cx);
 
         let list_state = self.list_state.as_ref().unwrap();
+        let selection_state = self.task_list_selection.as_ref().unwrap();
         div()
             .id("task-list")
             .size_full()
             .flex()
-            .flex_col()
-            // .p_4()
             .gap_3()
             .p_0p5()
             .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .overflow_y_hidden()
+                div().flex().absolute().top_2().right_2().child(
+                    Button::new("tasks-to-home-btn")
+                        .w(px(112.0))
+                        .icon(IconName::Map)
+                        .ghost()
+                        .label("Home")
+                        // .on_click(cx.listener(|_this, _event, _window, cx| {
+                        //     cx.emit(NavigateToView {
+                        //         mode: MainViewMode::Home,
+                        //     });
+                        // })),
+                        .on_click(cx.listener(|_this, _event, _window, cx| {
+                            cx.emit(NavigateToView {
+                                mode: MainViewMode::Home,
+                            });
+                        })),
+                ),
+            )
+            .child(
+                v_flex()
                     .size_full()
                     // .child(List::new(list_state).scrollbar_visible(false)),
                     // .child(List::new(list_state).paddings(Edges::all(px(14.0)))),
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px(50.0))
+                            .border_b_1()
+                            .border_color(cx.theme().border)
+                            // .relative()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                div().child(
+                                    Select::new(selection_state)
+                                        .appearance(false)
+                                        .text_center()
+                                        .rounded_md()
+                                        .w_32()
+                                        .flex(),
+                                ),
+                            ),
+                    )
                     .child(List::new(list_state)),
             )
     }

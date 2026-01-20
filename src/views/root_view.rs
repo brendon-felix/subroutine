@@ -5,10 +5,8 @@ use gpui::{
     Window, actions, div, px,
 };
 use gpui::{KeyBinding, prelude::*};
-use gpui_component::divider::Divider;
-use gpui_component::label::Label;
-use gpui_component::{ActiveTheme, Root, switch::Switch, v_flex};
-// use gpui_transitions::WindowUseTransition;
+use gpui_component::{ActiveTheme, Root};
+// use gpui_transitions::{Transition, WindowUseTransition};
 
 // use crate::app::ToggleCommandPalette;
 use crate::components::command_palette::{
@@ -18,16 +16,17 @@ use crate::components::command_palette::{
 use crate::components::resizable::{h_resizable, resizable_panel};
 // use crate::stores::ui_store::{TaskSelected, ViewChanged};
 use crate::stores::TaskStore;
-// use crate::transitions::ease_out;
-use crate::views::MainView;
-use crate::views::main_view::MainViewMode;
+use crate::stores::task_store::TasksUpdated;
+// use crate::transitions::ease_in_out;
+use crate::views::{MainView, MainViewMode, RightSidebarView};
 
 actions!(root_view, [ToggleCommandPalette, ToggleSideBar]);
 
 pub struct RootView {
+    task_store: Entity<TaskStore>,
     main_view: Entity<MainView>,
-    // right_sidebar: Entity<RightSidebarView>,
-    right_sidebar_collapsed: bool,
+    right_sidebar: Entity<RightSidebarView>,
+    // right_sidebar_collapsed: bool,
     focus_handle: FocusHandle,
     cmd_palette: Option<Entity<CommandPaletteState>>,
 }
@@ -40,13 +39,14 @@ impl RootView {
         ]);
 
         let main_view = cx.new(|cx| MainView::new(task_store.clone(), window, cx));
-        // let right_sidebar = cx.new(|cx| RightSidebarView::new(window, cx));
+        let right_sidebar = cx.new(|cx| RightSidebarView::new(task_store.clone(), window, cx));
         let focus_handle = cx.focus_handle();
 
         Self {
+            task_store,
             main_view,
-            // right_sidebar,
-            right_sidebar_collapsed: false,
+            right_sidebar,
+            // right_sidebar_collapsed: false,
             focus_handle,
             cmd_palette: None,
         }
@@ -92,21 +92,29 @@ impl CommandPaletteExt for RootView {
                     });
                 }
             }),
-            // Command::new("edit-copy", "Copy")
-            //     .description("Copy selected text")
-            //     // .icon("copy")
-            //     .shortcut("Cmd+C")
-            //     .on_select(|_window, _cx| {}),
-            // Command::new("edit-paste", "Paste")
-            //     .description("Paste from clipboard")
-            //     // .icon("clipboard")
-            //     .shortcut("Cmd+V")
-            //     .on_select(|_window, _cx| {}),
-            // Command::new("edit-find", "Find")
-            //     .description("Search in current file")
-            //     // .icon("search")
-            //     .shortcut("Cmd+F")
-            //     .on_select(|_window, _cx| {}),
+            Command::new("refresh-tasks", "Refresh task list").on_select({
+                let entity = self.task_store.clone();
+                move |window, cx| {
+                    cx.update_entity(&entity, |tasks, cx| {
+                        tasks.refresh_tasks(cx);
+                    });
+                }
+            }),
+            Command::new("edit-copy", "Copy")
+                .description("Copy selected text")
+                // .icon("copy")
+                .shortcut("Cmd+C")
+                .on_select(|_window, _cx| {}),
+            Command::new("edit-paste", "Paste")
+                .description("Paste from clipboard")
+                // .icon("clipboard")
+                .shortcut("Cmd+V")
+                .on_select(|_window, _cx| {}),
+            Command::new("edit-find", "Find")
+                .description("Search in current file")
+                // .icon("search")
+                .shortcut("Cmd+F")
+                .on_select(|_window, _cx| {}),
             Command::new("view-toggle", "Toggle Right Sidebar")
                 .description("Show or hide the sidebar")
                 // .icon("sidebar")
@@ -135,7 +143,7 @@ impl EventEmitter<()> for RootView {}
 
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // let right_sidebar_collapsed = self.right_sidebar.read(cx).is_collapsed();
+        let right_sidebar_collapsed = self.right_sidebar.read(cx).is_collapsed();
 
         // let slide_transition = Some(
         //     window
@@ -155,12 +163,15 @@ impl Render for RootView {
                 .flex()
                 .track_focus(&self.focus_handle)
                 .on_action(
-                    cx.listener(|this: &mut RootView, _: &ToggleSideBar, _window, cx| {
-                        // // this.right_sidebar.update(cx, |sidebar, cx| {
-                        // //     sidebar.toggle_collapsed(cx);
-                        // // });
+                    cx.listener(|this: &mut RootView, _: &ToggleSideBar, window, cx| {
+                        let collapsed = this
+                            .right_sidebar
+                            .update(cx, |sidebar, cx| sidebar.toggle_collapsed(cx));
+                        if collapsed {
+                            window.focus(&this.focus_handle(cx));
+                        }
                         // this.open_sheet(window, cx);
-                        this.right_sidebar_collapsed = !this.right_sidebar_collapsed;
+                        // this.right_sidebar_collapsed = !this.right_sidebar_collapsed;
                         cx.notify();
                     }),
                 )
@@ -200,7 +211,7 @@ impl Render for RootView {
                                 div()
                                     .size_full()
                                     .p_2()
-                                    .when(!self.right_sidebar_collapsed, |div| div.pr_1())
+                                    .when(!right_sidebar_collapsed, |div| div.pr_1())
                                     .bg(cx.theme().secondary)
                                     // .bg(gpui::red())
                                     .child(
@@ -226,56 +237,8 @@ impl Render for RootView {
                             resizable_panel()
                                 .size(px(250.0))
                                 .size_range(px(200.0)..px(500.0))
-                                .visible(!self.right_sidebar_collapsed)
-                                .child(
-                                    div()
-                                        .size_full()
-                                        .p_2()
-                                        .pl_1()
-                                        .bg(cx.theme().secondary)
-                                        .child(
-                                            div()
-                                                .size_full()
-                                                .bg(cx.theme().background)
-                                                .rounded_lg()
-                                                .child(
-                                                    // right sidebar content
-                                                    v_flex()
-                                                        .overflow_hidden()
-                                                        .size_full()
-                                                        .gap_3()
-                                                        .p_4()
-                                                        .child(
-                                                            Label::new("Settings")
-                                                                .text_lg()
-                                                                .font(gpui::font("Georgia")),
-                                                        )
-                                                        .child(Divider::horizontal())
-                                                        .child(
-                                                            Switch::new("dark-mode-switch")
-                                                                .checked(cx.theme().is_dark())
-                                                                .label("Dark mode")
-                                                                .on_click(cx.listener(
-                                                                    |_view, _checked, _, cx| {
-                                                                        // view.is_enabled = *checked;
-                                                                        cx.notify();
-                                                                    },
-                                                                )),
-                                                        )
-                                                        .child(
-                                                            Switch::new("alerts-switch")
-                                                                .checked(true)
-                                                                .label("Enable alerts")
-                                                                .on_click(cx.listener(
-                                                                    |_view, _checked, _, cx| {
-                                                                        // view.is_enabled = *checked;
-                                                                        cx.notify();
-                                                                    },
-                                                                )),
-                                                        ), // .child(Divider::horizontal()),
-                                                ),
-                                        ),
-                                ),
+                                .visible(!right_sidebar_collapsed)
+                                .child(self.right_sidebar.clone()),
                         ),
                 )
                 .when_some(self.cmd_palette.as_ref(), |content, cmd_palette| {

@@ -1,26 +1,118 @@
-use gpui::prelude::*;
-use gpui::{Context, EventEmitter, IntoElement, Render, Window, div, rgb};
+use std::thread::sleep;
+use std::time::Duration;
+
+use gpui::{
+    AnyElement, App, Context, Div, ElementId, Entity, EventEmitter, Interactivity, IntoElement,
+    Render, SharedString, Stateful, StyleRefinement, Window, div, font, px, size,
+};
+use gpui::{FocusHandle, prelude::*};
 // use gpui_component::input::InputState;
 use gpui_component::label::Label;
-use gpui_component::v_flex;
+use gpui_component::scroll::ScrollableElement;
+use gpui_component::{ActiveTheme, Selectable, Sizable, StyledExt, h_flex, v_flex};
+use smallvec::SmallVec;
 
-// use ticks::tasks::TaskPriority;
+use crate::components::checkbox::Checkbox;
+use crate::components::pipeline::{NavigateDown, NavigateUp};
+use crate::stores::TaskStore;
+use crate::stores::task_store::{ApiError, TaskCreated, TaskDeleted, TasksUpdated};
+use crate::tasks::{TaskData, task_data_compare};
 
-// use crate::stores::ui_store::{TaskSelected, UiStateChanged, UiStateStore};
+struct Pipeline {
+    task_store: Entity<TaskStore>,
+    task_data: Vec<TaskData>,
+}
+
+impl Pipeline {
+    pub fn new(task_store: Entity<TaskStore>, cx: &mut Context<Self>) -> Self {
+        let mut pipeline = Self {
+            task_store,
+            task_data: vec![],
+        };
+        pipeline.update_tasks(cx);
+        pipeline
+    }
+
+    pub fn update_tasks(&mut self, cx: &mut Context<Self>) {
+        self.task_data = self
+            .task_store
+            .read(cx)
+            // .get_filtered_tasks(&current_view)
+            .get_all_tasks()
+            .into_iter()
+            .cloned()
+            .collect();
+        self.task_data.sort_by(task_data_compare);
+    }
+}
+
+impl Render for Pipeline {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .flex_col_reverse()
+            .size_full()
+            .overflow_hidden()
+            // .overflow_y_scrollbar()
+            .child(
+                v_flex().p_3().gap_3().flex_col_reverse().children(
+                    self.task_data
+                        .iter()
+                        .take(5)
+                        .enumerate()
+                        .map(|(i, task)| {
+                            let title = task.title.clone().unwrap_or("Untitled".into());
+                            // Label::new(title)
+                            //     .font(font("Arial"))
+                            //     .p_2()
+                            //     .bg(cx.theme().background)
+                            //     .rounded_md()
+                            //     .border_1()
+                            //     .border_color(cx.theme().border)
+                            let opacity = 1.0 - (i as f32 * 0.2);
+                            div()
+                                .id(ElementId::NamedInteger("pipeline-item".into(), i as u64))
+                                .h_32()
+                                .p_2()
+                                .bg(cx.theme().background)
+                                .opacity(opacity)
+                                .rounded_md()
+                                .border_1()
+                                .border_color(cx.theme().border)
+                                .hover(|this| this.bg(cx.theme().list_hover).cursor_pointer())
+                                .child(
+                                    Checkbox::new(ElementId::NamedInteger(
+                                        "pipeline-checkbox".into(),
+                                        i as u64,
+                                    ))
+                                    .checked(false)
+                                    .large()
+                                    .on_click(cx.listener(move |_view, _checked, _window, cx| {})),
+                                )
+                                .child(
+                                    Label::new(title)
+                                        .font(font("Arial"))
+                                        .text_color(cx.theme().foreground),
+                                )
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+            )
+    }
+}
 
 pub struct RightSidebarView {
-    // title_input: Entity<InputState>,
-    // desc_input: Entity<InputState>,
-    // ui_store: Entity<UiStateStore>,
     collapsed: bool,
-    // last_selected_task_id: Option<String>,
+    pipeline: Entity<Pipeline>,
+    task_store: Entity<TaskStore>,
+    // _subscriptions: Vec<Subscription>,
 }
 
 impl RightSidebarView {
     pub fn new(
+        task_store: Entity<TaskStore>,
         // ui_store: Entity<UiStateStore>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
         // let title_input = cx.new(|cx| InputState::new(window, cx));
         // let desc_input = cx.new(|cx| InputState::new(window, cx).multi_line(true));
@@ -73,19 +165,140 @@ impl RightSidebarView {
         //     },
         // ));
 
+        // let mut subscriptions = Vec::new();
+
+        // // Subscribe to task store events
+        // subscriptions.push(cx.subscribe(
+        //     &task_store,
+        //     |this, _task_store, _event: &TasksUpdated, cx| {
+        //         this.update_pipeline(cx);
+        //         cx.notify();
+        //     },
+        // ));
+
+        // subscriptions.push(cx.subscribe(
+        //     &task_store,
+        //     |this, _task_store, _event: &TaskCreated, cx| {
+        //         this.update_pipeline(cx);
+        //         cx.notify();
+        //     },
+        // ));
+
+        // subscriptions.push(cx.subscribe(
+        //     &task_store,
+        //     |this, _task_store, _event: &TaskDeleted, cx| {
+        //         this.update_pipeline(cx);
+        //         cx.notify();
+        //     },
+        // ));
+
+        // subscriptions.push(cx.subscribe(
+        //     &task_store,
+        //     |_this, _task_store, event: &ApiError, cx| {
+        //         eprintln!("TaskListView: API Error: {}", event.message);
+        //         cx.notify();
+        //     },
+        // ));
+
+        // Subscribe to task store events
+        cx.subscribe(
+            &task_store,
+            |this, _task_store, _event: &TasksUpdated, cx| {
+                this.update_pipeline(cx);
+                cx.notify();
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &task_store,
+            |this, _task_store, _event: &TaskCreated, cx| {
+                this.update_pipeline(cx);
+                cx.notify();
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &task_store,
+            |this, _task_store, _event: &TaskDeleted, cx| {
+                this.update_pipeline(cx);
+                cx.notify();
+            },
+        )
+        .detach();
+
+        cx.subscribe(&task_store, |_this, _task_store, event: &ApiError, cx| {
+            eprintln!("TaskListView: API Error: {}", event.message);
+            cx.notify();
+        })
+        .detach();
+
+        // let options = GalleryOptions {
+        //     axis: gpui::Axis::Vertical,
+        //     max_item_size: size(px(200.), px(100.)),
+        //     transition_duration: Duration::from_millis(350),
+        //     ..Default::default()
+        // };
+
+        // let pipeline_list = cx.new(|cx| Pipeline::new(task_store.clone(), cx));
+        let pipeline_list = cx.new(|cx| Pipeline {
+            task_store: task_store.clone(),
+            task_data: vec![],
+        });
+
         Self {
             // title_input,
             // desc_input,
             // ui_store,
+            task_store,
             collapsed: false,
-            // last_selected_task_id: None,
-            // _subscriptions: vec![],
+            pipeline: pipeline_list, // last_selected_task_id: None,
+                                     // _subscriptions: vec![],
         }
     }
 
-    pub fn toggle_collapsed(&mut self, cx: &mut Context<Self>) {
+    // fn ensure_gallery_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    //     let delegate =
+    //             // TaskListDelegate::new(self.task_store.clone(), self.ui_store.clone(), cx);
+    //             Pipeline::new(self.task_store.clone(), cx);
+    //     // let list_state = cx.new(|cx| ListState::new(delegate, window, cx).searchable(true));
+    //     let gallery_state = cx.new(|cx| GalleryState::new(delegate, window, cx));
+
+    //     // Subscribe to list events
+    //     // self._subscriptions.push(cx.subscribe(
+    //     //     &list_state,
+    //     //     |this, _list_state, event: &ListEvent, cx| {
+    //     //         match event {
+    //     //             ListEvent::Select(_ix) => {
+    //     //                 // Selection via keyboard - don't open details, just update
+    //     //             }
+    //     //             ListEvent::Confirm(ix) => {
+    //     //                 // Handle Enter key - open details and select task
+    //     //                 this.handle_task_click(*ix, cx);
+    //     //             }
+    //     //             ListEvent::Cancel => {
+    //     //                 // Selection cancelled
+    //     //             }
+    //     //         }
+    //     //         cx.notify();
+    //     //     },
+    //     // ));
+
+    //     self.list_state = Some(list_state);
+    // }
+
+    fn update_pipeline(&mut self, cx: &mut Context<Self>) {
+        self.pipeline.update(cx, |pipeline, cx| {
+            pipeline.update_tasks(cx);
+            cx.notify();
+        });
+    }
+
+    pub fn toggle_collapsed(&mut self, cx: &mut Context<Self>) -> bool {
         self.collapsed = !self.collapsed;
         cx.notify();
+        self.collapsed
     }
 
     pub fn is_collapsed(&self) -> bool {
@@ -144,126 +357,54 @@ impl RightSidebarView {
 impl EventEmitter<()> for RightSidebarView {}
 
 impl Render for RightSidebarView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        // Update input fields with selected task data during render
-        // self.update_selected_task(window, cx);
-
-        // let selected_task = self.ui_store.read(cx).get_selected_task().clone();
-
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
-            // .bg(rgb(0x191919))
-            // .border_l_1()
-            .border_color(rgb(0x303030))
+            .p_2()
+            .pl_1()
+            .bg(cx.theme().secondary)
             .child(
-                v_flex()
+                div()
                     .size_full()
+                    .bg(cx.theme().background)
+                    .rounded_lg()
                     .child(
-                        // Header
-                        div().p_4().border_b_1().border_color(rgb(0x303030)).child(
-                            v_flex()
-                                .gap_1()
-                                .child(
-                                    Label::new("Task Details")
-                                        .text_lg()
-                                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                                        .text_color(rgb(0xE0E0E0)),
-                                )
-                                .child(
-                                    Label::new("Selected Task")
-                                        .text_xs()
-                                        .text_color(rgb(0x888888)),
-                                ),
-                        ),
-                    )
-                    .child(
-                        // Content
-                        div().flex_1().overflow_y_hidden().p_4().child(
-                            v_flex().gap_4().size_full(), // .when_some(selected_task.as_ref(), |this, task| {
-                                                          //     this.child(
-                                                          //         v_flex()
-                                                          //             .gap_3()
-                                                          //             .child(
-                                                          //                 v_flex()
-                                                          //                     .gap_1()
-                                                          //                     .child(
-                                                          //                         Label::new("Priority")
-                                                          //                             .text_sm()
-                                                          //                             .text_color(rgb(0xA0A0A0)),
-                                                          //                     )
-                                                          //                     .child({
-                                                          //                         let (priority_text, priority_color) =
-                                                          //                             match &task.priority {
-                                                          //                                 Some(TaskPriority::High) => {
-                                                          //                                     ("High", rgb(0xff4444))
-                                                          //                                 }
-                                                          //                                 Some(TaskPriority::Medium) => {
-                                                          //                                     ("Medium", rgb(0xffaa00))
-                                                          //                                 }
-                                                          //                                 Some(TaskPriority::Low) => {
-                                                          //                                     ("Low", rgb(0x4444ff))
-                                                          //                                 }
-                                                          //                                 Some(TaskPriority::None) => {
-                                                          //                                     ("None", rgb(0x888888))
-                                                          //                                 }
-                                                          //                                 None => ("None", rgb(0x888888)),
-                                                          //                             };
-                                                          //                         Label::new(priority_text)
-                                                          //                             .text_color(priority_color)
-                                                          //                     }),
-                                                          //             )
-                                                          //             .when_some(task.due_date.as_ref(), |this, due_date| {
-                                                          //                 this.child(
-                                                          //                     v_flex()
-                                                          //                         .gap_1()
-                                                          //                         .child(
-                                                          //                             Label::new("Due Date")
-                                                          //                                 .text_sm()
-                                                          //                                 .text_color(rgb(0xA0A0A0)),
-                                                          //                         )
-                                                          //                         .child(
-                                                          //                             Label::new(
-                                                          //                                 due_date
-                                                          //                                     .format("%B %d, %Y at %I:%M %p")
-                                                          //                                     .to_string(),
-                                                          //                             )
-                                                          //                             .text_color(rgb(0xE0E0E0)),
-                                                          //                         ),
-                                                          //                 )
-                                                          //             })
-                                                          //             .child(
-                                                          //                 v_form()
-                                                          //                     .child(field().label("Title").child(
-                                                          //                         Input::new(&self.title_input), // .bg(rgb(0x191919)),
-                                                          //                     ))
-                                                          //                     .child(field().label("Description").child(
-                                                          //                         Input::new(&self.desc_input).h(px(200.0)), // .bg(rgb(0x191919)),
-                                                          //                     )),
-                                                          //             ),
-                                                          //     )
-                                                          // })
-                                                          // .when(selected_task.is_none(), |this| {
-                                                          //     this.child(
-                                                          //         v_flex()
-                                                          //             .items_center()
-                                                          //             .justify_center()
-                                                          //             .flex_1()
-                                                          //             .gap_2()
-                                                          //             .child(
-                                                          //                 Icon::new(IconName::Info).text_color(rgb(0x888888)),
-                                                          //             )
-                                                          //             .child(
-                                                          //                 Label::new("No task selected")
-                                                          //                     .text_color(rgb(0x888888)),
-                                                          //             )
-                                                          //             .child(
-                                                          //                 Label::new("Select a task to view details")
-                                                          //                     .text_sm()
-                                                          //                     .text_color(rgb(0x666666)),
-                                                          //             ),
-                                                          //     )
-                                                          // }),
-                        ),
+                        // right sidebar content
+                        v_flex()
+                            .size_full()
+                            .pt_4()
+                            .gap_3()
+                            .items_center()
+                            // .child(
+                            //     Label::new("Settings")
+                            //         .text_lg()
+                            //         .font(gpui::font("Georgia")),
+                            // )
+                            // .child(Divider::horizontal())
+                            // .child(
+                            //     Switch::new("dark-mode-switch")
+                            //         .checked(cx.theme().is_dark())
+                            //         .label("Dark mode")
+                            //         .on_click(cx.listener(
+                            //             |_view, _checked, _, cx| {
+                            //                 // view.is_enabled = *checked;
+                            //                 cx.notify();
+                            //             },
+                            //         )),
+                            // )
+                            // .child(
+                            //     Switch::new("alerts-switch")
+                            //         .checked(true)
+                            //         .label("Enable alerts")
+                            //         .on_click(cx.listener(
+                            //             |_view, _checked, _, cx| {
+                            //                 // view.is_enabled = *checked;
+                            //                 cx.notify();
+                            //             },
+                            //         )),
+                            // ), // .child(Divider::horizontal()),
+                            .child(Label::new("Pipeline").text_lg().font(font("Georgia")))
+                            .child(self.pipeline.clone()),
                     ),
             )
     }
