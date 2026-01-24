@@ -13,7 +13,6 @@ mod item;
 mod layout;
 
 pub use delegate::*;
-pub use item::*;
 pub use layout::*;
 
 pub fn reverse(t: f32) -> f32 {
@@ -376,7 +375,7 @@ where
                             if this.options.axis == Axis::Vertical {
                                 return;
                             }
-                            println!("using axis: {:?}", this.options.axis);
+                            // println!("using axis: {:?}", this.options.axis);
                             if this.focused_index > 0 {
                                 let new_index = this.focused_index - 1;
                                 this.focused_index = new_index;
@@ -403,7 +402,7 @@ where
                             if this.options.axis == Axis::Vertical {
                                 return;
                             }
-                            println!("using axis: {:?}", this.options.axis);
+                            // println!("using axis: {:?}", this.options.axis);
                             if this.focused_index < this.num_entries.saturating_sub(1) {
                                 let new_index = this.focused_index + 1;
                                 this.focused_index = new_index;
@@ -430,7 +429,7 @@ where
                             if this.options.axis == Axis::Horizontal {
                                 return;
                             }
-                            println!("using axis: {:?}", this.options.axis);
+                            // println!("using axis: {:?}", this.options.axis);
                             if this.focused_index > 0 {
                                 let new_index = this.focused_index - 1;
                                 this.focused_index = new_index;
@@ -457,7 +456,7 @@ where
                             if this.options.axis == Axis::Horizontal {
                                 return;
                             }
-                            println!("using axis: {:?}", this.options.axis);
+                            // println!("using axis: {:?}", this.options.axis);
                             if this.focused_index < this.num_entries.saturating_sub(1) {
                                 let new_index = this.focused_index + 1;
                                 this.focused_index = new_index;

@@ -2,22 +2,18 @@ use anyhow::Result;
 // use chrono::Utc;
 use gpui::{Context, EventEmitter};
 use std::collections::HashMap;
+use ticks::tasks::TaskID;
 use ticks::{AccessToken, TickTick};
 
+use crate::app::ResultExt;
 use crate::auth;
 // use crate::stores::ui_store::ViewType;
-use crate::tasks::{TaskData, fetch_all_tasks};
+use crate::tasks::{TaskData, fetch_all_tasks, task_data_compare};
 
-#[derive(Clone, Debug)]
 pub struct TasksUpdated;
-
-#[derive(Clone, Debug)]
-pub struct TaskCreated;
-
-#[derive(Clone, Debug)]
-pub struct TaskDeleted;
-
-#[derive(Clone, Debug)]
+// pub struct TaskCreated;
+// pub struct TaskDeleted;
+// pub struct TaskMoved(TaskID);
 pub struct ApiError {
     pub message: String,
 }
@@ -30,22 +26,18 @@ pub struct ApiError {
 //     pub priority: Option<u8>,
 // }
 
-trait ResultExt<T> {
-    fn log_err(self);
-}
-
-impl<T> ResultExt<T> for Result<T> {
-    fn log_err(self) {
-        if let Err(err) = self {
-            eprintln!("Error: {}", err);
-        }
-    }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TaskLocation {
+    TaskList,
+    Pipeline(usize),
 }
 
 pub struct TaskStore {
     api_client: Option<TickTick>,
     access_token: Option<AccessToken>,
-    tasks: HashMap<String, TaskData>,
+    tasks: HashMap<TaskID, (TaskData, TaskLocation)>,
+    // task_list: Vec<TaskID>,
+    // pipeline: Vec<TaskID>,
 }
 
 impl TaskStore {
@@ -85,7 +77,7 @@ impl TaskStore {
                             this.api_client = Some(client);
                             this.access_token = Some(access_token);
                             cx.notify();
-                            this.refresh_tasks(cx);
+                            this.refresh_tasks(cx).log_err();
                         }
                         Err(e) => {
                             cx.emit(ApiError {
@@ -111,35 +103,128 @@ impl TaskStore {
         spawned.detach();
     }
 
-    pub fn refresh_tasks(&mut self, cx: &mut Context<Self>) {
-        if let Some(ref client) = self.api_client {
-            let client = client.clone();
-            let spawned = cx.spawn(async move |this, cx| match fetch_all_tasks(&client).await {
-                Ok(tasks) => {
-                    this.update(cx, |this, cx| {
-                        this.tasks.clear();
-                        for task in tasks {
-                            let task_data = TaskData::from_task(&task);
-                            if let Some(task_id) = &task_data.task_id {
-                                this.tasks.insert(task_id.0.clone(), task_data);
-                            }
+    pub fn refresh_tasks(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        // if let Some(ref client) = self.api_client {
+        //     let client = client.clone();
+        //     let spawned = cx.spawn(async move |this, cx| match fetch_all_tasks(&client).await {
+        //         Ok(tasks) => {
+        //             this.update(cx, |this, cx| {
+        //                 this.tasks.clear();
+        //                 for (i, task) in tasks.iter().enumerate() {
+        //                     let task_data = TaskData::from_task(task);
+        //                     // for now, just put all tasks in the task list
+        //                     let task_location = TaskLocation::TaskList(i);
+        //                     if let Some(task_id) = &task_data.task_id {
+        //                         this.tasks
+        //                             .insert(task_id.0.clone(), (task_data, task_location));
+        //                     }
+        //                 }
+        //                 cx.emit(TasksUpdated);
+        //                 cx.notify();
+        //             })
+        //             .log_err();
+        //         }
+        //         Err(e) => {
+        //             this.update(cx, |_this, cx| {
+        //                 cx.emit(ApiError {
+        //                     message: format!("Failed to fetch tasks: {}", e),
+        //                 });
+        //                 cx.notify();
+        //             })
+        //             .log_err();
+        //         }
+        //     });
+        //     spawned.detach();
+        // }
+
+        let client = match &self.api_client {
+            Some(client) => client.clone(),
+            None => {
+                cx.emit(ApiError {
+                    message: "API client not initialized".to_string(),
+                });
+                cx.notify();
+                return Ok(());
+            }
+        };
+
+        let spawned = cx.spawn(async move |this, cx| match fetch_all_tasks(&client).await {
+            Ok(tasks) => {
+                this.update(cx, |this, cx| {
+                    this.tasks.clear();
+                    for task in tasks {
+                        let task_data = TaskData::from_task(&task);
+                        let task_location = TaskLocation::TaskList;
+                        if let Some(task_id) = &task_data.task_id {
+                            this.tasks
+                                .insert(task_id.clone(), (task_data, task_location));
                         }
-                        cx.emit(TasksUpdated);
-                        cx.notify();
-                    })
-                    .log_err();
-                }
-                Err(e) => {
-                    this.update(cx, |_this, cx| {
-                        cx.emit(ApiError {
-                            message: format!("Failed to fetch tasks: {}", e),
-                        });
-                        cx.notify();
-                    })
-                    .log_err();
-                }
-            });
-            spawned.detach();
+                    }
+                    cx.emit(TasksUpdated);
+                    cx.notify();
+                })
+                .log_err();
+            }
+            Err(e) => {
+                this.update(cx, |_this, cx| {
+                    cx.emit(ApiError {
+                        message: format!("Failed to fetch tasks: {}", e),
+                    });
+                    cx.notify();
+                })
+                .log_err();
+            }
+        });
+
+        spawned.detach();
+        Ok(())
+    }
+
+    pub fn task_list_data(&self) -> Vec<TaskData> {
+        let mut data = self
+            .tasks
+            .iter()
+            .filter(|(_, (_, location))| matches!(location, TaskLocation::TaskList))
+            .map(|(_, (task_data, _))| task_data)
+            .cloned()
+            .collect::<Vec<TaskData>>();
+
+        data.sort_by(task_data_compare);
+        data
+    }
+
+    pub fn pipeline_data(&self) -> Vec<TaskData> {
+        let mut data = self
+            .tasks
+            .iter()
+            .filter(|(_, (_, location))| matches!(location, TaskLocation::Pipeline(_)))
+            .map(|(_, (task_data, location))| (task_data.clone(), location.clone()))
+            .collect::<Vec<(TaskData, TaskLocation)>>();
+
+        // Sort by pipeline index
+        data.sort_by_key(|(_, location)| {
+            if let TaskLocation::Pipeline(index) = location {
+                *index
+            } else {
+                usize::MAX
+            }
+        });
+
+        data.into_iter().map(|(task_data, _)| task_data).collect()
+    }
+
+    pub fn update_location(
+        &mut self,
+        task_id: &TaskID,
+        new_location: TaskLocation,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if let Some((_, location)) = self.tasks.get_mut(task_id) {
+            *location = new_location;
+            cx.emit(TasksUpdated);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Task ID not found"))
         }
     }
 
@@ -147,10 +232,10 @@ impl TaskStore {
     //     self.tasks.values().collect()
     // }
 
-    /// Filter tasks based on the selected view type
-    /// - TaskList: All tasks
-    /// - Today: Overdue tasks and tasks due today
-    /// - Upcoming: Tasks due in the next 7 days (excluding today's and overdue)
+    // /// Filter tasks based on the selected view type
+    // /// - TaskList: All tasks
+    // /// - Today: Overdue tasks and tasks due today
+    // /// - Upcoming: Tasks due in the next 7 days (excluding today's and overdue)
     // pub fn get_filtered_tasks(&self, view_type: &ViewType) -> Vec<&TaskData> {
     //     let now = Utc::now();
     //     let today_end = now.date_naive().and_hms_opt(23, 59, 59).unwrap().and_utc();
@@ -198,9 +283,9 @@ impl TaskStore {
     //     }
     // }
 
-    pub fn get_all_tasks(&self) -> Vec<&TaskData> {
-        self.tasks.values().collect()
-    }
+    // pub fn get_all_tasks(&self) -> Vec<&TaskData> {
+    //     self.tasks.values().collect()
+    // }
 
     // pub fn get_task_by_id(&self, task_id: &str) -> Option<&TaskData> {
     //     self.tasks.get(task_id)
@@ -208,6 +293,6 @@ impl TaskStore {
 }
 
 impl EventEmitter<TasksUpdated> for TaskStore {}
-impl EventEmitter<TaskCreated> for TaskStore {}
-impl EventEmitter<TaskDeleted> for TaskStore {}
+// impl EventEmitter<TaskCreated> for TaskStore {}
+// impl EventEmitter<TaskDeleted> for TaskStore {}
 impl EventEmitter<ApiError> for TaskStore {}

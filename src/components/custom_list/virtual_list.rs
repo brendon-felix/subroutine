@@ -1,13 +1,3 @@
-//! Virtual List for render a large number of items with uniform size.
-//!
-//! > NOTE: This must ensure each column width or row height.
-//!
-//! Only visible range are rendered for performance reasons.
-//!
-//! Inspired by `gpui::uniform_list`.
-//! https://github.com/zed-industries/zed/blob/0ae1603610ab6b265bdfbee7b8dbc23c5ab06edc/crates/gpui/src/elements/uniform_list.rs
-//!
-//! Unlike the `uniform_list`, this implementation supports both horizontal and vertical layouts.
 use std::{
     cell::RefCell,
     cmp,
@@ -578,10 +568,7 @@ impl Element for VirtualList {
                 &content_bounds,
                 scroll_to_item,
             );
-            let id = ElementId::NamedChild(
-                Box::new(self.id.clone()),
-                "virtual_list_scroll_animation".into(),
-            );
+            let id = ElementId::from((self.id.clone(), "scroll_animation"));
             let duration = Duration::from_millis(400);
             let animation = ScrollAnimation::new(id, scroll_offset, duration);
             let transition = animation.transition(window, cx);

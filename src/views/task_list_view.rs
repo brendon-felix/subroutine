@@ -1,24 +1,32 @@
 use gpui::{
-    App, AppContext, Context, ElementId, Entity, EventEmitter, InteractiveElement, IntoElement,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window, div, px,
+    App, AppContext, Context, CursorStyle, ElementId, Entity, EventEmitter, InteractiveElement,
+    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
+    div, px,
 };
-use gpui_component::button::{Button, ButtonVariants};
-// use gpui_component::checkbox::Checkbox;
-use gpui_component::label::Label;
-use gpui_component::select::{Select, SelectState};
-// use gpui_component::list::{List, ListDelegate, ListEvent, ListItem, ListState};
-// use gpui_component::skeleton::Skeleton;
-use gpui_component::{ActiveTheme, IconName, IndexPath, Selectable, h_flex, v_flex};
-// use ticks::tasks::TaskPriority;
+use gpui_component::{
+    ActiveTheme, IconName, IndexPath, Selectable,
+    button::{Button, ButtonVariants},
+    h_flex,
+    label::Label,
+    select::{Select, SelectState},
+    v_flex,
+};
 
-use crate::components::checkbox::Checkbox;
-use crate::components::custom_list::{List, ListDelegate, ListEvent, ListItem, ListState};
-// use crate::list_rewrite::{List, ListDelegate, ListEvent, ListItem, ListState};
-use crate::stores::TaskStore;
-use crate::stores::task_store::{ApiError, TaskCreated, TaskDeleted, TasksUpdated};
-// use crate::stores::ui_store::{
-//     DetailsOpenRequested, TaskSelected, UiStateChanged, UiStateStore, ViewChanged,
-// };
+use crate::{
+    app::ResultExt,
+    components::{
+        checkbox::Checkbox,
+        custom_list::{List, ListDelegate, ListEvent, ListItem, ListState},
+        drag_drop::{DragData, Draggable, DropZone, DropZoneStyle},
+    },
+};
+
+use crate::stores::{
+    TaskStore,
+    drag_drop_store::DragDropStore,
+    task_store::{ApiError, TaskLocation, TasksUpdated},
+};
+
 use crate::tasks::{TaskData, task_data_compare};
 use crate::views::main_view::MainViewMode;
 
@@ -34,22 +42,13 @@ pub struct TaskListDelegate {
     search_query: String,
     selected_index: Option<usize>,
     task_store: Entity<TaskStore>,
-    // ui_store: Entity<UiStateStore>,
 }
 
 impl TaskListDelegate {
-    // pub fn new(task_store: Entity<TaskStore>, ui_store: Entity<UiStateStore>, cx: &App) -> Self {
     pub fn new(task_store: Entity<TaskStore>, cx: &App) -> Self {
-        // let current_view = ui_store.read(cx).current_view.clone();
-        let mut tasks_data: Vec<TaskData> = task_store
-            .read(cx)
-            // .get_filtered_tasks(&current_view)
-            .get_all_tasks()
-            .into_iter()
-            .cloned()
-            .collect();
+        let mut tasks_data: Vec<TaskData> = task_store.read(cx).task_list_data();
         tasks_data.sort_by(task_data_compare);
-        println!("Task view initialized with {} tasks", tasks_data.len());
+
         Self {
             tasks_data,
             filtered_tasks: Vec::new(),
@@ -57,23 +56,12 @@ impl TaskListDelegate {
             search_query: String::new(),
             selected_index: None,
             task_store,
-            // ui_store,
         }
     }
 
     pub fn update_tasks(&mut self, cx: &App) {
-        // let current_view = self.ui_store.read(cx).current_view.clone();
-        self.tasks_data = self
-            .task_store
-            .read(cx)
-            // .get_filtered_tasks(&current_view)
-            .get_all_tasks()
-            .into_iter()
-            .cloned()
-            .collect();
-        self.tasks_data.sort_by(task_data_compare);
+        self.tasks_data = self.task_store.read(cx).task_list_data();
 
-        // If we're searching, reapply the filter to the updated tasks
         if self.is_searching && !self.search_query.is_empty() {
             self.filtered_tasks = self
                 .tasks_data
@@ -101,11 +89,6 @@ impl TaskListDelegate {
             &self.tasks_data
         }
     }
-
-    // pub fn get_selected_task(&self) -> Option<&TaskData> {
-    //     self.selected_index
-    //         .and_then(|ix| self.tasks_data.get(ix.row))
-    // }
 }
 
 impl ListDelegate for TaskListDelegate {
@@ -116,7 +99,7 @@ impl ListDelegate for TaskListDelegate {
     fn render_item(
         &mut self,
         ix: usize,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<ListState<TaskListDelegate>>,
     ) -> Option<ListItem> {
         self.current_tasks().get(ix).map(|task| {
@@ -129,72 +112,66 @@ impl ListDelegate for TaskListDelegate {
                 .replace('\r', " ");
             let is_selected = Some(ix) == self.selected_index;
 
-            // let theme = cx.theme();
-
-            // // Choose icon based on priority
-            // let icon_color = match task.priority {
-            //     Some(TaskPriority::High) => rgb(0xff4444),
-            //     Some(TaskPriority::Medium) => rgb(0xffaa00),
-            //     Some(TaskPriority::Low) => rgb(0x4444ff),
-            //     _ => rgb(0x888888),
-            // };
+            let mouse_position = window.mouse_position();
+            let drag_data = DragData::new(task.clone())
+                .with_label(SharedString::from(title.clone()))
+                .with_position(mouse_position);
+            // .with_preview(move || {
+            //     div()
+            //         .px(px(12.0))
+            //         .py(px(8.0))
+            //         .bg(theme.popover.opacity(0.95))
+            //         .border_1()
+            //         .border_color(theme.border)
+            //         .rounded(px(6.0))
+            //         .shadow(vec![BoxShadow {
+            //             color: hsla(0.0, 0.0, 0.0, 0.25),
+            //             offset: point(px(0.0), px(4.0)),
+            //             blur_radius: px(12.0),
+            //             spread_radius: px(0.0),
+            //         }])
+            //         .text_size(px(13.0))
+            //         .text_color(theme.foreground)
+            //         .font_weight(FontWeight::MEDIUM)
+            //         .child(format!("Moving: {}", drag_title))
+            //         .into_any_element()
+            // });
 
             ListItem::new(ix)
                 .rounded_md()
                 .child(
-                    h_flex()
-                        .items_center()
-                        .py_2()
+                    Draggable::new(ix, drag_data)
+                        .cursor_style(CursorStyle::PointingHand)
+                        .w_full()
                         .child(
                             h_flex()
                                 .items_center()
-                                .gap_3()
-                                .min_w_0()
-                                .flex_1()
-                                // .child(Icon::new(IconName::CircleCheck).text_color(icon_color))
+                                .py_2()
                                 .child(
-                                    Checkbox::new(ElementId::NamedInteger(
-                                        "checkbox".into(),
-                                        ix as u64,
-                                    ))
-                                    // .bg(theme.background)
-                                    // .checked(task..is_some())
-                                    // .border_color(gpui::rgb(0xFF0000))
-                                    .on_click(
-                                        |checked, _window, cx| {
-                                            cx.stop_propagation();
-                                            println!("Checkbox clicked: {}", checked);
-                                        },
-                                    ), // .on_hover(cx.listener(|this, e, window, cx| {
-                                       //     cx.notify();
-                                       // }))
-                                       // .hover(|style| style.border_color(gpui::rgb(0xFF0000))),
+                                    h_flex()
+                                        .items_center()
+                                        .gap_3()
+                                        .min_w_0()
+                                        .flex_1()
+                                        .child(
+                                            Checkbox::new(ElementId::NamedInteger(
+                                                "checkbox".into(),
+                                                ix as u64,
+                                            ))
+                                            .on_click(|checked, _window, cx| {
+                                                cx.stop_propagation();
+                                                println!("Checkbox clicked: {}", checked);
+                                            }),
+                                        )
+                                        .child(Label::new(title).truncate()),
                                 )
-                                .child(Label::new(title).truncate()),
-                        )
-                        // .child(div().flex_1())
-                        // .when_some(task.due_date.as_ref(), |this, due_date| {
-                        //     this.child(
-                        //         Label::new(due_date.format("%m/%d").to_string())
-                        //             .text_xs()
-                        //             .text_color(rgb(0x888888)),
-                        //     )
-                        // })
-                        .child(div().w_2()),
+                                .child(div().w_2()),
+                        ),
                 )
                 .selected(is_selected)
                 .on_click({
-                    // let task = task.clone();
-                    // let ui_store = self.ui_store.clone();
                     cx.listener(move |list_state, _event, _window, cx| {
-                        // Update delegate selection
                         list_state.delegate_mut().selected_index = Some(ix);
-                        // Update UI store with selected task and request details pane to open
-                        // ui_store.update(cx, |ui_store, cx| {
-                        //     ui_store.set_selected_task(Some(task.clone()));
-                        //     cx.emit(TaskSelected);
-                        //     cx.emit(DetailsOpenRequested);
-                        // });
                         cx.notify();
                     })
                 })
@@ -209,81 +186,60 @@ impl ListDelegate for TaskListDelegate {
     ) {
         self.selected_index = ix;
     }
-
-    // fn render_empty(
-    //     &mut self,
-    //     _window: &mut Window,
-    //     cx: &mut gpui::Context<gpui_component::list::ListState<TaskListDelegate>>,
-    // ) -> impl IntoElement {
-    //     v_flex()
-    //         .size_full()
-    //         .justify_center()
-    //         .items_center()
-    //         .gap_2()
-    //         .child(Icon::new(IconName::Search).text_color(rgb(0x888888)))
-    //         .child(Label::new("No tasks found").text_color(rgb(0x888888)))
-    //         .child(
-    //             Label::new("Your tasks will appear here")
-    //                 .text_sm()
-    //                 .text_color(rgb(0x666666)),
-    //         )
-    // }
 }
 
 pub struct TaskListView {
     task_store: Entity<TaskStore>,
+    drag_drop_store: Entity<DragDropStore>,
+    drag_active_here: bool,
     // ui_store: Entity<UiStateStore>,
-    list_state: Option<Entity<ListState<TaskListDelegate>>>,
+    list_state: Entity<ListState<TaskListDelegate>>,
     task_list_selection: Option<Entity<SelectState<Vec<&'static str>>>>,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl TaskListView {
     pub fn new(
         task_store: Entity<TaskStore>,
+        drag_drop_store: Entity<DragDropStore>,
         // ui_store: Entity<UiStateStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut subscriptions = Vec::new();
-
-        // Subscribe to task store events
-        subscriptions.push(cx.subscribe(
+        cx.subscribe(
             &task_store,
             |this, _task_store, _event: &TasksUpdated, cx| {
                 this.update_task_list(cx);
                 cx.notify();
             },
-        ));
+        )
+        .detach();
 
-        subscriptions.push(cx.subscribe(
-            &task_store,
-            |this, _task_store, _event: &TaskCreated, cx| {
-                this.update_task_list(cx);
-                cx.notify();
-            },
-        ));
+        cx.subscribe(&task_store, |_this, _task_store, event: &ApiError, cx| {
+            eprintln!("TaskListView: API Error: {}", event.message);
+            cx.notify();
+        })
+        .detach();
 
-        subscriptions.push(cx.subscribe(
-            &task_store,
-            |this, _task_store, _event: &TaskDeleted, cx| {
-                this.update_task_list(cx);
-                cx.notify();
-            },
-        ));
+        let delegate = TaskListDelegate::new(task_store.clone(), cx);
+        let list_state = cx.new(|cx| ListState::new(delegate, window, cx));
 
-        subscriptions.push(cx.subscribe(
-            &task_store,
-            |_this, _task_store, event: &ApiError, cx| {
-                eprintln!("TaskListView: API Error: {}", event.message);
-                cx.notify();
-            },
-        ));
+        cx.subscribe(&list_state, |this, _list_state, event: &ListEvent, cx| {
+            match event {
+                ListEvent::Confirm(ix) => {
+                    this.handle_task_click(*ix, cx);
+                }
+                _ => {}
+            }
+            cx.notify();
+        })
+        .detach();
 
         Self {
             task_store,
+            drag_drop_store,
+            drag_active_here: false,
             // ui_store,
-            list_state: None,
+            list_state,
             task_list_selection: cx
                 .new(|cx| {
                     SelectState::new(
@@ -298,96 +254,76 @@ impl TaskListView {
                         window,
                         cx,
                     )
-                    // .selected_index(Some(0))
+                    // .selected_index(cx)
                 })
                 .into(),
-            _subscriptions: subscriptions,
         }
     }
 
     fn update_task_list(&mut self, cx: &mut Context<Self>) {
-        if let Some(list_state) = &self.list_state {
-            list_state.update(cx, |list_state, cx| {
-                list_state.delegate_mut().update_tasks(cx);
-                cx.notify();
+        self.list_state.update(cx, |list_state, cx| {
+            list_state.delegate_mut().update_tasks(cx);
+            cx.notify();
+        });
+    }
+
+    fn handle_task_click(&mut self, ix: usize, _cx: &mut Context<Self>) {
+        if let Some(task) = self.list_state.read(_cx).delegate().current_tasks().get(ix) {
+            println!(
+                "Task clicked: {}",
+                task.title.clone().unwrap_or(ix.to_string())
+            );
+        }
+    }
+
+    fn handle_drag_move(
+        &mut self,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if bounds.contains(&window.mouse_position()) {
+            // let item_size = self.measure_item(window, cx);
+            // let drop_index = self.calculate_drop_index(item_size, position, bounds, window, cx);
+            // let drop_index = self.calculate_drop_index();
+            self.drag_drop_store.update(cx, |store, cx| {
+                store.set_target(Some(TaskLocation::TaskList), cx);
             });
+            self.drag_active_here = true;
+        } else if self.drag_active_here {
+            // drag moved out of bounds, clear target
+            self.drag_drop_store.update(cx, |store, cx| {
+                // only clear if current target is within this component
+                if let Some(TaskLocation::TaskList) = store.get_target() {
+                    store.clear_target(cx);
+                }
+            });
+            self.drag_active_here = false;
         }
-    }
-
-    // fn clear_selection(&mut self, cx: &mut Context<Self>) {
-    //     // Recreate the list state to reset all internal selection state
-    //     self.list_state = None;
-    //     cx.notify();
-    // }
-
-    fn ensure_list_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.list_state.is_none() {
-            let delegate =
-                // TaskListDelegate::new(self.task_store.clone(), self.ui_store.clone(), cx);
-                TaskListDelegate::new(self.task_store.clone(), cx);
-            // let list_state = cx.new(|cx| ListState::new(delegate, window, cx).searchable(true));
-            let list_state = cx.new(|cx| ListState::new(delegate, window, cx));
-
-            // Subscribe to list events
-            self._subscriptions.push(cx.subscribe(
-                &list_state,
-                |this, _list_state, event: &ListEvent, cx| {
-                    match event {
-                        ListEvent::Select(_ix) => {
-                            // Selection via keyboard - don't open details, just update
-                        }
-                        ListEvent::Confirm(ix) => {
-                            // Handle Enter key - open details and select task
-                            this.handle_task_click(*ix, cx);
-                        }
-                        ListEvent::Cancel => {
-                            // Selection cancelled
-                        }
-                    }
-                    cx.notify();
-                },
-            ));
-
-            self.list_state = Some(list_state);
-        }
-    }
-
-    fn handle_task_click(&mut self, _ix: usize, _cx: &mut Context<Self>) {
-        // Get the clicked task
-        // if let Some(list_state) = &self.list_state {
-        //     let task = list_state
-        //         .read(cx)
-        //         .delegate()
-        //         .current_tasks()
-        //         .get(ix)
-        //         .cloned();
-
-        //     if let Some(task) = task {
-        //         // Update UI store with selected task and request details pane to open
-        //         self.ui_store.update(cx, |ui_store, cx| {
-        //             ui_store.set_selected_task(Some(task));
-        //             cx.emit(TaskSelected);
-        //             cx.emit(DetailsOpenRequested);
-        //         });
-        //     }
-        // }
     }
 }
 
 impl EventEmitter<NavigateToView> for TaskListView {}
 
 impl Render for TaskListView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.ensure_list_state(window, cx);
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // self.ensure_list_state(window, cx);
 
-        let list_state = self.list_state.as_ref().unwrap();
         let selection_state = self.task_list_selection.as_ref().unwrap();
+        // let is_drop_target: bool = self
+        //     .drag_drop_store
+        //     .read(cx)
+        //     .get_target()
+        //     .map(|loc| matches!(loc, TaskLocation::TaskList))
+        //     .unwrap_or(false);
+
         div()
             .id("task-list")
             .size_full()
             .flex()
             .gap_3()
-            .p_0p5()
+            // .p_0p5()
+            .px_8()
             .child(
                 div().flex().absolute().top_2().right_2().child(
                     Button::new("tasks-to-home-btn")
@@ -395,11 +331,6 @@ impl Render for TaskListView {
                         .icon(IconName::Map)
                         .ghost()
                         .label("Home")
-                        // .on_click(cx.listener(|_this, _event, _window, cx| {
-                        //     cx.emit(NavigateToView {
-                        //         mode: MainViewMode::Home,
-                        //     });
-                        // })),
                         .on_click(cx.listener(|_this, _event, _window, cx| {
                             cx.emit(NavigateToView {
                                 mode: MainViewMode::Home,
@@ -410,8 +341,6 @@ impl Render for TaskListView {
             .child(
                 v_flex()
                     .size_full()
-                    // .child(List::new(list_state).scrollbar_visible(false)),
-                    // .child(List::new(list_state).paddings(Edges::all(px(14.0)))),
                     .child(
                         div()
                             .w_full()
@@ -433,31 +362,50 @@ impl Render for TaskListView {
                                 ),
                             ),
                     )
-                    .child(List::new(list_state)),
+                    .child({
+                        DropZone::<DragData<TaskData>>::new("task-list-zone")
+                            .drop_zone_style(DropZoneStyle::Dashed)
+                            .min_h(px(300.0))
+                            .size_full()
+                            .active(self.drag_active_here)
+                            // .insertion_indicator(target_index.map(|index| DropIndicator {
+                            //     index,
+                            //     position: DropPosition::Before,
+                            // }))
+                            .on_drop(cx.listener(
+                                move |this, data: &DragData<TaskData>, _window, cx| {
+                                    // Start the drag in our store if not already started
+                                    // this.drag_drop_store.update(cx, |store, cx| {
+                                    //     if !store.has_active_drag() {
+                                    //         store.start_drag_from_data(&data.data, cx);
+                                    //     }
+                                    // });
+                                    if this.drag_active_here {
+                                        this.drag_drop_store.update(cx, |store, cx| {
+                                            store.clear_target(cx);
+                                        });
+                                        this.task_store.update(cx, |store, cx| {
+                                            if let Some(id) = &data.data.task_id {
+                                                store
+                                                    .update_location(id, TaskLocation::TaskList, cx)
+                                                    .log_err();
+                                            }
+                                        });
+                                        this.drag_active_here = false;
+                                    }
+                                    cx.notify();
+                                },
+                            ))
+                            .on_drag_move(cx.listener(
+                                move |this,
+                                      event: &gpui::DragMoveEvent<DragData<TaskData>>,
+                                      window,
+                                      cx| {
+                                    this.handle_drag_move(event.bounds, window, cx);
+                                },
+                            ))
+                            .child(List::new(&self.list_state))
+                    }),
             )
     }
 }
-
-// #[derive(IntoElement)]
-// pub struct Loading;
-
-// #[derive(IntoElement)]
-// struct LoadingItem;
-
-// impl RenderOnce for LoadingItem {
-//     fn render(self, _window: &mut gpui::Window, _cx: &mut gpui::App) -> impl IntoElement {
-//         ListItem::new("skeleton")
-//             .disabled(true)
-//             .child(Skeleton::new().h_10().w_full())
-//     }
-// }
-
-// impl RenderOnce for Loading {
-//     fn render(self, _window: &mut gpui::Window, _cx: &mut gpui::App) -> impl IntoElement {
-//         v_flex()
-//             // .py_2p5()
-//             // .gap_3()
-//             // .child(LoadingItem)
-//             .children((0..5).map(|_| LoadingItem))
-//     }
-// }

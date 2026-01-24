@@ -1,9 +1,5 @@
 use crate::{
-    stores::{
-        TaskStore,
-        task_store::{ApiError, TaskCreated},
-    },
-    tasks::TaskData,
+    stores::{DragDropStore, TaskStore, task_store::ApiError},
     views::{TaskListView, TestView, task_list_view::NavigateToView},
 };
 use gpui::{
@@ -35,12 +31,19 @@ pub struct MainView {
 }
 
 impl MainView {
-    pub fn new(task_store: Entity<TaskStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let task_list = cx.new(|cx| TaskListView::new(task_store.clone(), window, cx));
+    pub fn new(
+        task_store: Entity<TaskStore>,
+        drag_drop_store: Entity<DragDropStore>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let task_list =
+            cx.new(|cx| TaskListView::new(task_store.clone(), drag_drop_store, window, cx));
         let test_view = cx.new(|cx| TestView::new(task_store.clone(), cx));
 
         let focus_handle = cx.focus_handle();
-        window.focus(&focus_handle);
+        // window.focus(&focus_handle);
+        cx.focus_self(window);
         let mut subscriptions = Vec::new();
 
         subscriptions.push(cx.subscribe(
@@ -51,12 +54,12 @@ impl MainView {
             },
         ));
 
-        subscriptions.push(cx.subscribe(
-            &task_store,
-            |_this, _task_store, _event: &TaskCreated, cx| {
-                cx.notify();
-            },
-        ));
+        // subscriptions.push(cx.subscribe(
+        //     &task_store,
+        //     |_this, _task_store, _event: &TaskCreated, cx| {
+        //         cx.notify();
+        //     },
+        // ));
 
         subscriptions.push(cx.subscribe(
             &task_list,
@@ -66,9 +69,10 @@ impl MainView {
         ));
 
         Self {
+            focus_handle,
             task_list,
             test_view,
-            focus_handle,
+            // drag_drop_store,
             _subscriptions: subscriptions,
             mode: MainViewMode::Home,
         }
@@ -84,7 +88,6 @@ impl MainView {
             .size_full()
             .items_center()
             .justify_center()
-            .gap_4()
             .child(
                 div().flex().absolute().top_2().right_2().child(
                     Button::new("home-to-tasks-btn")
@@ -99,52 +102,69 @@ impl MainView {
             )
             .child(
                 v_flex()
-                    .child(
-                        Label::new("Welcome to Subroutine")
-                            .text_3xl()
-                            .content_stretch()
-                            // .font(gpui::font("Hoefler Text")),
-                            .font(gpui::font("Georgia")),
-                    )
-                    .child(Divider::horizontal().color(cx.theme().accent).w_full()),
-            )
-            .child(
-                Label::new("\"I'm feeling...\"")
-                    .text_xl()
-                    .text_color(cx.theme().muted_foreground)
-                    .font(gpui::font("Georgia").italic()),
-            )
-            .child(
-                v_flex()
-                    // .font(gpui::font("Georgia").italic())
-                    // .font(gpui::font("Monaco").italic())
+                    .items_center()
                     .gap_4()
-                    .children([
-                        h_flex().gap_4().justify_between().children([
-                            Button::new("home-btn-0")
-                                .flex_1()
-                                .outline()
-                                .label("analysis paralysis")
-                                .text_color(cx.theme().red_light),
-                            Button::new("home-btn-1")
-                                .flex_1()
-                                .outline()
-                                .label("overstimulated")
-                                .text_color(cx.theme().yellow_light),
-                        ]),
-                        h_flex().gap_4().justify_between().children([
-                            Button::new("home-btn-2")
-                                .flex_1()
-                                .outline()
-                                .label("hyperfocused")
-                                .text_color(cx.theme().green_light),
-                            Button::new("home-btn-3")
-                                .flex_1()
-                                .outline()
-                                .label("an instense emotion")
-                                .text_color(cx.theme().magenta_light),
-                        ]),
-                    ]),
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                Divider::horizontal()
+                                    .label("Welcome to")
+                                    .font(gpui::font("Georgia"))
+                                    .color(cx.theme().muted_foreground)
+                                    .w_full(),
+                            )
+                            .child(
+                                Label::new("Subroutine")
+                                    .text_3xl()
+                                    .content_stretch()
+                                    // .font(gpui::font("Hoefler Text")),
+                                    .font(gpui::font("Georgia")),
+                            ),
+                    )
+                    .child(
+                        Divider::horizontal()
+                            .color(cx.theme().muted_foreground)
+                            .w_full(),
+                    )
+                    .child(
+                        Label::new("\"I'm feeling...\"")
+                            .text_xl()
+                            .text_color(cx.theme().muted_foreground)
+                            .font(gpui::font("Georgia").italic()),
+                    )
+                    .child(
+                        v_flex()
+                            // .font(gpui::font("Georgia").italic())
+                            // .font(gpui::font("Monaco").italic())
+                            .gap_4()
+                            .children([
+                                h_flex().gap_4().justify_between().children([
+                                    Button::new("home-btn-0")
+                                        .flex_1()
+                                        .outline()
+                                        .label("analysis paralysis")
+                                        .text_color(cx.theme().red_light),
+                                    Button::new("home-btn-1")
+                                        .flex_1()
+                                        .outline()
+                                        .label("overstimulated")
+                                        .text_color(cx.theme().yellow_light),
+                                ]),
+                                h_flex().gap_4().justify_between().children([
+                                    Button::new("home-btn-2")
+                                        .flex_1()
+                                        .outline()
+                                        .label("hyperfocused")
+                                        .text_color(cx.theme().green_light),
+                                    Button::new("home-btn-3")
+                                        .flex_1()
+                                        .outline()
+                                        .label("an instense emotion")
+                                        .text_color(cx.theme().magenta_light),
+                                ]),
+                            ]),
+                    ),
             )
     }
 }

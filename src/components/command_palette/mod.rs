@@ -176,6 +176,7 @@ impl Render for CommandPaletteState {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         h_flex() // overlay background
+            .bg(theme.background.opacity(0.5))
             .absolute()
             .inset_0()
             .size_full()

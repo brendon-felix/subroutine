@@ -1,11 +1,11 @@
 use gpui::{
-    BoxShadow, Context, CursorStyle, Entity, FocusHandle, FontWeight, Hsla, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, Styled, Window, div, hsla, point,
-    prelude::FluentBuilder, px, rgb,
+    BoxShadow, Context, CursorStyle, Entity, FontWeight, Hsla, InteractiveElement, IntoElement,
+    ParentElement, Render, SharedString, Styled, Window, div, hsla, point, prelude::FluentBuilder,
+    px,
 };
-use gpui_component::{ActiveTheme, h_flex, v_flex};
+use gpui_component::{ActiveTheme, h_flex};
 use ticks::{
-    projects::{Project, ProjectID},
+    projects::ProjectID,
     tasks::{TaskID, TaskPriority},
 };
 
@@ -18,7 +18,7 @@ use crate::{
 };
 
 pub struct TestView {
-    focus_handle: FocusHandle,
+    // focus_handle: FocusHandle,
     todos: Vec<TaskData>,
     in_progress: Vec<TaskData>,
     completed: Vec<TaskData>,
@@ -31,7 +31,7 @@ pub struct TestView {
 }
 
 impl TestView {
-    pub fn new(task_store: Entity<TaskStore>, cx: &mut Context<Self>) -> Self {
+    pub fn new(_task_store: Entity<TaskStore>, _cx: &mut Context<Self>) -> Self {
         // let todos = task_store
         //     .read(cx)
         //     .get_all_tasks()
@@ -86,7 +86,7 @@ impl TestView {
             },
         ];
         Self {
-            focus_handle: cx.focus_handle(),
+            // focus_handle: cx.focus_handle(),
             todos,
             in_progress: vec![],
             completed: vec![],

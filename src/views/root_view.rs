@@ -5,9 +5,10 @@ use gpui::{
     Window, actions, div, px,
 };
 use gpui::{KeyBinding, prelude::*};
-use gpui_component::{ActiveTheme, Root};
+use gpui_component::{ActiveTheme, Root, ThemeMode};
 // use gpui_transitions::{Transition, WindowUseTransition};
 
+use crate::app::ResultExt;
 // use crate::app::ToggleCommandPalette;
 use crate::components::command_palette::{
     CloseCommandPalette, Command, CommandPalette, CommandPaletteExt, CommandPaletteState,
@@ -15,8 +16,8 @@ use crate::components::command_palette::{
 };
 use crate::components::resizable::{h_resizable, resizable_panel};
 // use crate::stores::ui_store::{TaskSelected, ViewChanged};
-use crate::stores::TaskStore;
-use crate::stores::task_store::TasksUpdated;
+use crate::stores::{DragDropStore, TaskStore};
+use crate::themes::SwitchThemeMode;
 // use crate::transitions::ease_in_out;
 use crate::views::{MainView, MainViewMode, RightSidebarView};
 
@@ -38,9 +39,14 @@ impl RootView {
             KeyBinding::new("alt-]", ToggleSideBar, None),
         ]);
 
-        let main_view = cx.new(|cx| MainView::new(task_store.clone(), window, cx));
-        let right_sidebar = cx.new(|cx| RightSidebarView::new(task_store.clone(), window, cx));
+        let drag_drop_store = cx.new(|cx| DragDropStore::new(cx));
+        let main_view =
+            cx.new(|cx| MainView::new(task_store.clone(), drag_drop_store.clone(), window, cx));
+        let right_sidebar = cx.new(|cx| {
+            RightSidebarView::new(task_store.clone(), drag_drop_store.clone(), window, cx)
+        });
         let focus_handle = cx.focus_handle();
+        cx.focus_self(window);
 
         Self {
             task_store,
@@ -56,7 +62,8 @@ impl RootView {
         println!("Toggling command palette");
         if self.cmd_palette.is_some() {
             self.cmd_palette = None;
-            window.focus(&self.focus_handle);
+            // window.focus(&self.focus_handle);
+            cx.focus_self(window);
         } else {
             let cmd_palette = self.command_palette(window, cx);
             self.cmd_palette = Some(cmd_palette);
@@ -94,9 +101,9 @@ impl CommandPaletteExt for RootView {
             }),
             Command::new("refresh-tasks", "Refresh task list").on_select({
                 let entity = self.task_store.clone();
-                move |window, cx| {
+                move |_window, cx| {
                     cx.update_entity(&entity, |tasks, cx| {
-                        tasks.refresh_tasks(cx);
+                        tasks.refresh_tasks(cx).log_err();
                     });
                 }
             }),
@@ -128,6 +135,19 @@ impl CommandPaletteExt for RootView {
                 .shortcut("cmd-q")
                 .on_select(|_window, cx| {
                     cx.quit();
+                }),
+            Command::new("toggle-mode", "Toggle Light/Dark Mode")
+                .description("Switch between light and dark themes")
+                // .icon("theme")
+                .shortcut("cmd-t")
+                .on_select(|window, cx| {
+                    let action = if cx.theme().mode == ThemeMode::Dark {
+                        SwitchThemeMode(ThemeMode::Light)
+                    } else {
+                        SwitchThemeMode(ThemeMode::Dark)
+                    };
+                    window.dispatch_action(Box::new(action), cx);
+                    // cx.dispatch_action(&action);
                 }),
         ]
     }
@@ -168,7 +188,8 @@ impl Render for RootView {
                             .right_sidebar
                             .update(cx, |sidebar, cx| sidebar.toggle_collapsed(cx));
                         if collapsed {
-                            window.focus(&this.focus_handle(cx));
+                            // window.focus(&this.focus_handle(cx));
+                            cx.focus_self(window);
                         }
                         // this.open_sheet(window, cx);
                         // this.right_sidebar_collapsed = !this.right_sidebar_collapsed;
@@ -180,7 +201,8 @@ impl Render for RootView {
                 }))
                 .on_action(cx.listener(|this, _: &CloseCommandPalette, window, cx| {
                     this.cmd_palette = None;
-                    window.focus(&this.focus_handle);
+                    // window.focus(&this.focus_handle);
+                    cx.focus_self(window);
                     cx.notify();
                 }))
                 .on_action(cx.listener(|this, _: &SelectCommand, window, cx| {
@@ -195,7 +217,8 @@ impl Render for RootView {
                         if executed {
                             this.cmd_palette = None;
                             // this.focus_handle.focus(window);
-                            window.focus(&this.focus_handle);
+                            // window.focus(&this.focus_handle);
+                            cx.focus_self(window);
                         }
                     }
                     cx.notify();

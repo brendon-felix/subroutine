@@ -1,17 +1,8 @@
-//! Drag and drop components with draggable elements and drop zones.
-//!
-//! This module provides a comprehensive drag and drop system following GPUI's type-safe approach
-//! while maintaining the essential styling and functionality features.
-
 use gpui::{prelude::FluentBuilder as _, *};
-use gpui_component::divider::Divider;
 use gpui_component::{ActiveTheme, Theme};
 use std::fmt::Debug;
 use std::rc::Rc;
 
-// use crate::theme::use_theme;
-
-/// Core drag data structure that wraps the payload with preview and positioning information
 pub struct DragData<T: Clone + Debug> {
     pub data: T,
     pub label: Option<SharedString>,
@@ -71,8 +62,7 @@ impl<T: Clone + Debug> DragData<T> {
 }
 
 impl<T: Clone + Debug + 'static> Render for DragData<T> {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // let theme = use_theme();
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
         if let Some(factory) = &self.preview_factory {
@@ -119,14 +109,14 @@ impl<T: Clone + Debug + 'static> Render for DragData<T> {
     }
 }
 
-/// Event data for drag move operations, providing position and bounds information
-/// for calculating insertion points and visual feedback.
-#[derive(Clone, Debug)]
-pub struct DragMoveEvent<T> {
-    pub data: T,
-    pub position: Point<Pixels>,
-    pub bounds: Bounds<Pixels>,
-}
+// /// Event data for drag move operations, providing position and bounds information
+// /// for calculating insertion points and visual feedback.
+// #[derive(Clone, Debug)]
+// pub struct DragMoveEvent<T> {
+//     pub data: T,
+//     pub position: Point<Pixels>,
+//     pub bounds: Bounds<Pixels>,
+// }
 
 #[derive(Debug)]
 pub struct DropIndicator {
@@ -141,18 +131,18 @@ pub enum DropPosition {
     After,
 }
 
-/// Helper function to calculate drop position based on mouse position and element bounds.
-/// Returns Before if the mouse is in the upper half, After if in the lower half.
-pub fn calculate_drop_position(mouse_y: Pixels, bounds: &Bounds<Pixels>) -> DropPosition {
-    let relative_y = mouse_y - bounds.origin.y;
-    let midpoint = bounds.size.height / 2.0;
+// /// Helper function to calculate drop position based on mouse position and element bounds.
+// /// Returns Before if the mouse is in the upper half, After if in the lower half.
+// pub fn calculate_drop_position(mouse_y: Pixels, bounds: &Bounds<Pixels>) -> DropPosition {
+//     let relative_y = mouse_y - bounds.origin.y;
+//     let midpoint = bounds.size.height / 2.0;
 
-    if relative_y < midpoint {
-        DropPosition::Before
-    } else {
-        DropPosition::After
-    }
-}
+//     if relative_y < midpoint {
+//         DropPosition::Before
+//     } else {
+//         DropPosition::After
+//     }
+// }
 
 #[derive(IntoElement)]
 pub struct Draggable<T: Clone + Debug + 'static> {
@@ -185,22 +175,15 @@ impl<T: Clone + Debug + 'static> Draggable<T> {
         self.hover_bg = Some(color);
         self
     }
+}
 
-    pub fn child(mut self, child: impl IntoElement) -> Self {
-        self.children.push(child.into_any_element());
-        self
-    }
-
-    pub fn children<I>(mut self, children: impl IntoIterator<Item = I>) -> Self
-    where
-        I: IntoElement,
-    {
-        for child in children {
-            self.children.push(child.into_any_element());
-        }
-        self
+impl<T: Clone + Debug + 'static> InteractiveElement for Draggable<T> {
+    fn interactivity(&mut self) -> &mut Interactivity {
+        self.base.interactivity()
     }
 }
+
+impl<T: Clone + Debug + 'static> StatefulInteractiveElement for Draggable<T> {}
 
 impl<T: Clone + Debug + 'static> Styled for Draggable<T> {
     fn style(&mut self) -> &mut StyleRefinement {
@@ -249,6 +232,7 @@ pub struct DropZone<T: Clone + Debug + 'static> {
     drop_style: DropZoneStyle,
     active: bool,
     min_height: Option<Pixels>,
+    item_height: Option<Pixels>,
     children: Vec<AnyElement>,
     user_style: StyleRefinement,
     insertion_indicator: Option<DropIndicator>,
@@ -262,6 +246,7 @@ impl<T: Clone + Debug + 'static> DropZone<T> {
             drop_style: DropZoneStyle::Dashed,
             active: false,
             min_height: None,
+            item_height: None,
             children: Vec::new(),
             user_style: StyleRefinement::default(),
             insertion_indicator: None,
@@ -281,6 +266,11 @@ impl<T: Clone + Debug + 'static> DropZone<T> {
 
     pub fn min_h(mut self, height: impl Into<Pixels>) -> Self {
         self.min_height = Some(height.into());
+        self
+    }
+
+    pub fn item_h(mut self, height: impl Into<Pixels>) -> Self {
+        self.item_height = Some(height.into());
         self
     }
 
@@ -325,9 +315,9 @@ impl<T: Clone + Debug + 'static> ParentElement for DropZone<T> {
     }
 }
 
-fn render_insertion_indicator(theme: &Theme) -> AnyElement {
+fn render_insertion_indicator(height: Pixels, theme: &Theme) -> AnyElement {
     div()
-        .h(px(74.0))
+        .h(height)
         .w_full()
         .bg(theme.drop_target)
         .rounded_lg()
@@ -345,14 +335,13 @@ impl<T: Clone + Debug + 'static> RenderOnce for DropZone<T> {
         let user_style = self.user_style;
         let indicator = self.insertion_indicator;
 
-        let (border_width, border_color, bg_color) = match (self.drop_style, self.active) {
-            (DropZoneStyle::Dashed, false) => (px(2.0), theme.border, gpui::transparent_black()),
-            (DropZoneStyle::Dashed, true) => (px(2.0), theme.primary, theme.primary.opacity(0.05)),
-            (DropZoneStyle::Solid, false) => (px(2.0), theme.border, gpui::transparent_black()),
-            (DropZoneStyle::Solid, true) => (px(2.0), theme.primary, theme.primary.opacity(0.1)),
-            (DropZoneStyle::Filled, false) => (px(1.0), theme.border, theme.muted),
-            (DropZoneStyle::Filled, true) => (px(2.0), theme.primary, theme.primary.opacity(0.15)),
+        let border_width = px(1.);
+        let border_color = if self.active {
+            theme.drag_border
+        } else {
+            gpui::transparent_black()
         };
+        let bg_color = theme.background;
 
         let mut children_with_indicators = Vec::new();
         let children = self.children;
@@ -362,19 +351,9 @@ impl<T: Clone + Debug + 'static> RenderOnce for DropZone<T> {
             // Add insertion indicator before this item if needed
             if let Some(ref ind) = indicator {
                 if ind.index == i && matches!(ind.position, DropPosition::Before) {
-                    println!("DEBUG: DropZone - Adding indicator BEFORE item {}", i);
-                    children_with_indicators.push(
-                        // div()
-                        //     // .h(px(2.0))
-                        //     .h_3()
-                        //     .w_full()
-                        //     .bg(theme.primary)
-                        //     .rounded(px(1.0))
-                        //     .my(px(2.0))
-                        //     .into_any_element(),
-                        // Divider::horizontal_dashed().into_any_element(),
-                        render_insertion_indicator(&theme),
-                    );
+                    // println!("DEBUG: DropZone - Adding indicator BEFORE item {}", i);
+                    let item_height = self.item_height.unwrap_or(px(80.0));
+                    children_with_indicators.push(render_insertion_indicator(item_height, &theme));
                 }
             }
 
@@ -383,18 +362,9 @@ impl<T: Clone + Debug + 'static> RenderOnce for DropZone<T> {
             // Add insertion indicator after this item if needed
             if let Some(ref ind) = indicator {
                 if ind.index == i && matches!(ind.position, DropPosition::After) {
-                    println!("DEBUG: DropZone - Adding indicator AFTER item {}", i);
-                    children_with_indicators.push(
-                        // div()
-                        //     .h(px(2.0))
-                        //     .w_full()
-                        //     .bg(theme.primary)
-                        //     .rounded(px(1.0))
-                        //     .my(px(2.0))
-                        //     .into_any_element(),
-                        // Divider::horizontal_dashed().color(theme).into_any_element(),
-                        render_insertion_indicator(&theme),
-                    );
+                    // println!("DEBUG: DropZone - Adding indicator AFTER item {}", i);
+                    let item_height = self.item_height.unwrap_or(px(80.0));
+                    children_with_indicators.push(render_insertion_indicator(item_height, &theme));
                 }
             }
         }
@@ -402,21 +372,13 @@ impl<T: Clone + Debug + 'static> RenderOnce for DropZone<T> {
         // Add indicator at the end if dropping beyond all items
         if let Some(ref ind) = indicator {
             if ind.index >= original_children_len {
-                println!(
-                    "DEBUG: DropZone - Adding indicator AT END (index {} >= len {})",
-                    ind.index, original_children_len
-                );
-                children_with_indicators.push(
-                    // div()
-                    //     .h(px(2.0))
-                    //     .w_full()
-                    //     .bg(theme.primary)
-                    //     .rounded(px(1.0))
-                    //     .my(px(2.0))
-                    //     .into_any_element(),
-                    // Divider::horizontal_dashed().into_any_element(),
-                    render_insertion_indicator(&theme),
-                );
+                // println!(
+                //     "DEBUG: DropZone - Adding indicator AT END (index {} >= len {})",
+                //     ind.index,
+                //     original_children_len
+                // );
+                let item_height = self.item_height.unwrap_or(px(80.0));
+                children_with_indicators.push(render_insertion_indicator(item_height, &theme));
             }
         }
 
@@ -453,193 +415,193 @@ impl<T: Clone + Debug + 'static> RenderOnce for DropZone<T> {
     }
 }
 
-/// Data structure for reorderable drag operations.
-/// Contains both the original index and the data being dragged.
-#[derive(Clone, Debug)]
-pub struct ReorderData<T: Clone + Debug> {
-    pub index: usize,
-    pub data: T,
-}
+// /// Data structure for reorderable drag operations.
+// /// Contains both the original index and the data being dragged.
+// #[derive(Clone, Debug)]
+// pub struct ReorderData<T: Clone + Debug> {
+//     pub index: usize,
+//     pub data: T,
+// }
 
-/// A reorderable list item that acts as both a drag source and drop target.
-///
-/// This component is designed for creating lists where items can be dragged
-/// to reorder them. It provides insertion indicators and handles the complex
-/// logic of reordering.
-#[derive(IntoElement)]
-pub struct ReorderableItem<T: Clone + Debug + 'static> {
-    base: Stateful<Div>,
-    index: usize,
-    data: T,
-    preview_label: Option<String>,
-    show_drop_indicator: Option<DropPosition>,
-    children: Vec<AnyElement>,
-    style: StyleRefinement,
-}
+// /// A reorderable list item that acts as both a drag source and drop target.
+// ///
+// /// This component is designed for creating lists where items can be dragged
+// /// to reorder them. It provides insertion indicators and handles the complex
+// /// logic of reordering.
+// #[derive(IntoElement)]
+// pub struct ReorderableItem<T: Clone + Debug + 'static> {
+//     base: Stateful<Div>,
+//     index: usize,
+//     data: T,
+//     preview_label: Option<String>,
+//     show_drop_indicator: Option<DropPosition>,
+//     children: Vec<AnyElement>,
+//     style: StyleRefinement,
+// }
 
-impl<T: Clone + Debug + 'static> ReorderableItem<T> {
-    /// Create a new reorderable item with the specified index and data.
-    pub fn new(id: impl Into<ElementId>, index: usize, data: T) -> Self {
-        Self {
-            base: div().id(id.into()),
-            index,
-            data,
-            preview_label: None,
-            show_drop_indicator: None,
-            children: Vec::new(),
-            style: StyleRefinement::default(),
-        }
-    }
+// impl<T: Clone + Debug + 'static> ReorderableItem<T> {
+//     /// Create a new reorderable item with the specified index and data.
+//     pub fn new(id: impl Into<ElementId>, index: usize, data: T) -> Self {
+//         Self {
+//             base: div().id(id.into()),
+//             index,
+//             data,
+//             preview_label: None,
+//             show_drop_indicator: None,
+//             children: Vec::new(),
+//             style: StyleRefinement::default(),
+//         }
+//     }
 
-    /// Set a custom label for the drag preview.
-    pub fn preview_label(mut self, label: impl Into<String>) -> Self {
-        self.preview_label = Some(label.into());
-        self
-    }
+//     /// Set a custom label for the drag preview.
+//     pub fn preview_label(mut self, label: impl Into<String>) -> Self {
+//         self.preview_label = Some(label.into());
+//         self
+//     }
 
-    /// Show a drop indicator at the specified position.
-    pub fn drop_indicator(mut self, position: Option<DropPosition>) -> Self {
-        self.show_drop_indicator = position;
-        self
-    }
+//     /// Show a drop indicator at the specified position.
+//     pub fn drop_indicator(mut self, position: Option<DropPosition>) -> Self {
+//         self.show_drop_indicator = position;
+//         self
+//     }
 
-    /// Add a child element to this reorderable item.
-    pub fn child(mut self, child: impl IntoElement) -> Self {
-        self.children.push(child.into_any_element());
-        self
-    }
+//     /// Add a child element to this reorderable item.
+//     pub fn child(mut self, child: impl IntoElement) -> Self {
+//         self.children.push(child.into_any_element());
+//         self
+//     }
 
-    /// Add multiple child elements to this reorderable item.
-    pub fn children<I>(mut self, children: impl IntoIterator<Item = I>) -> Self
-    where
-        I: IntoElement,
-    {
-        for child in children {
-            self.children.push(child.into_any_element());
-        }
-        self
-    }
-}
+//     /// Add multiple child elements to this reorderable item.
+//     pub fn children<I>(mut self, children: impl IntoIterator<Item = I>) -> Self
+//     where
+//         I: IntoElement,
+//     {
+//         for child in children {
+//             self.children.push(child.into_any_element());
+//         }
+//         self
+//     }
+// }
 
-impl<T: Clone + Debug + 'static> Styled for ReorderableItem<T> {
-    fn style(&mut self) -> &mut StyleRefinement {
-        &mut self.style
-    }
-}
+// impl<T: Clone + Debug + 'static> Styled for ReorderableItem<T> {
+//     fn style(&mut self) -> &mut StyleRefinement {
+//         &mut self.style
+//     }
+// }
 
-impl<T: Clone + Debug + 'static> InteractiveElement for ReorderableItem<T> {
-    fn interactivity(&mut self) -> &mut Interactivity {
-        self.base.interactivity()
-    }
-}
+// impl<T: Clone + Debug + 'static> InteractiveElement for ReorderableItem<T> {
+//     fn interactivity(&mut self) -> &mut Interactivity {
+//         self.base.interactivity()
+//     }
+// }
 
-impl<T: Clone + Debug + 'static> StatefulInteractiveElement for ReorderableItem<T> {}
+// impl<T: Clone + Debug + 'static> StatefulInteractiveElement for ReorderableItem<T> {}
 
-impl<T: Clone + Debug + 'static> ParentElement for ReorderableItem<T> {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements);
-    }
-}
+// impl<T: Clone + Debug + 'static> ParentElement for ReorderableItem<T> {
+//     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+//         self.children.extend(elements);
+//     }
+// }
 
-impl<T: Clone + Debug + 'static> RenderOnce for ReorderableItem<T> {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = cx.theme().clone();
-        let data = self.data.clone();
-        let index = self.index;
-        let preview_label = self
-            .preview_label
-            .unwrap_or_else(|| format!("Item {}", index));
-        let user_style = self.style;
-        let primary_color = theme.primary;
+// impl<T: Clone + Debug + 'static> RenderOnce for ReorderableItem<T> {
+//     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+//         let theme = cx.theme().clone();
+//         let data = self.data.clone();
+//         let index = self.index;
+//         let preview_label = self
+//             .preview_label
+//             .unwrap_or_else(|| format!("Item {}", index));
+//         let user_style = self.style;
+//         let primary_color = theme.primary;
 
-        div()
-            .flex()
-            .flex_col()
-            .when_some(
-                self.show_drop_indicator,
-                move |this, position| match position {
-                    DropPosition::Before => this.border_t_2().border_color(primary_color),
-                    DropPosition::After => this.border_b_2().border_color(primary_color),
-                },
-            )
-            .child(
-                self.base
-                    .cursor(CursorStyle::PointingHand)
-                    .on_drag(
-                        DragData::new(ReorderData { index, data })
-                            .with_label(SharedString::from(preview_label)),
-                        move |drag_data: &DragData<ReorderData<T>>, position, _, cx| {
-                            cx.new(|_| drag_data.clone().with_position(position))
-                        },
-                    )
-                    .drag_over::<DragData<ReorderData<T>>>(move |style, _, _, _| {
-                        style.bg(primary_color.opacity(0.05))
-                    })
-                    .map(|this| {
-                        let mut div = this;
-                        div.style().refine(&user_style);
-                        div
-                    })
-                    .children(self.children),
-            )
-    }
-}
+//         div()
+//             .flex()
+//             .flex_col()
+//             .when_some(
+//                 self.show_drop_indicator,
+//                 move |this, position| match position {
+//                     DropPosition::Before => this.border_t_2().border_color(primary_color),
+//                     DropPosition::After => this.border_b_2().border_color(primary_color),
+//                 },
+//             )
+//             .child(
+//                 self.base
+//                     .cursor(CursorStyle::PointingHand)
+//                     .on_drag(
+//                         DragData::new(ReorderData { index, data })
+//                             .with_label(SharedString::from(preview_label)),
+//                         move |drag_data: &DragData<ReorderData<T>>, position, _, cx| {
+//                             cx.new(|_| drag_data.clone().with_position(position))
+//                         },
+//                     )
+//                     .drag_over::<DragData<ReorderData<T>>>(move |style, _, _, _| {
+//                         style.bg(primary_color.opacity(0.05))
+//                     })
+//                     .map(|this| {
+//                         let mut div = this;
+//                         div.style().refine(&user_style);
+//                         div
+//                     })
+//                     .children(self.children),
+//             )
+//     }
+// }
 
-/// A complete reorderable list component that manages drag and drop reordering.
-pub struct ReorderableList<T: Clone + Debug> {
-    items: Vec<T>,
-    drop_target: Option<usize>,
-    drag_position: Option<DropPosition>,
-}
+// /// A complete reorderable list component that manages drag and drop reordering.
+// pub struct ReorderableList<T: Clone + Debug> {
+//     items: Vec<T>,
+//     drop_target: Option<usize>,
+//     drag_position: Option<DropPosition>,
+// }
 
-impl<T: Clone + Debug> ReorderableList<T> {
-    /// Create a new reorderable list with the specified items.
-    pub fn new(items: Vec<T>) -> Self {
-        Self {
-            items,
-            drop_target: None,
-            drag_position: None,
-        }
-    }
+// impl<T: Clone + Debug> ReorderableList<T> {
+//     /// Create a new reorderable list with the specified items.
+//     pub fn new(items: Vec<T>) -> Self {
+//         Self {
+//             items,
+//             drop_target: None,
+//             drag_position: None,
+//         }
+//     }
 
-    /// Update the drop target based on drag move events.
-    pub fn update_drop_target(&mut self, target_index: usize, position: DropPosition) {
-        self.drop_target = Some(target_index);
-        self.drag_position = Some(position);
-    }
+//     /// Update the drop target based on drag move events.
+//     pub fn update_drop_target(&mut self, target_index: usize, position: DropPosition) {
+//         self.drop_target = Some(target_index);
+//         self.drag_position = Some(position);
+//     }
 
-    /// Clear the drop target (typically when drag ends or leaves).
-    pub fn clear_drop_target(&mut self) {
-        self.drop_target = None;
-        self.drag_position = None;
-    }
+//     /// Clear the drop target (typically when drag ends or leaves).
+//     pub fn clear_drop_target(&mut self) {
+//         self.drop_target = None;
+//         self.drag_position = None;
+//     }
 
-    /// Perform a reorder operation, moving an item from one index to another.
-    /// Returns true if the operation was successful.
-    pub fn reorder(&mut self, from_index: usize, to_index: usize) -> bool {
-        if from_index >= self.items.len() || to_index > self.items.len() || from_index == to_index {
-            return false;
-        }
+//     /// Perform a reorder operation, moving an item from one index to another.
+//     /// Returns true if the operation was successful.
+//     pub fn reorder(&mut self, from_index: usize, to_index: usize) -> bool {
+//         if from_index >= self.items.len() || to_index > self.items.len() || from_index == to_index {
+//             return false;
+//         }
 
-        let item = self.items.remove(from_index);
-        let insert_at = if to_index > from_index {
-            to_index - 1
-        } else {
-            to_index
-        };
+//         let item = self.items.remove(from_index);
+//         let insert_at = if to_index > from_index {
+//             to_index - 1
+//         } else {
+//             to_index
+//         };
 
-        self.items.insert(insert_at, item);
-        self.clear_drop_target();
-        true
-    }
+//         self.items.insert(insert_at, item);
+//         self.clear_drop_target();
+//         true
+//     }
 
-    /// Get the current items in the list.
-    pub fn items(&self) -> &[T] {
-        &self.items
-    }
+//     /// Get the current items in the list.
+//     pub fn items(&self) -> &[T] {
+//         &self.items
+//     }
 
-    /// Get the current drop target information.
-    pub fn drop_target(&self) -> Option<(usize, DropPosition)> {
-        self.drop_target.zip(self.drag_position)
-    }
-}
+//     /// Get the current drop target information.
+//     pub fn drop_target(&self) -> Option<(usize, DropPosition)> {
+//         self.drop_target.zip(self.drag_position)
+//     }
+// }
