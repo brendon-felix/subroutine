@@ -1,6 +1,6 @@
 use gpui::{
-    App, Entity, FocusHandle, Focusable, KeyBinding, Keystroke, MouseButton, Pixels,
-    StyleRefinement, Window, actions, div, prelude::*, px,
+    App, Entity, FocusHandle, Focusable, KeyBinding, Keystroke, Pixels, StyleRefinement, Window,
+    actions, div, prelude::*, px,
 };
 use gpui_component::{
     ActiveTheme, StyledExt, h_flex,
@@ -175,125 +175,101 @@ impl CommandPaletteState {
 impl Render for CommandPaletteState {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        h_flex() // overlay background
-            .bg(theme.background.opacity(0.5))
-            .absolute()
-            .inset_0()
-            .size_full()
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_event, window, cx| {
-                window.dispatch_action(Box::new(CloseCommandPalette), cx);
+
+        // Build inner dialog card and let the shared overlay shell handle backdrop,
+        // occlusion, centering and shared key context/close behaviour.
+        let inner = v_flex() // command palette container (inner)
+            .key_context("CommandPalette")
+            .track_focus(&self.focus_handle)
+            // .w(px(640.0))
+            .w_128()
+            .max_h(px(402.0))
+            .bg(theme.group_box)
+            .text_color(theme.group_box_foreground)
+            .border_1()
+            .border_color(theme.border)
+            .rounded_lg()
+            .shadow_xl()
+            .on_any_mouse_down(|_event, _window, cx| {
+                cx.stop_propagation();
             })
-            .on_action(cx.listener(|this, _: &NavigateUp, window, cx| {
-                this.list_state.update(cx, |state, cx| {
-                    state.select_prev(window, cx);
-                });
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &NavigateDown, window, cx| {
-                this.list_state.update(cx, |state, cx| {
-                    state.select_next(window, cx);
-                });
-                cx.notify();
-            }))
-            // .on_action(cx.listener(|this, _: &SelectCommand, window, cx| {
-            //     this.execute_selected(window, cx);
-            //     // let executed = this.execute_selected(window, cx);
-            //     // if executed {
-            //     //     if let Some(handler) = &this.on_close {
-            //     //         handler(window, cx);
-            //     //     }
-            //     // }
-            // }))
-            // .on_action(cx.listener(|this, _: &CloseCommandPalette, window, cx| {
-            //     // if let Some(handler) = &this.on_close {
-            //     //     handler(window, cx);
-            //     // }
-            // }))
-            .justify_center()
             .child(
-                v_flex().h_full().w(px(600.0)).pt_8().child(
-                    v_flex() // command palette container
-                        .key_context("CommandPalette")
-                        .track_focus(&self.focus_handle)
-                        .max_h(px(500.0))
-                        .bg(theme.group_box)
-                        .text_color(theme.group_box_foreground)
-                        .border_1()
-                        .border_color(theme.border)
-                        .rounded_lg()
-                        .shadow_xl()
-                        // .map(|this| {
-                        //     let mut div = this;
-                        //     div.style().refine(&user_style);
-                        //     div
-                        // })
-                        .on_any_mouse_down(|_event, _window, cx| {
-                            cx.stop_propagation();
-                            // Click outside command palette - do nothing for now
-                        })
-                        .child(
-                            div()
-                                .flex_none()
-                                .items_center()
-                                .px(px(16.0))
-                                .py(px(12.0))
-                                .border_b_1()
-                                .border_color(theme.border)
-                                .child(
-                                    Input::new(&self.input_state).size_full(), // .font_family("monospace"),
-                                ),
-                        )
-                        .child(
-                            v_flex()
-                                // .debug_red()
-                                .h(self.list_height)
-                                // .flex_shrink()
-                                .child(List::new(&self.list_state)),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                .px(px(16.0))
-                                .py(px(8.0))
-                                .border_t_1()
-                                .border_color(theme.border)
-                                .child(
-                                    h_flex()
-                                        .gap_4()
-                                        .text_color(theme.muted_foreground)
-                                        .text_sm()
-                                        .child(
-                                            h_flex()
-                                                .gap_2()
-                                                .child(
-                                                    h_flex()
-                                                        .child(Kbd::new(
-                                                            Keystroke::parse("up").unwrap(),
-                                                        ))
-                                                        .child(Kbd::new(
-                                                            Keystroke::parse("down").unwrap(),
-                                                        )),
-                                                )
-                                                .child(Label::new("Navigate")), // .color(theme.tokens.muted_foreground),
-                                        )
-                                        .child(
-                                            h_flex()
-                                                .gap_2()
-                                                .child(Kbd::new(Keystroke::parse("enter").unwrap()))
-                                                .child(Label::new("Select")), // .color(theme.tokens.muted_foreground),
-                                        )
-                                        .child(
-                                            h_flex()
-                                                .gap_2()
-                                                .child(Kbd::new(Keystroke::parse("esc").unwrap()))
-                                                .child(Label::new("Close")), // .color(theme.tokens.muted_foreground),
-                                        ),
-                                ),
-                        ),
-                ),
+                div()
+                    .flex_none()
+                    // .items_center()
+                    .px(px(16.0))
+                    .py(px(12.0))
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(Input::new(&self.input_state).size_full()), // .font_family("monospace"),
             )
-        // .child(div().h_full())
+            .child(
+                v_flex()
+                    .h(self.list_height)
+                    .child(List::new(&self.list_state)),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .px(px(16.0))
+                    .py(px(8.0))
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_4()
+                            .text_color(theme.muted_foreground)
+                            .text_sm()
+                            .justify_center()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        h_flex()
+                                            .child(
+                                                Kbd::new(Keystroke::parse("up").unwrap())
+                                                    .pr_0()
+                                                    .rounded_r_none(),
+                                            )
+                                            .child(
+                                                Kbd::new(Keystroke::parse("down").unwrap())
+                                                    .pl_0()
+                                                    .rounded_l_none(),
+                                            ),
+                                    )
+                                    .child(Label::new("Navigate")),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(Kbd::new(Keystroke::parse("enter").unwrap()))
+                                    .child(Label::new("Select")),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(Kbd::new(Keystroke::parse("esc").unwrap()))
+                                    .child(Label::new("Close")),
+                            ),
+                    ),
+            )
+            .on_action(cx.listener(|this, NavigateUp, window, cx| {
+                this.list_state.update(cx, |list_state, cx| {
+                    list_state.select_prev(window, cx);
+                });
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, NavigateDown, window, cx| {
+                this.list_state.update(cx, |list_state, cx| {
+                    list_state.select_next(window, cx);
+                });
+                cx.notify();
+            }));
+
+        // Use a div wrapper so we can attach action handlers (InteractiveElement) while
+        // reusing the overlay shell for visual chrome and backdrop behaviour.
+        crate::components::overlay::shell(theme, inner)
     }
 }
 
