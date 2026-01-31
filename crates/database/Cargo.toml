@@ -1,0 +1,12 @@
+[package]
+name = "database"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+dirs = { workspace = true }
+uuid = { version = "1.20.0", features = ["v4"] }
+serde = { workspace = true, features = ["derive"] }
+rusqlite = { version = "0.38.0", features = ["bundled"] }
+rusqlite_migration = "2.4.1"

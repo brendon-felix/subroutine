@@ -5,6 +5,8 @@ use ticks::{
     tasks::{Task, TaskID, TaskPriority},
 };
 
+pub struct TaskContext {}
+
 #[derive(Debug, Clone, Default)]
 pub struct TaskData {
     pub title: Option<String>,

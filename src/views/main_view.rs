@@ -1,6 +1,6 @@
 use crate::{
-    stores::{DragDropStore, TaskStore, task_store::ApiError},
-    views::{TaskListView, TestView, task_list_view::NavigateToView},
+    stores::{DatabaseStore, DragDropStore},
+    views::{ActionEditor, ActionListView, NavigateToView, action_list_view},
 };
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, IntoElement, ParentElement, Render,
@@ -18,41 +18,50 @@ use gpui_component::{
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MainViewMode {
     Home,
-    TaskList,
-    Test,
+    // TaskList,
+    // Test,
+    ActionEditor,
+    ActionList,
 }
 
 pub struct MainView {
     pub focus_handle: FocusHandle,
-    pub task_list: Entity<TaskListView>,
-    pub test_view: Entity<TestView>,
+    // pub task_list: Entity<TaskListView>,
+    // pub test_view: Entity<TestView>,
+    pub action_editor: Entity<ActionEditor>,
+    pub action_list: Entity<ActionListView>,
     _subscriptions: Vec<Subscription>,
     mode: MainViewMode,
 }
 
 impl MainView {
     pub fn new(
-        task_store: Entity<TaskStore>,
+        database_store: Entity<DatabaseStore>,
         drag_drop_store: Entity<DragDropStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let task_list =
-            cx.new(|cx| TaskListView::new(task_store.clone(), drag_drop_store, window, cx));
-        let test_view = cx.new(|cx| TestView::new(task_store.clone(), cx));
+        // let task_list =
+        //     cx.new(|cx| TaskListView::new(task_store.clone(), drag_drop_store.clone(), window, cx));
+        // let test_view = cx.new(|cx| TestView::new(task_store.clone(), cx));
+
+        let action_editor = cx.new(|cx| ActionEditor::new(database_store.clone(), window, cx));
+
+        let action_list =
+            cx.new(|cx| ActionListView::new(database_store.clone(), drag_drop_store, window, cx));
 
         let focus_handle = cx.focus_handle();
         // window.focus(&focus_handle);
         cx.focus_self(window);
         let mut subscriptions = Vec::new();
 
-        subscriptions.push(cx.subscribe(
-            &task_store,
-            |_this, _task_store, event: &ApiError, cx| {
-                eprintln!("API Error: {}", event.message);
-                cx.notify();
-            },
-        ));
+        // subscriptions.push(cx.subscribe(
+        //     &task_store,
+        //     |_this, _task_store, event: &ApiError, cx| {
+        //         eprintln!("API Error: {}", event.message);
+        //         cx.notify();
+        //     },
+        // ));
 
         // subscriptions.push(cx.subscribe(
         //     &task_store,
@@ -62,7 +71,7 @@ impl MainView {
         // ));
 
         subscriptions.push(cx.subscribe(
-            &task_list,
+            &action_list,
             |this, _task_list, event: &NavigateToView, cx| {
                 this.set_mode(event.mode, cx);
             },
@@ -70,8 +79,8 @@ impl MainView {
 
         Self {
             focus_handle,
-            task_list,
-            test_view,
+            action_editor,
+            action_list,
             // drag_drop_store,
             _subscriptions: subscriptions,
             mode: MainViewMode::Home,
@@ -94,9 +103,9 @@ impl MainView {
                         .w(px(112.0))
                         .icon(IconName::Inbox)
                         .ghost()
-                        .label("Task List")
+                        .label("Actions")
                         .on_click(cx.listener(|this, _event, _window, cx| {
-                            this.set_mode(MainViewMode::TaskList, cx);
+                            this.set_mode(MainViewMode::ActionList, cx);
                         })),
                 ),
             )
@@ -179,8 +188,10 @@ impl Render for MainView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().flex().size_full().map(|this| match self.mode {
             MainViewMode::Home => this.child(self.render_home(cx)),
-            MainViewMode::TaskList => this.child(self.task_list.clone()),
-            MainViewMode::Test => this.child(self.test_view.clone()),
+            // MainViewMode::TaskList => this.child(self.task_list.clone()),
+            // MainViewMode::Test => this.child(self.test_view.clone()),
+            MainViewMode::ActionEditor => this.child(self.action_editor.clone()),
+            MainViewMode::ActionList => this.child(self.action_list.clone()),
         })
     }
 }

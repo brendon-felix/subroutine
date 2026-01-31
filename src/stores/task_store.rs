@@ -26,6 +26,13 @@ pub struct ApiError {
 //     pub priority: Option<u8>,
 // }
 
+#[derive(Debug, Clone)]
+struct ActiveDrag {
+    // pub source: TaskLocation,
+    pub task: TaskID,
+    pub drop_target: Option<TaskLocation>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskLocation {
     TaskList,
@@ -35,9 +42,10 @@ pub enum TaskLocation {
 pub struct TaskStore {
     api_client: Option<TickTick>,
     access_token: Option<AccessToken>,
-    tasks: HashMap<TaskID, (TaskData, TaskLocation)>,
-    // task_list: Vec<TaskID>,
-    // pipeline: Vec<TaskID>,
+    tasks: HashMap<TaskID, TaskData>,
+    task_list: im::Vector<TaskID>,
+    pipeline: im::Vector<TaskID>,
+    active_drag: Option<ActiveDrag>,
 }
 
 impl TaskStore {
@@ -46,6 +54,9 @@ impl TaskStore {
             api_client: None,
             access_token: None,
             tasks: HashMap::new(),
+            task_list: im::Vector::new(),
+            pipeline: im::Vector::new(),
+            active_drag: None,
         };
 
         store.initialize_client(cx);
@@ -104,39 +115,6 @@ impl TaskStore {
     }
 
     pub fn refresh_tasks(&mut self, cx: &mut Context<Self>) -> Result<()> {
-        // if let Some(ref client) = self.api_client {
-        //     let client = client.clone();
-        //     let spawned = cx.spawn(async move |this, cx| match fetch_all_tasks(&client).await {
-        //         Ok(tasks) => {
-        //             this.update(cx, |this, cx| {
-        //                 this.tasks.clear();
-        //                 for (i, task) in tasks.iter().enumerate() {
-        //                     let task_data = TaskData::from_task(task);
-        //                     // for now, just put all tasks in the task list
-        //                     let task_location = TaskLocation::TaskList(i);
-        //                     if let Some(task_id) = &task_data.task_id {
-        //                         this.tasks
-        //                             .insert(task_id.0.clone(), (task_data, task_location));
-        //                     }
-        //                 }
-        //                 cx.emit(TasksUpdated);
-        //                 cx.notify();
-        //             })
-        //             .log_err();
-        //         }
-        //         Err(e) => {
-        //             this.update(cx, |_this, cx| {
-        //                 cx.emit(ApiError {
-        //                     message: format!("Failed to fetch tasks: {}", e),
-        //                 });
-        //                 cx.notify();
-        //             })
-        //             .log_err();
-        //         }
-        //     });
-        //     spawned.detach();
-        // }
-
         let client = match &self.api_client {
             Some(client) => client.clone(),
             None => {
@@ -152,12 +130,20 @@ impl TaskStore {
             Ok(tasks) => {
                 this.update(cx, |this, cx| {
                     this.tasks.clear();
-                    for task in tasks {
+                    // for task in tasks {
+                    //     let task_data = TaskData::from_task(&task);
+                    //     let task_location = TaskLocation::TaskList;
+                    //     if let Some(task_id) = &task_data.task_id {
+                    //         this.tasks
+                    //             .insert(task_id.clone(), (task_data, task_location));
+                    //     }
+                    // }
+                    for (i, task) in tasks.iter().enumerate() {
                         let task_data = TaskData::from_task(&task);
-                        let task_location = TaskLocation::TaskList;
+                        // let task_location = TaskLocation::TaskList;
+                        let task_location = TaskLocation::Pipeline(i);
                         if let Some(task_id) = &task_data.task_id {
-                            this.tasks
-                                .insert(task_id.clone(), (task_data, task_location));
+                            this.tasks.insert(task_id.clone(), task_data);
                         }
                     }
                     cx.emit(TasksUpdated);
@@ -184,8 +170,8 @@ impl TaskStore {
         let mut data = self
             .tasks
             .iter()
-            .filter(|(_, (_, location))| matches!(location, TaskLocation::TaskList))
-            .map(|(_, (task_data, _))| task_data)
+            // .filter(|(_, (_, location))| matches!(location, Some(TaskLocation::TaskList)))
+            .map(|(_, task_data)| task_data)
             .cloned()
             .collect::<Vec<TaskData>>();
 
@@ -197,35 +183,32 @@ impl TaskStore {
         let mut data = self
             .tasks
             .iter()
-            .filter(|(_, (_, location))| matches!(location, TaskLocation::Pipeline(_)))
-            .map(|(_, (task_data, location))| (task_data.clone(), location.clone()))
-            .collect::<Vec<(TaskData, TaskLocation)>>();
+            // .filter(|(_, (_, location))| matches!(location, Some(TaskLocation::Pipeline(_))))
+            .map(|(_, task_data)| task_data)
+            .cloned()
+            .collect::<Vec<TaskData>>();
 
-        // Sort by pipeline index
-        data.sort_by_key(|(_, location)| {
-            if let TaskLocation::Pipeline(index) = location {
-                *index
-            } else {
-                usize::MAX
-            }
-        });
+        // // Sort by pipeline index
+        // data.sort_by_key(|(_, location)| {
+        //     if let Some(TaskLocation::Pipeline(index)) = location {
+        //         *index
+        //     } else {
+        //         usize::MAX
+        //     }
+        // });
 
-        data.into_iter().map(|(task_data, _)| task_data).collect()
+        // data.into_iter().map(|(task_data, _)| task_data).collect()
+        data.sort_by(task_data_compare);
+        data
     }
 
     pub fn update_location(
         &mut self,
         task_id: &TaskID,
-        new_location: TaskLocation,
+        new_location: Option<TaskLocation>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if let Some((_, location)) = self.tasks.get_mut(task_id) {
-            *location = new_location;
-            cx.emit(TasksUpdated);
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Task ID not found"))
-        }
+        Ok(())
     }
 
     // pub fn get_tasks(&self) -> Vec<&TaskData> {

@@ -152,6 +152,7 @@ pub struct Draggable<T: Clone + Debug + 'static> {
     hover_bg: Option<Hsla>,
     children: Vec<AnyElement>,
     style: StyleRefinement,
+    on_drag_listener: Option<Box<dyn Fn(&mut Window, &mut App) + 'static>>,
 }
 
 impl<T: Clone + Debug + 'static> Draggable<T> {
@@ -163,6 +164,7 @@ impl<T: Clone + Debug + 'static> Draggable<T> {
             hover_bg: None,
             children: Vec::new(),
             style: StyleRefinement::default(),
+            on_drag_listener: None,
         }
     }
 
@@ -173,6 +175,14 @@ impl<T: Clone + Debug + 'static> Draggable<T> {
 
     pub fn hover_bg(mut self, color: Hsla) -> Self {
         self.hover_bg = Some(color);
+        self
+    }
+
+    pub fn on_drag_listener<F>(
+        mut self,
+        listener: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_drag_listener = Some(Box::new(listener));
         self
     }
 }
@@ -198,9 +208,11 @@ impl<T: Clone + Debug + 'static> ParentElement for Draggable<T> {
 }
 
 impl<T: Clone + Debug + 'static> RenderOnce for Draggable<T> {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let drag_data = self.drag_data.clone();
         let user_style = self.style;
+
+        // let listener = self.on_drag_listener.clone();
 
         self.base
             .cursor(self.cursor_style)
@@ -208,6 +220,7 @@ impl<T: Clone + Debug + 'static> RenderOnce for Draggable<T> {
                 this.hover(move |style| style.bg(bg))
             })
             .on_drag(drag_data, |data: &DragData<T>, position, _, cx| {
+                // if lister is set, call it
                 cx.new(|_| data.clone().with_position(position))
             })
             .map(|this| {

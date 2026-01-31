@@ -1,13 +1,15 @@
+use database::Action;
 use gpui::{
     App, AppContext, Context, CursorStyle, DragMoveEvent, ElementId, Entity, EventEmitter,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    StatefulInteractiveElement, Styled, Window, actions, div, px,
 };
 use gpui_component::{
     ActiveTheme, IconName, IndexPath, Selectable,
     button::{Button, ButtonVariants},
     h_flex,
     label::Label,
+    menu::ContextMenuExt,
     select::{Select, SelectState},
     v_flex,
 };
@@ -17,81 +19,78 @@ use crate::{
     components::{
         checkbox::Checkbox,
         custom_list::{List, ListDelegate, ListEvent, ListItem, ListState},
-        drag_drop::{DragData, Draggable, DropZone, DropZoneStyle},
+        drag_drop::{DragData, Draggable, DropZone},
+    },
+    stores::{
+        DatabaseStore,
+        database_store::{ActionsLoaded, DatabaseError},
+        drag_drop_store::ActionLocation,
     },
 };
 
-use crate::stores::{
-    TaskStore,
-    drag_drop_store::DragDropStore,
-    task_store::{ApiError, TaskLocation, TasksUpdated},
-};
+use crate::stores::drag_drop_store::DragDropStore;
 
-use crate::tasks::{TaskData, task_data_compare};
 use crate::views::main_view::MainViewMode;
+
+actions!(action_list, [CopyAction, PasteAction, DeleteAction]);
 
 #[derive(Clone, Debug)]
 pub struct NavigateToView {
     pub mode: MainViewMode,
 }
 
-pub struct TaskListDelegate {
-    tasks_data: Vec<TaskData>,
-    filtered_tasks: Vec<TaskData>,
+pub struct ActionListDelegate {
+    actions: Vec<Action>,
+    filtered: Vec<Action>,
     is_searching: bool,
     search_query: String,
     selected_index: Option<usize>,
-    task_store: Entity<TaskStore>,
+    database_store: Entity<DatabaseStore>,
 }
 
-impl TaskListDelegate {
-    pub fn new(task_store: Entity<TaskStore>, cx: &App) -> Self {
-        let mut tasks_data: Vec<TaskData> = task_store.read(cx).task_list_data();
-        tasks_data.sort_by(task_data_compare);
+impl ActionListDelegate {
+    pub fn new(database_store: Entity<DatabaseStore>, cx: &App) -> Self {
+        let actions: Vec<Action> = database_store.read(cx).get_actions().clone();
 
         Self {
-            tasks_data,
-            filtered_tasks: Vec::new(),
+            actions,
+            filtered: Vec::new(),
             is_searching: false,
             search_query: String::new(),
             selected_index: None,
-            task_store,
+            database_store,
         }
     }
 
-    pub fn update_tasks(&mut self, cx: &App) {
-        self.tasks_data = self.task_store.read(cx).task_list_data();
+    pub fn update_actions(&mut self, cx: &App) {
+        self.actions = self.database_store.read(cx).get_actions().clone();
 
         if self.is_searching && !self.search_query.is_empty() {
-            self.filtered_tasks = self
-                .tasks_data
+            self.filtered = self
+                .actions
                 .iter()
-                .filter(|task| {
-                    let title = task
-                        .title
-                        .as_ref()
-                        .map(|t| t.to_lowercase())
-                        .unwrap_or_default();
+                .filter(|action| {
+                    let title = action.title.to_lowercase();
                     title.contains(&self.search_query.to_lowercase())
                 })
                 .cloned()
                 .collect();
         } else {
             self.is_searching = false;
-            self.filtered_tasks.clear();
+            self.filtered.clear();
         }
     }
 
-    fn current_tasks(&self) -> &[TaskData] {
+    fn current_tasks(&self) -> &[Action] {
         if self.is_searching {
-            &self.filtered_tasks
+            &self.filtered
         } else {
-            &self.tasks_data
+            &self.actions
         }
     }
 }
 
-impl ListDelegate for TaskListDelegate {
+impl ListDelegate for ActionListDelegate {
     fn items_count(&self, _cx: &App) -> usize {
         self.current_tasks().len()
     }
@@ -100,16 +99,11 @@ impl ListDelegate for TaskListDelegate {
         &mut self,
         ix: usize,
         window: &mut Window,
-        cx: &mut Context<ListState<TaskListDelegate>>,
+        cx: &mut Context<ListState<ActionListDelegate>>,
     ) -> Option<ListItem> {
         self.current_tasks().get(ix).map(|task| {
-            let default_title = "Untitled Task".to_string();
-            let title = task
-                .title
-                .as_ref()
-                .unwrap_or(&default_title)
-                .replace('\n', " ")
-                .replace('\r', " ");
+            let title = task.title.replace('\n', " ").replace('\r', " ");
+            let id = task.id.clone();
             let is_selected = Some(ix) == self.selected_index;
 
             let mouse_position = window.mouse_position();
@@ -166,9 +160,26 @@ impl ListDelegate for TaskListDelegate {
                                         .child(Label::new(title).truncate()),
                                 )
                                 .child(div().w_2()),
-                        ),
+                        )
+                        .context_menu(|menu, window, cx| {
+                            menu.menu_with_icon("Copy", IconName::Copy, Box::new(CopyAction))
+                                .menu_with_icon("Paste", IconName::Copy, Box::new(PasteAction))
+                                .separator()
+                                .menu_with_icon("Delete", IconName::Delete, Box::new(DeleteAction))
+                        }),
                 )
                 .selected(is_selected)
+                .on_action(
+                    cx.listener(move |list_state, _: &DeleteAction, _window, cx| {
+                        list_state
+                            .delegate_mut()
+                            .database_store
+                            .update(cx, |store, cx| {
+                                store.delete_action(id.clone(), cx);
+                            });
+                        cx.notify();
+                    }),
+                )
                 .on_click({
                     cx.listener(move |list_state, _event, _window, cx| {
                         list_state.delegate_mut().selected_index = Some(ix);
@@ -188,39 +199,41 @@ impl ListDelegate for TaskListDelegate {
     }
 }
 
-pub struct TaskListView {
-    task_store: Entity<TaskStore>,
+pub struct ActionListView {
     drag_drop_store: Entity<DragDropStore>,
     drag_active_here: bool,
     // ui_store: Entity<UiStateStore>,
-    list_state: Entity<ListState<TaskListDelegate>>,
+    list_state: Entity<ListState<ActionListDelegate>>,
     task_list_selection: Option<Entity<SelectState<Vec<&'static str>>>>,
 }
 
-impl TaskListView {
+impl ActionListView {
     pub fn new(
-        task_store: Entity<TaskStore>,
+        database_store: Entity<DatabaseStore>,
         drag_drop_store: Entity<DragDropStore>,
         // ui_store: Entity<UiStateStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(
-            &task_store,
-            |this, _task_store, _event: &TasksUpdated, cx| {
+            &database_store,
+            |this, _task_store, _event: &ActionsLoaded, cx| {
                 this.update_task_list(cx);
                 cx.notify();
             },
         )
         .detach();
 
-        cx.subscribe(&task_store, |_this, _task_store, event: &ApiError, cx| {
-            eprintln!("TaskListView: API Error: {}", event.message);
-            cx.notify();
-        })
+        cx.subscribe(
+            &database_store,
+            |_this, _task_store, event: &DatabaseError, cx| {
+                eprintln!("ActionListView: Database error: {}", event.message);
+                cx.notify();
+            },
+        )
         .detach();
 
-        let delegate = TaskListDelegate::new(task_store.clone(), cx);
+        let delegate = ActionListDelegate::new(database_store, cx);
         let list_state = cx.new(|cx| ListState::new(delegate, window, cx));
 
         cx.subscribe(&list_state, |this, _list_state, event: &ListEvent, cx| {
@@ -235,7 +248,6 @@ impl TaskListView {
         .detach();
 
         Self {
-            task_store,
             drag_drop_store,
             drag_active_here: false,
             // ui_store,
@@ -262,67 +274,67 @@ impl TaskListView {
 
     fn update_task_list(&mut self, cx: &mut Context<Self>) {
         self.list_state.update(cx, |list_state, cx| {
-            list_state.delegate_mut().update_tasks(cx);
+            list_state.delegate_mut().update_actions(cx);
             cx.notify();
         });
     }
 
     fn handle_task_click(&mut self, ix: usize, _cx: &mut Context<Self>) {
         if let Some(task) = self.list_state.read(_cx).delegate().current_tasks().get(ix) {
-            println!(
-                "Task clicked: {}",
-                task.title.clone().unwrap_or(ix.to_string())
-            );
+            println!("Action clicked: {}", &task.title);
         }
     }
 
     fn handle_drag_move(
         &mut self,
-        event: &DragMoveEvent<DragData<TaskData>>,
+        event: &DragMoveEvent<DragData<Action>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let bounds = event.bounds;
         let data = event.drag(cx).clone();
         let item = data.data;
-        let task_id = item.task_id.clone();
+        let id = item.id;
         if self.drag_drop_store.read(cx).is_dragging() == false {
             self.drag_drop_store.update(cx, |store, cx| {
-                store.new_drag(task_id.clone().unwrap(), cx);
+                store.new_drag(id.clone(), cx);
             });
         }
+
         if bounds.contains(&window.mouse_position()) {
             // let item_size = self.measure_item(window, cx);
             // let drop_index = self.calculate_drop_index(item_size, position, bounds, window, cx);
             // let drop_index = self.calculate_drop_index();
             self.drag_drop_store.update(cx, |store, cx| {
-                store.set_drop_target(Some(TaskLocation::TaskList), cx);
+                store.set_drop_target(Some(ActionLocation::ActionList), cx);
             });
             self.drag_active_here = true;
         } else if self.drag_active_here {
             // drag moved out of bounds, clear target
             self.drag_drop_store.update(cx, |store, cx| {
                 // only clear if current target is within this component
-                if let Some(TaskLocation::TaskList) = store.get_drop_target() {
+                if let Some(ActionLocation::ActionList) = store.get_drop_target() {
                     store.clear_drop_target(cx);
                 }
             });
-            if let Some(id) = task_id {
-                self.task_store
-                    .update(cx, |store, cx| store.update_location(&id, None, cx));
-            }
+            // self.database_store
+            //     .update(cx, |store, cx| store.update_location(&id, None, cx));
             self.drag_active_here = false;
         }
     }
 }
 
-impl EventEmitter<NavigateToView> for TaskListView {}
+impl EventEmitter<NavigateToView> for ActionListView {}
 
-impl Render for TaskListView {
+impl Render for ActionListView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // self.ensure_list_state(window, cx);
 
         let selection_state = self.task_list_selection.as_ref().unwrap();
+        let current_selection_ix = selection_state
+            .read(cx)
+            .selected_index(cx)
+            .unwrap_or_default();
         // let is_drop_target: bool = self
         //     .drag_drop_store
         //     .read(cx)
@@ -376,7 +388,7 @@ impl Render for TaskListView {
                             ),
                     )
                     .child({
-                        DropZone::<DragData<TaskData>>::new("task-list-zone")
+                        DropZone::<DragData<Action>>::new("task-list-zone")
                             .min_h(px(300.0))
                             .size_full()
                             .active(self.drag_active_here)
@@ -385,38 +397,29 @@ impl Render for TaskListView {
                             //     position: DropPosition::Before,
                             // }))
                             .on_drop(cx.listener(
-                                move |this, data: &DragData<TaskData>, _window, cx| {
-                                    // Start the drag in our store if not already started
-                                    // this.drag_drop_store.update(cx, |store, cx| {
-                                    //     if !store.has_active_drag() {
-                                    //         store.start_drag_from_data(&data.data, cx);
-                                    //
-                                    // });
+                                move |this, data: &DragData<Action>, _window, cx| {
                                     if this.drag_active_here {
                                         this.drag_drop_store.update(cx, |store, cx| {
                                             store.clear_drag(cx);
                                         });
-                                        this.task_store.update(cx, |store, cx| {
-                                            if let Some(id) = &data.data.task_id {
-                                                store
-                                                    .update_location(
-                                                        id,
-                                                        Some(TaskLocation::TaskList),
-                                                        cx,
-                                                    )
-                                                    .log_err();
-                                            }
-                                        });
+                                        // this.task_store.update(cx, |store, cx| {
+                                        //     if let Some(id) = &data.data.task_id {
+                                        //         store
+                                        //             .update_location(
+                                        //                 id,
+                                        //                 Some(TaskLocation::TaskList),
+                                        //                 cx,
+                                        //             )
+                                        //             .log_err();
+                                        //     }
+                                        // });
                                         this.drag_active_here = false;
                                     }
                                     cx.notify();
                                 },
                             ))
                             .on_drag_move(cx.listener(
-                                move |this,
-                                      event: &DragMoveEvent<DragData<TaskData>>,
-                                      window,
-                                      cx| {
+                                move |this, event: &DragMoveEvent<DragData<Action>>, window, cx| {
                                     this.handle_drag_move(event, window, cx);
                                 },
                             ))
