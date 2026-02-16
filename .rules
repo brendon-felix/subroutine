@@ -123,9 +123,22 @@ When a view's state has changed in a way that may affect its rendering, it shoul
 
 ## Entity events
 
-While updating an entity (`cx: Context<T>`), it can emit an event using `cx.emit(event)`. Entities register which events they can emit by declaring `impl EventEmittor<EventType> for EntityType {}`.
+While updating an entity (`cx: Context<T>`), it can emit an event using `cx.emit(event)`. Entities register which events they can emit by declaring `impl EventEmitter<EventType> for EntityType {}`.
 
 Other entities can then register a callback to handle these events by doing `cx.subscribe(other_entity, |this, other_entity, event, cx| ...)`. This will return a `Subscription` which deregisters the callback when dropped.  Typically `cx.subscribe` happens when creating a new entity and the subscriptions are stored in a `_subscriptions: Vec<Subscription>` field.
+
+### `subscribe` vs `subscribe_in`
+
+There are two subscription methods with different callback signatures:
+
+* `cx.subscribe(&entity, |this, emitter, event, cx| ...)` — the callback receives `cx: &mut Context<Self>` but **no** `window`. Use this when you don't need window access in the handler.
+* `cx.subscribe_in(&entity, window, |this, emitter, event, window, cx| ...)` — the callback additionally receives `window: &mut Window`. Use this when the handler needs to call methods that require `&mut Window` (e.g., `SliderState::set_value`, `InputState::set_value`, focus management, dispatching actions).
+
+`subscribe_in` requires a `&mut Window` at subscription time (passed as the second argument), so it can only be used when `window` is available (e.g., in constructors that receive `window: &mut Window`).
+
+### Type coercion in entity closures
+
+`&mut Context<T>` auto-coerces to `&Context<T>`, and `&mut T` auto-coerces to `&T`. This means methods that take `&self` and `&Context<Self>` can be called from within `.update()` closures (which provide `&mut self` and `&mut Context<Self>`).
 
 ## Recent API changes
 
@@ -141,3 +154,1262 @@ GPUI has had some changes to its APIs. Always write code using the new APIs:
 ## General guidelines
 
 - Use `./script/clippy` instead of `cargo clippy`
+
+# gpui-component
+
+The project uses the `gpui-component` crate (git dependency) for UI components. LLM-optimized documentation is available at:
+- Overview: https://longbridge.github.io/gpui-component/llms.txt
+- Full docs: https://longbridge.github.io/gpui-component/llms-full.txt
+- Per-component docs: https://longbridge.github.io/gpui-component/docs/components/{component_name}.md (e.g. `button.md`, `slider.md`, `switch.md`, `tag.md`, `toggle.md`)
+
+Note: The HTML pages at `/docs/components/button` etc. return 404 for fetch tools because they are SPA routes. Always use the `.md` URLs above instead.
+
+## Available components
+
+### Basic: Accordion, Alert, Avatar, Badge, Button, Checkbox, Collapsible, DropdownButton, Icon, Image, Kbd, Label, Progress, Radio, Skeleton, Slider, Spinner, Switch, Tag, Toggle, Tooltip
+### Form: Input, Select, NumberInput, DatePicker, OtpInput, ColorPicker, Editor, Form
+### Layout: DescriptionList, GroupBox, Dialog, Notification, Popover, Resizable, Scrollable, Sheet, Sidebar
+### Advanced: Calendar, Chart, List, Menu, Settings, Table, Tabs, Tree, VirtualList, WebView
+
+## Available IconName variants
+
+The following are the ONLY valid `IconName` variants. Do NOT use any others:
+
+ALargeSmall, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Asterisk, Battery, BatteryCharging, BatteryFull, BatteryLow, BatteryMedium, BatteryWarning, Bell, BookOpen, Bot, Building2, Calendar, CaseSensitive, ChartPie, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, ChevronUp, CircleCheck, CircleUser, CircleX, Close, Copy, Cpu, Dash, Delete, Ellipsis, EllipsisVertical, ExternalLink, Eye, EyeOff, File, Folder, FolderClosed, FolderOpen, Frame, GalleryVerticalEnd, GitHub, Globe, HardDrive, Heart, HeartOff, Inbox, Info, Inspector, LayoutDashboard, Loader, LoaderCircle, Map, Maximize, MemoryStick, Menu, Minimize, Minus, Moon, Network, Palette, PanelBottom, PanelBottomOpen, PanelLeft, PanelLeftClose, PanelLeftOpen, PanelRight, PanelRightClose, PanelRightOpen, Pause, Play, Plus, Redo, Redo2, Replace, ResizeCorner, Search, Settings, Settings2, SortAscending, SortDescending, SquareTerminal, Star, StarFill, StarOff, Sun, ThumbsDown, ThumbsUp, TriangleAlert, Undo, Undo2, User, WindowClose, WindowMaximize, WindowMinimize, WindowRestore
+
+Common icons that do NOT exist (use alternatives): CheckSquare (use Check), Activity (use Play), Repeat (use Redo), Circle (use Dash), Sunrise/Sunset (use Sun/Moon), Trash/Trash2 (use Delete).
+
+## Key API patterns and gotchas
+
+### Button
+```rust
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::Disableable; // needed for .disabled()
+use gpui_component::Sizable;     // needed for .small(), .xsmall()
+
+Button::new("id")           // takes only an ElementId, NOT (id, label)
+    .label("Click me")      // label is a separate method
+    .icon(IconName::Check)
+    .primary()               // or .ghost(), .outline(), .danger() — from ButtonVariants trait
+    .small()                 // from Sizable trait
+    .disabled(true)          // from Disableable trait
+    .tooltip("Hint text")   // takes impl Into<SharedString>, NOT a closure
+    .on_click(|event, window, cx| { })
+```
+
+### Tag
+Tags are **display-only** — they do NOT support `.id()`, `.on_click()`, or any interactivity. If you need clickable pill-style elements, use `Button::new(...).small().rounded_full().ghost()` instead. Tags are useful for non-interactive labels and badges.
+
+```rust
+use gpui_component::tag::Tag;
+Tag::primary().child("Label")
+Tag::secondary().outline().child("Outline")
+Tag::danger().child("Error")
+```
+
+### Toggle / ToggleGroup
+```rust
+use gpui_component::button::{Toggle, ToggleGroup};
+
+Toggle::new("id").label("Option").checked(true)
+    .on_click(|checked: &bool, window, cx| { })
+
+ToggleGroup::new("group")
+    .child(Toggle::new(0).label("A").checked(state_a))
+    .child(Toggle::new(1).label("B").checked(state_b))
+    .on_click(|states: &Vec<bool>, window, cx| { })
+```
+
+### Switch
+```rust
+use gpui_component::switch::Switch;
+Switch::new("id").checked(value).label("Label")
+    .on_click(|checked: &bool, window, cx| { })
+```
+
+### Input / InputState
+```rust
+use gpui_component::input::{Input, InputState};
+
+// Creating: must use cx.new() which provides Context<InputState>
+let state = cx.new(|cx| InputState::new(window, cx).placeholder("text"));
+
+// Reading value:
+let value = state.read(cx).value(); // returns SharedString
+
+// Setting value: REQUIRES &mut Window — not available outside render().
+// Pattern: store pending values and apply in render():
+state.update(cx, |input, cx| { input.set_value("text", window, cx); });
+```
+
+### Slider
+The project uses the gpui-component Slider. It uses `SliderState` with `SliderEvent::Change(SliderValue)`.
+
+```rust
+use gpui_component::slider::{Slider, SliderEvent, SliderState};
+
+// Creating slider state
+let slider = cx.new(|_cx| {
+    SliderState::new()
+        .min(1.0)
+        .max(5.0)
+        .step(1.0)
+        .default_value(3.0)
+});
+
+// Subscribing to changes
+cx.subscribe(&slider, |this, _slider, event: &SliderEvent, cx| match event {
+    SliderEvent::Change(value) => {
+        this.current_value = value.start();
+        cx.notify();
+    }
+});
+
+// Reading the current value
+let value = slider.read(cx).value().start(); // returns f32
+
+// Setting value programmatically — REQUIRES &mut Window
+slider.update(cx, |slider, cx| {
+    slider.set_value(new_value_f32, window, cx);
+});
+
+// Rendering
+Slider::new(&self.slider_state)
+```
+
+Key gotcha: `SliderState::set_value()` requires `&mut Window`, so you cannot call it from a plain `cx.subscribe()` handler (which doesn't provide `window`). Use `cx.subscribe_in()` instead if you need to set slider values in response to events.
+
+### Tooltip
+On elements: `.tooltip(|window, cx| Tooltip::new("text").build(window, cx))` — closure-based.
+On Button: `.tooltip("text")` — takes `impl Into<SharedString>`, NOT a closure.
+
+### overflow_y_scroll
+This method is on `StatefulInteractiveElement`, so the element MUST have an `.id()` first:
+```rust
+div().id("scrollable").overflow_y_scroll()  // works
+div().overflow_y_scroll()                    // COMPILE ERROR
+```
+
+### Traits that must be imported for certain methods
+- `gpui::AppContext as _` — needed for `cx.new()` to create entities from `Context<T>`
+- `gpui::StatefulInteractiveElement` — needed for `.overflow_y_scroll()`, `.on_drag()`, etc.
+- `gpui_component::Sizable` — needed for `.small()`, `.xsmall()`, `.large()` on Button, Tag, Switch, etc.
+- `gpui_component::Disableable` — needed for `.disabled()` on Button, Switch, etc.
+- `gpui_component::button::ButtonVariants` — needed for `.primary()`, `.ghost()`, `.outline()`, `.danger()` on Button
+- `gpui::prelude::FluentBuilder` — needed for `.when()`, `.when_some()`, `.map()` on elements
+- `gpui_component::ActiveTheme` — needed for `cx.theme()` to access theme colors
+- `gpui_component::WindowExt` — needed for `window.push_notification()`, `window.open_dialog()`, `window.close_dialog()`. This is from `gpui_component`, NOT from `gpui`.
+
+### IconName does not implement Copy
+`IconName` is Clone but not Copy. When iterating over `&[IconName]`, use `.clone()` not `*`:
+```rust
+let icon = icon_ref.clone(); // correct
+let icon = *icon_ref;        // COMPILE ERROR — no Copy
+```
+
+### Progress
+`Progress::new("id").value(f32_value)` — value is `f32`, not `f64`.
+
+### Label
+```rust
+use gpui_component::label::Label;
+Label::new("text")
+    .text_sm()                              // size helpers
+    .text_color(cx.theme().muted_foreground) // color via theme
+    .truncate()                              // truncate with ellipsis
+```
+
+### Form / Field
+```rust
+use gpui_component::form::{field, v_form, h_form};
+
+// Vertical form (default)
+v_form()
+    .columns(2)                              // multi-column grid layout
+    .child(field().label("Name").child(Input::new(&input)))
+    .child(field().label("Bio").col_span(2).child(Input::new(&bio)))
+
+// Horizontal form (label left, input right)
+h_form()
+    .label_width(px(120.))
+    .child(field().label("Name").child(Input::new(&input)))
+
+// Field modifiers
+field()
+    .label("Email")
+    .required(true)                          // shows asterisk
+    .description("We won't share this")      // help text below
+    .visible(condition)                      // conditional visibility
+    .col_span(2)                             // span multiple columns
+    .col_start(1)                            // start at specific column
+    .label_indent(false)                     // no label (for buttons row)
+    .items_start()                           // align label to top for tall content
+```
+
+### Select / SelectState
+```rust
+use gpui_component::select::{Select, SelectState, SelectItem, SelectEvent, SearchableVec};
+
+// Basic: items can be &str, String, SharedString, or custom types
+let state = cx.new(|cx| {
+    SelectState::new(
+        vec!["Apple", "Orange", "Banana"],
+        Some(IndexPath::default()), // initial selection (None for no selection)
+        window,
+        cx,
+    )
+});
+Select::new(&state).placeholder("Pick a fruit...")
+
+// Searchable select
+let items = SearchableVec::new(vec!["Rust", "Go", "Python"]);
+let state = cx.new(|cx| {
+    SelectState::new(items, None, window, cx).searchable(true)
+});
+
+// Custom item type: implement SelectItem trait
+impl SelectItem for MyType {
+    type Value = String;
+    fn title(&self) -> SharedString { self.name.clone() }
+    fn value(&self) -> &Self::Value { &self.id }
+}
+
+// Reading selected value
+let value = state.read(cx).selected_value(); // Option<&Value>
+
+// Setting selection
+state.update(cx, |state, cx| {
+    state.set_selected_index(Some(IndexPath::default().row(2)), window, cx);
+});
+
+// Subscribe to changes
+cx.subscribe_in(&state, window, |view, state, event: &SelectEvent, window, cx| {
+    if let SelectEvent::Confirm(value) = event { /* ... */ }
+});
+
+// Modifiers: .cleanable(true), .disabled(true), .small(), .appearance(false)
+```
+
+### Dialog (modal)
+```rust
+use gpui_component::{WindowExt, dialog::DialogButtonProps};
+
+// Root view must render dialog layer:
+// .children(Root::render_dialog_layer(window, cx))
+
+// Confirm dialog
+window.open_dialog(cx, |dialog, _, _| {
+    dialog
+        .confirm()
+        .child("Are you sure?")
+        .on_ok(|_, window, cx| {
+            // return true to close
+            true
+        })
+});
+
+// Alert dialog (single OK button)
+window.open_dialog(cx, |dialog, _, _| {
+    dialog.alert().child("Done!")
+});
+
+// Custom dialog with title, content, footer
+window.open_dialog(cx, |dialog, _, _| {
+    dialog
+        .title("Edit Item")
+        .child(v_flex().gap_3().child(Input::new(&input)))
+        .footer(|_, _, _, _| {
+            vec![
+                Button::new("cancel").label("Cancel")
+                    .on_click(|_, window, cx| { window.close_dialog(cx); }),
+                Button::new("save").primary().label("Save")
+                    .on_click(|_, window, cx| { window.close_dialog(cx); }),
+            ]
+        })
+});
+
+// Close programmatically
+window.close_dialog(cx);
+```
+
+### Notification (toast)
+`WindowExt` is from `gpui_component`, NOT `gpui`. Do NOT write `use gpui::WindowExt`.
+```rust
+use gpui_component::{WindowExt, notification::{Notification, NotificationType}};
+
+// Root view must render notification layer:
+// .children(Root::render_notification_layer(window, cx))
+
+// Simple string
+window.push_notification("Saved!", cx);
+
+// With type (Info, Success, Warning, Error)
+window.push_notification((NotificationType::Error, "Something failed"), cx);
+
+// Builder pattern
+window.push_notification(
+    Notification::new()
+        .title("Upload Complete")
+        .message("File uploaded successfully.")
+        .with_type(NotificationType::Success)
+        .autohide(false)  // stays until dismissed
+        .action(|_, cx| {
+            Button::new("undo").label("Undo")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.dismiss(window, cx);
+                }))
+        }),
+    cx,
+);
+
+// Unique notification (can be replaced/removed by type)
+struct MyNotifId;
+window.push_notification(
+    Notification::new().id::<MyNotifId>().message("Loading...").autohide(false),
+    cx,
+);
+window.remove_notification::<MyNotifId>(cx); // remove later
+```
+
+### Popover (floating content)
+```rust
+use gpui_component::popover::Popover;
+
+Popover::new("my-popover")
+    .trigger(Button::new("btn").label("Open").outline())
+    .anchor(Corner::BottomLeft)              // TopLeft, TopRight, BottomLeft, BottomRight
+    .child("Popover content here")
+    .content(|_, _, _| {                     // dynamic content (called every render)
+        div().child("Dynamic content")
+    })
+
+// Dismiss from inside content:
+cx.emit(gpui_component::DismissEvent);
+
+// Controlled open state:
+Popover::new("p")
+    .open(self.is_open)
+    .on_open_change(cx.listener(|this, open: &bool, _, cx| {
+        this.is_open = *open;
+        cx.notify();
+    }))
+```
+
+### Tabs / TabBar
+```rust
+use gpui_component::tab::{Tab, TabBar};
+
+TabBar::new("tabs")
+    .selected_index(self.active_tab)
+    .on_click(cx.listener(|view, index, _, cx| {
+        view.active_tab = *index;
+        cx.notify();
+    }))
+    .child(Tab::new().label("Account"))
+    .child(Tab::new().label("Profile"))
+    .child(Tab::new().label("Settings"))
+
+// Variants: .underline(), .pill(), .outline(), .segmented()
+// Sizes: .xsmall(), .small(), .large()
+// Features: .menu(true) for overflow dropdown, .prefix(element), .suffix(element)
+// Tab with icon: Tab::new().label("Home").prefix(IconName::Inbox)
+```
+
+### List / ListDelegate
+```rust
+use gpui_component::list::{List, ListState, ListDelegate, ListItem, ListEvent};
+use gpui_component::IndexPath;
+
+// Implement ListDelegate for your data type
+impl ListDelegate for MyDelegate {
+    type Item = ListItem;
+    fn items_count(&self, _cx: &App) -> usize { self.items.len() }
+    fn render_item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<ListState<Self>>) -> Option<ListItem> {
+        self.items.get(ix).map(|item| {
+            ListItem::new(ix).child(Label::new(item.clone()))
+        })
+    }
+    fn set_selected_index(&mut self, ix: Option<usize>, _window: &mut Window, cx: &mut Context<ListState<Self>>) {
+        self.selected_index = ix;
+        cx.notify();
+    }
+}
+
+let state = cx.new(|cx| ListState::new(delegate, window, cx));
+// Optional: .searchable(true) for built-in search
+List::new(&state).max_h(px(400.))
+
+// Subscribe to events
+cx.subscribe(&state, |_, _, event: &ListEvent, _| {
+    match event {
+        ListEvent::Select(ix) => { /* item selected */ }
+        ListEvent::Confirm(ix) => { /* item confirmed (Enter) */ }
+        ListEvent::Cancel => { /* Escape pressed */ }
+    }
+});
+```
+
+## Theming
+
+```rust
+use gpui_component::ActiveTheme;
+
+// Access theme colors anywhere you have cx: &App or &Context<T>
+let theme = cx.theme();
+
+// Common color tokens:
+theme.primary              // primary brand color
+theme.background           // main background
+theme.foreground           // main text color
+theme.secondary            // secondary background
+theme.secondary_foreground // secondary text
+theme.muted_foreground     // dimmed/hint text
+theme.border               // border color
+theme.accent               // accent/highlight
+theme.accent_foreground    // text on accent background
+theme.destructive          // danger/error red
+theme.success              // success green
+theme.warning              // warning yellow
+theme.info                 // info blue
+theme.popover              // popover/overlay background
+theme.popover_foreground   // popover text
+theme.group_box            // card/group background
+theme.group_box_foreground // card/group text
+theme.list_hover           // list item hover background
+theme.input                // input border color
+theme.radius               // default border radius
+theme.mode                 // ThemeMode::Light or ThemeMode::Dark
+
+// Named colors (light/dark variants):
+theme.red_light            // red (light variant)
+theme.yellow_light         // yellow (light variant)
+theme.green_light          // green (light variant)
+theme.magenta_light        // magenta (light variant)
+```
+
+### Divider
+```rust
+use gpui_component::divider::Divider;
+
+Divider::horizontal()                     // basic horizontal line
+    .color(cx.theme().border)             // custom color
+    .label("Section")                     // label in center of divider
+    .font(gpui::font("Georgia"))          // custom font for label
+    .w_full()                             // full width
+```
+
+## Layout helpers
+
+```rust
+use gpui_component::{h_flex, v_flex};
+
+// h_flex() = div().flex().flex_row().items_center()
+// v_flex() = div().flex().flex_col()
+
+// Common layout patterns:
+h_flex().gap_2().items_center().justify_between()  // horizontal spaced row
+v_flex().gap_4().p_4()                             // vertical stack with padding
+div().flex_1()                                     // fill remaining space
+div().size_full()                                  // width: 100%, height: 100%
+div().w_full()                                     // width: 100%
+div().min_w_0()                                    // allow flex shrink below content
+```
+
+## Common patterns
+
+### Conditional rendering
+```rust
+div()
+    .when(condition, |this| this.child("shown when true"))
+    .when_some(option_value, |this, value| this.child(format!("got: {}", value)))
+    .map(|this| if condition { this.bg(red()) } else { this })
+```
+
+### Closure ownership in lists
+When rendering items in a loop where closures capture variables, clone before the closure that moves:
+```rust
+let items = vec!["a", "b", "c"];
+items.iter().map(|item| {
+    let item_for_delete = item.clone();
+    let item_for_click = item.clone();
+    div()
+        .on_action(cx.listener(move |_, _: &Delete, _, cx| { use_item(&item_for_delete); }))
+        .on_click(cx.listener(move |_, _, _, cx| { use_item(&item_for_click); }))
+})
+```
+
+### Root view layer rendering
+The root view must render overlay layers for Dialog, Sheet, and Notification to work:
+```rust
+impl Render for RootView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .child(/* main content */)
+            .children(Root::render_dialog_layer(window, cx))
+            .children(Root::render_sheet_layer(window, cx))
+            .children(Root::render_notification_layer(window, cx))
+    }
+}
+```
+
+### Entity creation from Context<T>
+When creating a child entity from within another entity's constructor or methods:
+```rust
+// This works — cx.new() creates Entity<InputState> from Context<ActionEditor>
+let input = cx.new(|cx| InputState::new(window, cx).placeholder("text"));
+// Requires: use gpui::AppContext as _;
+```
+
+### Storing subscriptions
+When a view subscribes to multiple entities, store subscriptions in a `Vec<Subscription>` to keep them alive:
+```rust
+struct MyView {
+    _subscriptions: Vec<Subscription>,
+}
+
+// In constructor:
+let mut subscriptions = Vec::new();
+subscriptions.push(cx.subscribe(&entity1, |this, _, event: &Event1, cx| { ... }));
+subscriptions.push(cx.subscribe(&entity2, |this, _, event: &Event2, cx| { ... }));
+// For handlers needing window:
+subscriptions.push(cx.subscribe_in(&entity3, window, |this, _, event: &Event3, window, cx| { ... }));
+
+Self { _subscriptions: subscriptions }
+```
+
+### Loading data from stores in constructors
+Store methods that spawn async tasks (like `load_current_context`) take `&self` and `cx: &Context<Self>` (where `Self` is the store type). To call them from another entity's constructor, use `.update()` which provides the correct `Context<DatabaseStore>`:
+```rust
+// CORRECT — provides Context<DatabaseStore>
+database_store.update(cx, |store, cx| {
+    store.load_current_context(cx);
+    store.load_current_mental_state(cx);
+});
+
+// WRONG — cx here is Context<MyView>, not Context<DatabaseStore>
+// database_store.read(cx).load_current_context(cx);  // type mismatch!
+```
+
+Note: `.read(cx)` works for simple getters that only need `&self`, since `&App` is the receiver. But methods that spawn tasks via `cx.spawn()` need the entity's own `Context<T>`.
+
+### Collapsible sections pattern
+For collapsible UI sections without using the full `Collapsible` component:
+```rust
+struct MyView {
+    section_expanded: bool,
+}
+
+// In render:
+v_flex()
+    .child(
+        h_flex().justify_between().items_center()
+            .child(Label::new("Section Title"))
+            .child(
+                Button::new("toggle")
+                    .icon(if self.section_expanded {
+                        IconName::ChevronUp
+                    } else {
+                        IconName::ChevronDown
+                    })
+                    .ghost()
+                    .xsmall()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.section_expanded = !this.section_expanded;
+                        cx.notify();
+                    })),
+            ),
+    )
+    .when(self.section_expanded, |this| {
+        this.child(/* expanded content */)
+    })
+```
+
+
+# Subroutine Application Design
+
+## Core Philosophy
+
+Subroutine is an **executive function prosthetic**, not a traditional task manager. It is a **context-aware action recommender** that accommodates ADHD and executive dysfunction through intelligent automation and flexible structure.
+
+### Design Principles
+
+1. **Minimize decision fatigue** — Decisions should be automatic, predetermined, or trivially easy to make
+2. **Executive function first** — Every feature accommodates challenges with planning, transitions, emotional regulation, and task initiation
+3. **Flexible structure over rigid schedules** — Use time windows, not deadlines; provide semi-flexible routines, not hard commitments
+4. **Cohesive system** — Features integrate deeply rather than existing as separate tools
+5. **Calm but rich** — Prioritize focus and emotional safety while maintaining depth and capability
+
+### Core Concept: Context-Aware Recommendations
+
+The app revolves around five primitives:
+- **Actions** — Things the user might do (tasks, activities, habits, events)
+- **Context** — User's current environment, energy, attention capacity, mental state
+- **States** — Mental/emotional states that affect capability and needs
+- **Events** — User behavior history for learning and adaptation
+- **Structures** — Ways to group actions (routines, pipelines, vibe lists)
+## Data Model: Actions
+
+Actions are the fundamental unit. All "things the user might do" share a common schema with executive function–aware attributes.
+
+### Action Types
+
+- **Task** — Goal-oriented, discrete, completable. Examples: hygiene, chores, work assignments, errands
+- **Activity** — Open-ended, done for enjoyment/fulfillment. Examples: leisure, exercise, socializing, hobbies
+- **Event** — Scheduled occurrence at specific time/place. Examples: meetings, appointments, gatherings
+- **Habit** — Repeated behavior, may become automatic. Examples: morning coffee, evening walk
+- **Routine** — Sequential group of tasks/activities/habits. Examples: morning routine, bedtime routine
+- **Subroutine** — Dynamic sequence auto-selected by context and mental state. Acts as modular routine component or mental state handler
+
+### Action Attributes (Executive Function–Aware)
+
+All actions should capture these attributes for accurate recommendation:
+
+**Universal attributes:**
+- **Duration** — Fibonacci-scaled minutes: 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144
+- **Energy rate** — How draining/energizing per unit time (multiply by duration for total cost)
+- **Attention level** — Required focus intensity (1-5 scale)
+- **Transition difficulty** — How hard to start/stop (1-5 scale)
+- **Enjoyment after start** — Motivation once begun (1-5 scale)
+- **Importance** — Priority level (1-5 scale)
+- **Urgency growth** — Does this become more important over time?
+- **Environment requirements** — Predefined categories: quiet, social, outdoors, etc. (with accessibility scores)
+- **Location requirements** — Predefined categories: home, work, store, etc. (with accessibility scores)
+- **Preferred time of day** — Morning, afternoon, evening, night
+
+**Recurring-specific attributes:**
+- **Frequency** — Fibonacci-scaled: 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144 days/weeks/months
+
+### Action Creation Questions
+
+These questions help populate action attributes:
+
+**Breakdown & scope:**
+- "Are there parts that could be done separately?"
+- "Are there parts that must be done together?"
+- "About how long will this take?" → duration
+
+**Transition difficulty:**
+- "How hard is this to begin?" → transition_difficulty
+- "Is there a clear way to start?"
+- "Is there a clean way to stop?"
+
+**Energy & motivation:**
+- "How draining or energizing is this?" → energy_rate
+- "What makes it draining/energizing?"
+- "Could accommodations make it less draining?"
+- "How enjoyable once started?" → enjoyment_after_start
+
+**Priority:**
+- "How important is this?" → importance
+- "What are consequences of not doing it?"
+- "What are benefits of doing it?"
+- "Does it get more important over time?" → urgency_growth
+
+**Context:**
+- "Which environments suit this task?" → environment_requirements
+- "Which environments are accessible to you?" → accessibility_score
+- "What time of day do you prefer this?" → preferred_time_of_day
+
+**Comparative:**
+- "Is this easier, harder, or same as [reference task]?"
+- "Is this part of your routine?"
+
+## Mental State Navigation
+
+Users can navigate by declaring "I'm feeling..." which triggers appropriate interventions:
+
+- **"Analysis paralysis"** → Brain Interrupt + Idea Generator (pick from category) + Decision Maker
+- **"Overstimulated"** → Stimulation check + Self-accommodation reminders + Environment suggestions
+- **"Overwhelmed"** → Brain Interrupt + Structured mindfulness + Emotion Decoder + Special interest suggestions
+- **"Hyperfocused"** → Transition Primer (gradual attention shift) + Brain Interrupt when needed
+- **"Intense emotion"** → Emotion Decoder (label emotion) + Stack Trace (trace emotional history)
+## Core Features
+
+### The Pipeline (Primary Queue System)
+
+General-purpose queue used by all modules. Acts as both task scheduler and recommendation engine.
+
+**Purpose:** "Write tasks down and let the system tell you when to do them. We can't all be multithreaded."
+
+**Capabilities:**
+- Auto-breakdown of large tasks using LLM
+- Auto-prioritization based on context and attributes
+- Task suggestions based on current capability
+- Routine suggestions
+- Automatic transition time accounting
+- Feeds Focus Mode, Agenda View, and all other features
+
+### Focus Mode
+
+Minimal interface showing 1-3 tasks at a time with scroll wheel–style selection.
+
+**Purpose:** Reduce overwhelm and decision paralysis by limiting choices
+
+**Features:**
+- Shows only immediately doable tasks
+- Smooth animations for satisfying interactions
+- No clutter, maximum calm
+- Fed by Pipeline recommendations
+
+### Routines and Subroutines
+
+Modular, reusable sequences of actions.
+
+**Purpose:** "Modularize your routines"
+
+**Capabilities:**
+- Group related tasks done together/sequentially
+- Sequential or randomized execution
+- Can be added to Pipeline as single unit
+- Time auto-proportioning: specify start/end time, system decides what fits and allocates time
+- Hierarchical nesting for complex workflows
+- Inspired by Tiimo's routine timer with "Add 1 minute" feature (reschedules all subsequent steps)
+
+### Decision Maker
+
+Eliminates choice paralysis by making decisions for the user.
+
+**Purpose:** "Reduce decision fatigue by making the decision for you"
+
+**How it works:**
+- User provides category and list of choices
+- Optional: provide additional context
+- LLM picks from list or generates new option if appropriate
+- Used by Brain Interrupt, Vibe Lists, and other features
+
+**Example use cases:**
+- "What should I eat?" from meal list
+- "What should I do to decompress?" from activity list
+- "Which task should I do next?" from Pipeline
+
+### Vibe Lists
+
+Category-based quick pickers for specific, predefined choices. Reduces "what should I..." paralysis.
+
+**Example categories:**
+- **Meals:** School lunch (turkey sandwich), Mac n' cheese, pasta, chicken parmesan, Wendy's, Cheba Hut
+- **Recenter:** Mindfulness (Playne app), flow state (project work), creative (drawing), music (guitar, Ableton)
+- **Escape:** Cannabis, cocktails, TV shows, movies, video games
+- **Hygiene:** Shower, brush teeth, trim facial hair, tidy office, wash dishes, dust
+- **Occupation:** Review bugs, clean email, organize files
+- **Exercise:** Longboarding, skatepark, dancing, bodyweight exercises
+
+### Idea Generator
+
+LLM-powered brainstorming and breakdown tool.
+
+**Purpose:** "Come up with ideas and find names for concepts"
+
+**Use cases:**
+- Break task into smaller pieces (like Goblin Tools "Magic ToDo")
+- Generate routine suggestions
+- Summarize concepts
+- Name things
+- Overcome creative blocks
+
+### Brain Interrupt (Brain Reset)
+
+Interrupt thought loops, analysis paralysis, and catastrophic thinking.
+
+**Purpose:** "Did you try turning it off and on again?"
+
+**How it works:**
+- Suggests immediate environment change
+- Uses Decision Maker for change-of-environment choices
+- Optionally launches external app (Spotify, YouTube)
+- Breaks rumination cycles with physical interruption
+
+### Wisdom Nuggets
+
+Context-aware reminders of helpful principles and accommodations.
+
+**Purpose:** "Sometimes you need to be reminded how to handle life. A little wisdom goes a long way."
+
+**Example nuggets:**
+- "Your needs are value-neutral and deserve proper accommodations"
+- "Self-accommodation is valid even if others wouldn't need it"
+- "Difficulty starting ≠ not wanting to do it"
+- "Taking breaks is productive, not lazy"
+
+Triggered by mental state, time of day, or user request.
+
+### Transition Primer
+
+Countdown-style system for preparing brain for upcoming transitions.
+
+**Purpose:** "Transitions are hard for monotropic minds. Make them smoother and easier."
+
+**How it works:**
+- Provides advance notice of upcoming transition
+- Gradual attention shift rather than sudden switch
+- Relaxing countdown with calming visual/audio cues
+- Helps disengage from hyperfocus safely
+
+### Emotion Decoder
+
+Helps identify and label emotions.
+
+**Purpose:** "The first step to understanding an emotion is putting a name to it. Emotions are like weather — they come and go."
+
+**How it works:**
+- Asks guided questions to gauge mental state
+- Suggests possible emotions user might be feeling
+- Provides relevant Wisdom Nugget
+- Can feed into Stack Trace for deeper analysis
+
+### Stack Trace
+
+Traces emotional history to understand current state.
+
+**Purpose:** "The second step to understanding an emotion is learning how it came about."
+
+**How it works:**
+- Starts with Emotion Decoder (current feeling)
+- Asks "Why?" iteratively with feedback
+- Rewinds through mental state sequence
+- Helps identify triggers and patterns
+
+
+
+
+## User Needs Being Addressed
+
+Primary goal: **Reduce decision fatigue at every level**
+
+**Morning consistency:**
+- Transition Primer for waking up
+- Evening prep routines (pick clothes night before)
+- Sequential morning routine with auto-timing
+
+**Meal planning & cooking:**
+- Vibe Lists for meal ideas
+- Grocery store trip routines
+- Recipe breakdowns with ingredient prep steps
+- Overstimulation/overwhelm detection and accommodation
+
+**Cleaning & hygiene:**
+- Transition Primer before starting
+- Task breakdown for overwhelming chores
+- Environment-based task suggestions
+- Overstimulation monitoring
+
+**Analysis paralysis:**
+- Brain Interrupt to break loops
+- Decision Maker to eliminate choice
+- Reframe suggestions
+- "Just pick one" random selection
+
+**Overwhelm reduction:**
+- Proactive detection via mental state tracking
+- Immediate interventions (Brain Interrupt, environment change)
+- Emotion Decoder + Stack Trace for understanding
+- Reduced visual complexity in all UIs
+
+**Anxiety & stress:**
+- Wisdom Nuggets with grounding reminders
+- Special interest suggestions
+- Structured mindfulness options
+- Context-aware activity recommendations
+
+**Transition management:**
+- Transition Primer for all context switches
+- Gradual attention shifting
+- Clear start/stop signals
+- Automatic buffer time between tasks
+
+
+## Inspirations from Other Apps
+
+**Tiimo:**
+- ✅ Reusable routines as tasks with subtasks
+- ✅ Day sections (Morning/Day/Evening)
+- ✅ Separate "Anytime" TO-DO list (sidebar inbox with priority sections, drag-and-drop)
+- ✅ Playlist-style timer (small window, play/pause, tracks routines and tasks)
+- ✅ LLM "Suggest Breakdown" for subtasks
+- ✅ Agenda view with time-of-day sections
+
+**RoutineFlow:**
+- ✅ Excellent onboarding questions
+- ✅ Quick routine creation suggestions
+- ✅ Clean interface (monospace font for durations)
+- ✅ Scheduled vs Flexible mode toggle
+- ✅ Routine habit tracking
+- ✅ Timer UI improvements:
+  - **"Add 1 min" button** — reschedules all subsequent routine steps (CRITICAL FEATURE)
+  - Reschedule, Reset, "Do later" buttons
+  - "Next Step" preview below current task
+  - Big green checkmark button
+  - Routine finished ETA display
+- ✅ Post-completion screen suggesting duration adjustments based on actual time taken
+- ✅ Well-presented insights/stats
+- ✅ "Steps" terminology for tasks
+- ✅ Native banner showing step progress
+- ⚠️ Optional: Chill lo-fi music, voice reminders
+
+**Thruday:**
+- ✅ Explicit task vs activity separation
+- ⚠️ Mood tracking (consider privacy implications)
+
+## Implementation Roadmap
+
+### V1 (MVP)
+- Basic action CRUD (create, read, update, delete, complete)
+- Pipeline queue with manual ordering
+- Focus Mode (show 1-3 tasks)
+- Simple routines (sequential, no subroutines)
+- Batch Mode (quick multi-task creation with auto-incrementing time)
+- Rescheduler (maintain relative order/intervals when rescheduling)
+- Task attributes: duration, energy, attention, importance
+- New action popup for quick entry
+- Satisfying animations (exploding tasks on completion)
+
+### V2 (Context-Aware)
+- Action attributes: environment, location, transition difficulty, time-of-day preference
+- Context snapshots (time, location, environment detection)
+- Mental state tracking (manual declaration)
+- Pipeline auto-ranking based on context match
+- "What should I do next?" suggestions
+- Agenda view with visual timeline and drag-and-drop rescheduling
+- Auto time-blocking
+
+### V3 (Intelligence)
+- Idea Generator (LLM task breakdown)
+- Decision Maker (LLM choice picker)
+- Auto-prioritization
+- Subroutines (dynamic action grouping)
+- Event tracking for learning
+- Adaptive notifications based on user behavior
+- Brain Interrupt with environment suggestions
+
+### V4 (Mental State Support)
+- Emotion Decoder
+- Stack Trace (emotional history)
+- Wisdom Nuggets
+- Transition Primer
+- Navigate by mental state
+- Vibe Lists
+- Mental state handlers (subroutines triggered by state)
+
+### V5 (Polish & Extension)
+- Sound effects library
+- Lo-fi music integration
+- Voice reminders
+- Extensive personalization (themes, layouts)
+- Insights and statistics dashboard
+- Native mobile apps with banner notifications
+- Post-routine completion feedback and duration adjustment suggestions
+
+
+## Database Schema Design
+
+The schema is designed around **events and learning**, not dates and checkboxes. It directly maps to the app's core philosophies.
+
+### Design Goals
+1. Define core primitives (what fundamentally exists)
+2. Support learning and flexibility
+3. Explicitly map philosophies to schema decisions
+4. Leave room for ML without forcing it
+5. Start simple, grow intelligently
+
+### Core Entities
+
+These are the *irreducible nouns* of the system:
+
+**Action** — A thing the user might do. Tasks, habits, activities, and routine steps are specializations (same table, different `type` values), not separate tables. This allows ML to learn cross-type patterns.
+
+**Instance** — A specific opportunity to do an action *now or soon*. This is what appears in Pipeline, Focus Mode, and Agenda view. Links action templates to specific contexts and times.
+
+**Structure** — Ways actions are grouped or sequenced: routines, subroutines, vibe lists, pipelines. Provides organizational flexibility.
+
+**Context Snapshot** — Captured state of user and environment at a moment in time. Enables context-aware recommendations and learning.
+
+**Event** — Something that happened (or didn't). Where learning lives. Tracks suggestions, acceptances, completions, skips, snoozes, abandonments.
+
+### Schema Tables
+
+The following schema works in both Postgres and SQLite:
+
+#### `actions` table
+
+Represents **what** the user might do, independent of *when*.
+
+```sql
+actions (
+  id UUID PRIMARY KEY,
+  type TEXT CHECK (type IN ('task', 'activity', 'habit', 'event')),
+  
+  title TEXT NOT NULL,
+  description TEXT,
+
+  -- Executive function–aware attributes
+  duration_bucket INTEGER,        -- Fibonacci index (e.g. 1–12)
+  energy_rate INTEGER,             -- per unit time
+  attention_level INTEGER,         -- 1–5
+  transition_difficulty INTEGER,   -- 1–5
+  enjoyment_after_start INTEGER,   -- 1–5
+
+  importance INTEGER,              -- 1–5
+  urgency_growth BOOLEAN,          -- gets more important over time?
+
+  preferred_time_of_day TEXT[],    -- ['morning', 'evening']
+  
+  created_at TIMESTAMP NOT NULL,
+  archived_at TIMESTAMP
+)
+```
+
+📌 **Why this works**
+
+* Tasks vs habits is a *behavioral difference*, not a data one
+* Lets ML learn cross-type patterns
+* Avoids schema explosion
+
+---
+
+#### `action_requirements` table
+
+Separate table for environment and location requirements. These are multi-valued and evolve over time.
+
+```sql
+action_requirements (
+  id UUID PRIMARY KEY,
+  action_id UUID REFERENCES actions(id),
+
+  requirement_type TEXT CHECK (
+    requirement_type IN ('environment', 'location')
+  ),
+  value TEXT,          -- 'quiet', 'home', 'outdoors'
+  accessibility_score INTEGER -- how easy this is for the user
+)
+```
+
+This directly supports:
+
+* “Which environments are most accessible to you?”
+* Brain Interrupt suggestions
+* Context mismatch penalties
+
+---
+
+#### `routines` table
+
+```sql
+routines (
+  id UUID PRIMARY KEY,
+  name TEXT,
+  description TEXT,
+
+  is_sequential BOOLEAN,
+  allow_randomization BOOLEAN,
+
+  default_start_time TIME,
+  default_end_time TIME
+)
+```
+
+#### `routine_steps` table
+
+```sql
+routine_steps (
+  id UUID PRIMARY KEY,
+  routine_id UUID REFERENCES routines(id),
+  action_id UUID REFERENCES actions(id),
+
+  step_order INTEGER,
+  min_duration_bucket INTEGER,
+  max_duration_bucket INTEGER
+)
+```
+
+📌 This supports:
+
+* Tiimo-style routines
+* “Add 1 minute” rescheduling
+* Subroutines
+* Auto-proportioning time
+
+---
+
+#### `instances` table
+
+**Most important table for UX.** Links actions to specific times and contexts.
+
+```sql
+instances (
+  id UUID PRIMARY KEY,
+  action_id UUID REFERENCES actions(id),
+
+  source TEXT CHECK (
+    source IN ('manual', 'routine', 'suggested', 'generated')
+  ),
+
+  scheduled_for TIMESTAMP,
+  earliest_start TIMESTAMP,
+  latest_end TIMESTAMP,
+
+  status TEXT CHECK (
+    status IN ('pending', 'active', 'completed', 'skipped', 'snoozed')
+  ),
+
+  created_at TIMESTAMP
+)
+```
+
+📌 This enables:
+
+* Flexible scheduling
+* Semi-structured days
+* Agenda view
+* Focus Mode
+
+---
+
+#### `pipelines` table
+
+General-purpose queue abstraction.
+
+```sql
+pipelines (
+  id UUID PRIMARY KEY,
+  name TEXT,
+  description TEXT
+)
+```
+
+#### `pipeline_items` table
+
+```sql
+pipeline_items (
+  id UUID PRIMARY KEY,
+  pipeline_id UUID REFERENCES pipelines(id),
+  instance_id UUID REFERENCES instances(id),
+
+  position INTEGER,
+  added_at TIMESTAMP
+)
+```
+
+📌 Everything funnels through this:
+
+* Focus Mode
+* “What should I do next?”
+* Batch Mode
+* Rescheduler
+
+---
+
+#### `mental_states` table
+
+User-declared or inferred mental/emotional states.
+
+```sql
+mental_states (
+  id UUID PRIMARY KEY,
+  name TEXT,           -- 'overwhelmed', 'hyperfocused'
+  description TEXT
+)
+```
+
+#### `mental_state_events` table
+
+```sql
+mental_state_events (
+  id UUID PRIMARY KEY,
+  mental_state_id UUID REFERENCES mental_states(id),
+  intensity INTEGER,   -- 1–5
+  recorded_at TIMESTAMP
+)
+```
+
+This powers:
+
+* Navigate by mental state
+* Emotion Decoder
+* Wisdom Nuggets
+* Brain Interrupt logic
+
+---
+
+#### `context_snapshots` table
+
+Auto-captured when anything interesting happens.
+
+```sql
+context_snapshots (
+  id UUID PRIMARY KEY,
+
+  recorded_at TIMESTAMP,
+  time_of_day TEXT,
+  day_type TEXT,        -- weekday/weekend
+
+  environment TEXT[],
+  location TEXT[],
+  device TEXT,
+
+  active_mental_state UUID
+)
+```
+
+---
+
+#### `events` table (learning engine)
+
+All user behavior feeds into this table for learning and adaptation.
+
+```sql
+events (
+  id UUID PRIMARY KEY,
+
+  event_type TEXT CHECK (
+    event_type IN (
+      'suggested',
+      'accepted',
+      'completed',
+      'skipped',
+      'snoozed',
+      'abandoned'
+    )
+  ),
+
+  instance_id UUID REFERENCES instances(id),
+  action_id UUID REFERENCES actions(id),
+  context_snapshot_id UUID REFERENCES context_snapshots(id),
+
+  occurred_at TIMESTAMP
+)
+```
+
+📌 This is what trains:
+
+* Heuristics
+* ML models
+* Adaptation over time
+
+---
+
+### How Schema Supports Core Philosophies
+
+### ✅ Reduce decision fatigue
+
+* Pipeline auto-ranking
+* Single-instance Focus Mode
+* No hard schedules required
+
+### ✅ Executive function–aware
+
+* Transition difficulty
+* Energy modeling
+* Environment compatibility
+* Emotional state integration
+
+### ✅ Flexible structure
+
+* Time windows instead of deadlines
+* Routine templates → instances
+* Auto-adjust durations
+
+### ✅ Calm but rich
+
+* Schema enables explanation
+* “Why this task?” is always answerable
