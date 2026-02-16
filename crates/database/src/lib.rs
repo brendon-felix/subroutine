@@ -10,15 +10,19 @@ use rusqlite_migration::{M, Migrations};
 
 mod action;
 mod context;
+mod events;
 mod instance;
 mod pipeline;
 mod routine;
+mod scoring;
 
 pub use action::*;
 pub use context::*;
+pub use events::*;
 pub use instance::*;
 pub use pipeline::*;
 pub use routine::*;
+pub use scoring::*;
 
 pub type DatabaseConnection = Arc<Mutex<Connection>>;
 
@@ -32,13 +36,16 @@ fn database_path() -> Result<PathBuf> {
     Ok(path)
 }
 
-fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![M::up(include_str!(
-        "../migrations/20260128205548_init_schema.sql"
-    ))])
+pub fn migrations() -> Migrations<'static> {
+    Migrations::new(vec![
+        M::up(include_str!("../migrations/20260128205548_init_schema.sql")),
+        M::up(include_str!(
+            "../migrations/20260216134152_add_event_type.sql"
+        )),
+    ])
 }
 
-pub fn connect() -> Result<DatabaseConnection> {
+pub fn create_connection() -> Result<Connection> {
     let path = database_path()?;
 
     if let Some(parent) = path.parent() {
@@ -71,6 +78,11 @@ pub fn connect() -> Result<DatabaseConnection> {
         .pragma_update(None, "foreign_keys", "ON")
         .context("Failed to enable foreign keys")?;
 
+    Ok(connection)
+}
+
+pub fn connect() -> Result<DatabaseConnection> {
+    let connection = create_connection()?;
     Ok(Arc::new(Mutex::new(connection)))
 }
 

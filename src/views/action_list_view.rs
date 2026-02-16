@@ -1,11 +1,11 @@
 use database::Action;
 use gpui::{
     App, AppContext, Context, CursorStyle, DragMoveEvent, ElementId, Entity, EventEmitter,
-    InteractiveElement, IntoElement, ParentElement, Render, SharedString,
+    FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
     StatefulInteractiveElement, Styled, Window, actions, div, px,
 };
 use gpui_component::{
-    ActiveTheme, IconName, IndexPath, Selectable,
+    ActiveTheme, IconName, IndexPath, InteractiveElementExt, Selectable,
     button::{Button, ButtonVariants},
     h_flex,
     label::Label,
@@ -26,6 +26,7 @@ use crate::{
         database_store::{ActionsLoaded, DatabaseError},
         drag_drop_store::ActionLocation,
     },
+    views::{CurrentOverlay, StartActionEditor},
 };
 
 use crate::stores::drag_drop_store::DragDropStore;
@@ -50,7 +51,7 @@ pub struct ActionListDelegate {
 
 impl ActionListDelegate {
     pub fn new(database_store: Entity<DatabaseStore>, cx: &App) -> Self {
-        let actions: Vec<Action> = database_store.read(cx).get_actions().clone();
+        let actions: Vec<Action> = database_store.read(cx).get_all_actions().clone();
 
         Self {
             actions,
@@ -63,7 +64,7 @@ impl ActionListDelegate {
     }
 
     pub fn update_actions(&mut self, cx: &App) {
-        self.actions = self.database_store.read(cx).get_actions().clone();
+        self.actions = self.database_store.read(cx).get_all_actions().clone();
 
         if self.is_searching && !self.search_query.is_empty() {
             self.filtered = self
@@ -81,7 +82,7 @@ impl ActionListDelegate {
         }
     }
 
-    fn current_tasks(&self) -> &[Action] {
+    fn current_actions(&self) -> &[Action] {
         if self.is_searching {
             &self.filtered
         } else {
@@ -92,7 +93,7 @@ impl ActionListDelegate {
 
 impl ListDelegate for ActionListDelegate {
     fn items_count(&self, _cx: &App) -> usize {
-        self.current_tasks().len()
+        self.current_actions().len()
     }
 
     fn render_item(
@@ -101,13 +102,13 @@ impl ListDelegate for ActionListDelegate {
         window: &mut Window,
         cx: &mut Context<ListState<ActionListDelegate>>,
     ) -> Option<ListItem> {
-        self.current_tasks().get(ix).map(|task| {
-            let title = task.title.replace('\n', " ").replace('\r', " ");
-            let id = task.id.clone();
+        self.current_actions().get(ix).map(|action| {
+            let title = action.title.replace('\n', " ").replace('\r', " ");
+            let id = action.id.clone();
             let is_selected = Some(ix) == self.selected_index;
 
             let mouse_position = window.mouse_position();
-            let drag_data = DragData::new(task.clone())
+            let drag_data = DragData::new(action.clone())
                 .with_label(SharedString::from(title.clone()))
                 .with_position(mouse_position);
             // .with_preview(move || {
@@ -152,7 +153,8 @@ impl ListDelegate for ActionListDelegate {
                                                 "checkbox".into(),
                                                 ix as u64,
                                             ))
-                                            .on_click(|checked, _window, cx| {
+                                            // .on_click(|checked, _window, cx| {
+                                            .on_mouse_up(|checked, _window, cx| {
                                                 cx.stop_propagation();
                                                 println!("Checkbox clicked: {}", checked);
                                             }),
@@ -169,7 +171,8 @@ impl ListDelegate for ActionListDelegate {
                         }),
                 )
                 .selected(is_selected)
-                .on_action(
+                .on_action({
+                    let id = id.clone();
                     cx.listener(move |list_state, _: &DeleteAction, _window, cx| {
                         list_state
                             .delegate_mut()
@@ -178,14 +181,28 @@ impl ListDelegate for ActionListDelegate {
                                 store.delete_action(id.clone(), cx);
                             });
                         cx.notify();
-                    }),
-                )
-                .on_click({
-                    cx.listener(move |list_state, _event, _window, cx| {
-                        list_state.delegate_mut().selected_index = Some(ix);
-                        cx.notify();
                     })
                 })
+                .on_click({
+                    cx.listener(move |list_state, _event, _window, cx| {
+                        if Some(ix) == list_state.delegate().selected_index {
+                            let event = StartActionEditor {
+                                action_id: Some(id.clone()),
+                            };
+                            cx.emit(event);
+                        } else {
+                            list_state.delegate_mut().selected_index = Some(ix);
+                            cx.notify();
+                        }
+                    })
+                })
+            // .on_double_click({
+            //     cx.listener(move |list_state, _event, _window, cx| {
+            //         let event = StartActionEditor { action_id: None };
+            //         cx.emit(event);
+            //         // cx.dispatch_action(&StartActionEditor);
+            //     })
+            // })
         })
     }
 
@@ -200,12 +217,19 @@ impl ListDelegate for ActionListDelegate {
 }
 
 pub struct ActionListView {
+    // pub focus_handle: FocusHandle,
     drag_drop_store: Entity<DragDropStore>,
     drag_active_here: bool,
     // ui_store: Entity<UiStateStore>,
-    list_state: Entity<ListState<ActionListDelegate>>,
+    pub list_state: Entity<ListState<ActionListDelegate>>,
     task_list_selection: Option<Entity<SelectState<Vec<&'static str>>>>,
 }
+
+// impl Focusable for ActionListView {
+//     fn focus_handle(&self, _cx: &App) -> FocusHandle {
+//         self.focus_handle.clone()
+//     }
+// }
 
 impl ActionListView {
     pub fn new(
@@ -215,6 +239,9 @@ impl ActionListView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus_handle = cx.focus_handle();
+        // cx.focus_self(window);
+
         cx.subscribe(
             &database_store,
             |this, _task_store, _event: &ActionsLoaded, cx| {
@@ -248,6 +275,7 @@ impl ActionListView {
         .detach();
 
         Self {
+            // focus_handle,
             drag_drop_store,
             drag_active_here: false,
             // ui_store,
@@ -280,7 +308,13 @@ impl ActionListView {
     }
 
     fn handle_task_click(&mut self, ix: usize, _cx: &mut Context<Self>) {
-        if let Some(task) = self.list_state.read(_cx).delegate().current_tasks().get(ix) {
+        if let Some(task) = self
+            .list_state
+            .read(_cx)
+            .delegate()
+            .current_actions()
+            .get(ix)
+        {
             println!("Action clicked: {}", &task.title);
         }
     }
@@ -324,6 +358,8 @@ impl ActionListView {
     }
 }
 
+impl EventEmitter<StartActionEditor> for ListState<ActionListDelegate> {}
+
 impl EventEmitter<NavigateToView> for ActionListView {}
 
 impl Render for ActionListView {
@@ -335,12 +371,6 @@ impl Render for ActionListView {
             .read(cx)
             .selected_index(cx)
             .unwrap_or_default();
-        // let is_drop_target: bool = self
-        //     .drag_drop_store
-        //     .read(cx)
-        //     .get_target()
-        //     .map(|loc| matches!(loc, TaskLocation::TaskList))
-        //     .unwrap_or(false);
 
         div()
             .id("task-list")

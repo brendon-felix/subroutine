@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
 use gpui::{Action, App, SharedString};
-use gpui_component::{ActiveTheme as _, Theme, ThemeMode, ThemeRegistry, scroll::ScrollbarShow};
+use gpui_component::{
+    ActiveTheme as _, Theme, ThemeMode, ThemeRegistry, notification::NotificationSettings,
+    scroll::ScrollbarShow,
+};
 use serde::{Deserialize, Serialize};
 
 const STATE_FILE: &str = "target/state.json";
@@ -66,6 +69,11 @@ pub fn init(cx: &mut App) {
     if let Some(scrollbar_show) = state.scrollbar_show {
         Theme::global_mut(cx).scrollbar_show = scrollbar_show;
     }
+    Theme::global_mut(cx).notification = NotificationSettings {
+        placement: gpui_component::Anchor::BottomRight,
+        ..Default::default()
+    };
+
     cx.refresh_windows();
 
     cx.observe_global::<Theme>(|cx| {

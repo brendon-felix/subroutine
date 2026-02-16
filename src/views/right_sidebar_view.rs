@@ -1,27 +1,29 @@
 use gpui::{
-    Bounds, BoxShadow, Context, CursorStyle, ElementId, Entity, EventEmitter, FontWeight,
-    IntoElement, Pixels, Point, Render, Window, div, font, hsla, point, px,
+    Bounds, BoxShadow, Context, ElementId, Entity, EventEmitter, FontWeight, IntoElement, Pixels,
+    Point, Render, Subscription, Window, div, font, hsla, point, px,
 };
 use gpui::{DragMoveEvent, prelude::*};
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::label::Label;
+use gpui_component::notification::NotificationType;
 use gpui_component::scroll::ScrollableElement;
-use gpui_component::{ActiveTheme, Sizable, StyledExt, v_flex};
+use gpui_component::slider::{Slider, SliderEvent, SliderState};
+use gpui_component::{ActiveTheme, IconName, Sizable, StyledExt, WindowExt, h_flex, v_flex};
 use std::collections::HashSet;
 
-use crate::app::ResultExt;
 use crate::components::checkbox::Checkbox;
 use crate::components::drag_drop::{DragData, Draggable, DropIndicator, DropPosition, DropZone};
 use crate::stores::DatabaseStore;
-use crate::stores::database_store::{ActionsLoaded, PipelineLoaded};
+use crate::stores::database_store::{
+    ActionsLoaded, ContextLoaded, MentalStatesLoaded, PipelineLoaded, PipelineScored,
+    SuggestionsLoaded,
+};
 use crate::stores::drag_drop_store::{ActionLocation, DragDropStore};
+use crate::views::StartActionEditor;
 use database::{Action, Instance, PipelineItem};
-// use crate::stores::task_store::{ApiError, TaskLocation, TasksUpdated};
-// use crate::tasks::TaskData;
 
-struct Pipeline {
-    // task_store: Entity<TaskStore>,
+pub struct Pipeline {
     database_store: Entity<DatabaseStore>,
-    // task_data: Vec<TaskData>,
     items: Vec<(PipelineItem, Instance)>,
     drag_drop_store: Entity<DragDropStore>,
     drag_active_here: bool,
@@ -30,6 +32,8 @@ struct Pipeline {
     pending_drops: Vec<(String, i64)>,
     in_progress_deletes: HashSet<String>,
     processing_drop: bool,
+    scores: Vec<(String, f64)>,
+    hovered_item: Option<String>,
 }
 
 impl Pipeline {
@@ -38,19 +42,11 @@ impl Pipeline {
         drag_drop_store: Entity<DragDropStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        // cx.subscribe(&task_store, |this, _store, _event: &TasksUpdated, cx| {
-        //     this.update_tasks(cx);
-        //     cx.notify();
-        // })
-        // .detach();
-
         cx.subscribe(
             &database_store,
             |this, _store, _event: &ActionsLoaded, cx| {
-                println!("[SUBSCRIPTION] ActionsLoaded event received");
                 this.update_items(cx);
                 cx.notify();
-                println!("[SUBSCRIPTION] ActionsLoaded handler completed");
             },
         )
         .detach();
@@ -58,32 +54,47 @@ impl Pipeline {
         cx.subscribe(
             &database_store,
             |this, _store, _event: &PipelineLoaded, cx| {
-                println!(
-                    "[SUBSCRIPTION] PipelineLoaded event received, processing_drop={}",
-                    this.processing_drop
-                );
                 this.update_items(cx);
                 if this.processing_drop {
-                    println!("Pipeline reload completed for drop, processing next");
                     this.processing_drop = false;
                     if !this.pending_drops.is_empty() {
-                        println!(
-                            "Processing queued drop, {} remaining",
-                            this.pending_drops.len()
-                        );
                         this.process_next_drop(cx);
                     }
                 }
+                // Auto-score when pipeline changes
+                this.trigger_scoring(cx);
                 cx.notify();
-                println!("[SUBSCRIPTION] PipelineLoaded handler completed");
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &database_store,
+            |this, store, _event: &PipelineScored, cx| {
+                this.scores = store.read(cx).get_pipeline_scores().clone();
+                cx.notify();
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &database_store,
+            |this, _store, _event: &ContextLoaded, cx| {
+                this.trigger_scoring(cx);
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &database_store,
+            |this, _store, _event: &MentalStatesLoaded, cx| {
+                this.trigger_scoring(cx);
             },
         )
         .detach();
 
         Self {
-            // task_store,
             database_store,
-            // task_data: vec![],
             items: vec![],
             drag_drop_store,
             drag_active_here: false,
@@ -92,16 +103,21 @@ impl Pipeline {
             pending_drops: vec![],
             in_progress_deletes: HashSet::new(),
             processing_drop: false,
+            scores: vec![],
+            hovered_item: None,
         }
     }
 
-    // pub fn update_tasks(&mut self, cx: &mut Context<Self>) {
-    //     self.task_data = self.task_store.read(cx).pipeline_data();
-    // }
+    fn trigger_scoring(&self, cx: &mut Context<Self>) {
+        if self.items.is_empty() {
+            return;
+        }
+        self.database_store.update(cx, |store, cx| {
+            store.score_pipeline(cx);
+        });
+    }
 
     pub fn update_items(&mut self, cx: &mut Context<Self>) {
-        println!("[UPDATE_ITEMS] Starting update_items");
-        // self.items = self.database_store.read(cx).get_pipeline_items().clone();
         let items = self.database_store.read(cx).get_pipeline_items().clone();
 
         self.items = items
@@ -120,7 +136,6 @@ impl Pipeline {
             .collect();
         self.in_progress_deletes
             .retain(|id| self.items.iter().any(|(_, instance)| &instance.id == id));
-        println!("[UPDATE_ITEMS] Completed, {} items", self.items.len());
     }
 
     fn process_next_drop(&mut self, cx: &mut Context<Self>) {
@@ -131,16 +146,9 @@ impl Pipeline {
         let (id, position) = self.pending_drops.remove(0);
         self.processing_drop = true;
 
-        println!(
-            "Processing queued drop: action {} at position {}",
-            id, position
-        );
-
         self.drag_drop_store.update(cx, |store, cx| {
             store.clear_drag(cx);
         });
-
-        println!("Inserting action {} at position {}", id, position);
 
         self.database_store.update(cx, |store, cx| {
             store.insert_instance_at_position(id, position, cx);
@@ -156,8 +164,6 @@ impl Pipeline {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> usize {
-        // let item_count = self.task_data.len().min(5);
-        // let item_count = self.task_data.len();
         let item_count = self.items.len();
         if item_count == 0 {
             return 0;
@@ -167,7 +173,6 @@ impl Pipeline {
 
         let relative_y = (position.y - bounds.origin.y).clamp(px(0.0), bounds.size.height);
         let item_index = (relative_y / interval).floor() as usize;
-        // item_index.min(item_count)
         item_index
     }
 
@@ -195,41 +200,42 @@ impl Pipeline {
             });
             self.drag_active_here = true;
         } else if self.drag_active_here {
-            // drag moved out of bounds, clear target
             self.drag_drop_store.update(cx, |store, cx| {
-                // only clear if current target is within this component
                 if let Some(ActionLocation::Pipeline(_)) = store.get_drop_target() {
                     store.clear_drop_target(cx);
                 }
             });
-            // if let Some(id) = task_id {
-            //     self.task_store
-            //         .update(cx, |store, cx| store.update_location(&id, None, cx));
-            // }
             self.drag_active_here = false;
         }
     }
+
+    fn get_score_for_item(&self, pipeline_item_id: &str) -> Option<f64> {
+        self.scores
+            .iter()
+            .find(|(id, _)| id == pipeline_item_id)
+            .map(|(_, score)| *score)
+    }
+
+    fn score_color(score: f64) -> gpui::Hsla {
+        let hue = (score.clamp(0.0, 1.0) * 120.0) as f32;
+        hsla(hue / 360.0, 0.6, 0.45, 1.0)
+    }
 }
+
+impl EventEmitter<StartActionEditor> for Pipeline {}
 
 impl Render for Pipeline {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let dragged_task_id = self
-            .drag_drop_store
-            .read(cx)
-            .get_active_drag_item()
-            .and_then(|action_id| Some(action_id.clone()));
         let target_index =
             self.drag_drop_store
                 .read(cx)
                 .get_drop_target()
                 .and_then(|loc| match loc {
-                    // TaskLocation::Pipeline(ix) => Some(*ix),
                     ActionLocation::Pipeline(ix) => Some(*ix),
                     _ => None,
                 });
 
-        // div().size_full().p_2().child(
         div().size_full().overflow_y_scrollbar().child(
             DropZone::<DragData<Action>>::new("pipeline-drop-zone")
                 .active(self.drag_active_here)
@@ -250,21 +256,12 @@ impl Render for Pipeline {
                                 .any(|(pid, ppos)| pid == &id && *ppos == position);
 
                             if is_duplicate {
-                                println!(
-                                    "Ignoring duplicate drop for action {} at position {}",
-                                    id, position
-                                );
                                 return;
                             }
 
                             if this.processing_drop {
-                                println!(
-                                    "Drop in progress, queueing: action {} at position {}",
-                                    id, position
-                                );
                                 this.pending_drops.push((id, position));
                             } else {
-                                println!("Starting drop: action {} at position {}", id, position);
                                 this.pending_drops.push((id.clone(), position));
                                 this.process_next_drop(cx);
                             }
@@ -280,34 +277,24 @@ impl Render for Pipeline {
                     this.children(
                         self.items
                             .iter()
-                            // .take(10)
                             .enumerate()
-                            // .filter(|(_i, item)| {
-                            //     if let Some(dragged_id) = &dragged_task_id {
-                            //         item.instance_id.as_ref() != Some(dragged_id)
-                            //     } else {
-                            //         true
-                            //     }
-                            // })
                             .map(|(i, (item, instance))| {
                                 let title =
                                     item.action_title.clone().unwrap_or("Untitled".to_string());
                                 let instance_id = instance.id.clone();
+                                let instance_id_skip = instance.id.clone();
+                                let instance_id_snooze = instance.id.clone();
+                                let instance_id_abandon = instance.id.clone();
                                 let completed = &instance.status == "completed";
-                                // let opacity = 1.0 - (i as f32 * 0.2);
                                 let opacity = 1.0;
+                                let pipeline_item_id = item.id.clone();
+                                let score = self.get_score_for_item(&pipeline_item_id);
 
                                 let drag_title = title.clone();
 
                                 let theme_clone = theme.clone();
-                                // let task_drag_data = TaskDragData {
-                                //     task: task_clone.clone(),
-                                //     source_view: "pipeline".to_string(),
-                                //     source_index: i,
-                                // };
-                                let drag_data = DragData::new(item.clone())
-                                    // .with_label(SharedString::from(title_clone.clone()))
-                                    .with_preview(move || {
+                                let drag_data =
+                                    DragData::new(item.clone()).with_preview(move || {
                                         div()
                                             .px(px(12.0))
                                             .py(px(8.0))
@@ -330,7 +317,6 @@ impl Render for Pipeline {
 
                                 Draggable::new(("pipeline-item", i), drag_data)
                                     .h_flex()
-                                    .cursor_style(CursorStyle::PointingHand)
                                     .hover_bg(theme.list_hover.opacity(0.3))
                                     .w_full()
                                     .h(self.item_height)
@@ -340,43 +326,52 @@ impl Render for Pipeline {
                                     .rounded_md()
                                     .border_1()
                                     .border_color(theme.border)
-                                    .gap_3()
+                                    .gap_2()
+                                    .items_center()
+                                    .on_click({
+                                        let action_id = instance.action_id.clone();
+                                        cx.listener(move |pipeline, _event, _window, cx| {
+                                            let event = StartActionEditor {
+                                                action_id: Some(action_id.clone()),
+                                            };
+                                            cx.emit(event);
+                                        })
+                                    })
+                                    // Checkbox
                                     .child(
                                         Checkbox::new(ElementId::Name(
                                             format!("pipeline-checkbox-{}", instance_id).into(),
                                         ))
                                         .checked(completed)
                                         .large()
-                                        .on_click(
+                                        .occlude()
+                                        .on_mouse_down(cx.listener(
+                                            move |_this, _checked: &bool, _window, _cx| {},
+                                        ))
+                                        .on_mouse_up(
                                             cx.listener(
                                                 move |this, checked: &bool, _window, cx| {
-                                                    println!("[CHECKBOX] Click handler entered, checked={}, instance={}", checked, instance_id);
                                                     if *checked {
-                                                        if this.in_progress_deletes.contains(&instance_id) {
-                                                            println!(
-                                                                "[CHECKBOX] delete_instance already in progress for {}",
-                                                                instance_id
-                                                            );
+                                                        if this
+                                                            .in_progress_deletes
+                                                            .contains(&instance_id)
+                                                        {
                                                             return;
                                                         }
 
-                                                        this
-                                                            .in_progress_deletes
+                                                        this.in_progress_deletes
                                                             .insert(instance_id.clone());
 
-                                                        println!("[CHECKBOX] Calling delete_instance for {}", instance_id);
                                                         this.database_store.update(
                                                             cx,
                                                             |store, cx| {
-                                                                store.delete_instance(
+                                                                store.complete_with_event(
                                                                     instance_id.clone(),
                                                                     cx,
                                                                 );
                                                             },
                                                         );
-                                                        println!("[CHECKBOX] delete_instance call completed for {}", instance_id);
                                                     } else {
-                                                        println!("[CHECKBOX] Calling uncomplete_pipeline_item for {}", instance_id);
                                                         this.database_store.update(
                                                             cx,
                                                             |store, cx| {
@@ -386,14 +381,125 @@ impl Render for Pipeline {
                                                                 );
                                                             },
                                                         );
-                                                        println!("[CHECKBOX] uncomplete_pipeline_item call completed for {}", instance_id);
                                                     }
-                                                    println!("[CHECKBOX] Click handler exiting");
                                                 },
                                             ),
                                         ),
                                     )
-                                    .child(Label::new(title).text_sm())
+                                    // Title and score in a column
+                                    .child(
+                                        v_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .gap(px(2.0))
+                                            .child(Label::new(title).text_sm().truncate())
+                                            .when_some(score, |this, score_value| {
+                                                let score_display =
+                                                    format!("{:.0}%", score_value * 100.0);
+                                                let score_color = Self::score_color(score_value);
+                                                this.child(
+                                                    h_flex()
+                                                        .gap_1()
+                                                        .items_center()
+                                                        .child(
+                                                            div()
+                                                                .w(px(32.0))
+                                                                .h(px(3.0))
+                                                                .rounded(px(2.0))
+                                                                .bg(theme
+                                                                    .muted_foreground
+                                                                    .opacity(0.2))
+                                                                .child(
+                                                                    div()
+                                                                        .h_full()
+                                                                        .w(px(32.0
+                                                                            * score_value as f32))
+                                                                        .rounded(px(2.0))
+                                                                        .bg(score_color),
+                                                                ),
+                                                        )
+                                                        .child(
+                                                            Label::new(score_display)
+                                                                .text_xs()
+                                                                .text_color(theme.muted_foreground),
+                                                        ),
+                                                )
+                                            }),
+                                    )
+                                    // Action buttons (visible on hover via group)
+                                    .child(
+                                        h_flex()
+                                            .gap(px(1.0))
+                                            .flex_shrink_0()
+                                            .opacity(0.4)
+                                            .hover(|s| s.opacity(1.0))
+                                            .child(
+                                                Button::new(ElementId::Name(
+                                                    format!("skip-{}", i).into(),
+                                                ))
+                                                .icon(IconName::ChevronRight)
+                                                .ghost()
+                                                .xsmall()
+                                                .tooltip("Skip — not now, maybe later")
+                                                .on_click(cx.listener(
+                                                    move |this, _event, _window, cx| {
+                                                        this.database_store.update(
+                                                            cx,
+                                                            |store, cx| {
+                                                                store.skip_instance(
+                                                                    instance_id_skip.clone(),
+                                                                    cx,
+                                                                );
+                                                            },
+                                                        );
+                                                    },
+                                                )),
+                                            )
+                                            .child(
+                                                Button::new(ElementId::Name(
+                                                    format!("snooze-{}", i).into(),
+                                                ))
+                                                .icon(IconName::Pause)
+                                                .ghost()
+                                                .xsmall()
+                                                .tooltip("Snooze — remind me later")
+                                                .on_click(cx.listener(
+                                                    move |this, _event, _window, cx| {
+                                                        this.database_store.update(
+                                                            cx,
+                                                            |store, cx| {
+                                                                store.snooze_instance(
+                                                                    instance_id_snooze.clone(),
+                                                                    cx,
+                                                                );
+                                                            },
+                                                        );
+                                                    },
+                                                )),
+                                            )
+                                            .child(
+                                                Button::new(ElementId::Name(
+                                                    format!("abandon-{}", i).into(),
+                                                ))
+                                                .icon(IconName::Close)
+                                                .ghost()
+                                                .xsmall()
+                                                .tooltip("Abandon — I'm not doing this")
+                                                .on_click(cx.listener(
+                                                    move |this, _event, _window, cx| {
+                                                        this.database_store.update(
+                                                            cx,
+                                                            |store, cx| {
+                                                                store.abandon_instance(
+                                                                    instance_id_abandon.clone(),
+                                                                    cx,
+                                                                );
+                                                            },
+                                                        );
+                                                    },
+                                                )),
+                                            ),
+                                    )
                             })
                             .collect::<Vec<_>>(),
                     )
@@ -416,54 +522,190 @@ impl Render for Pipeline {
                     )
                 }),
         )
-        // )
     }
 }
 
 pub struct RightSidebarView {
     collapsed: bool,
-    pipeline: Entity<Pipeline>,
+    pub pipeline: Entity<Pipeline>,
+    database_store: Entity<DatabaseStore>,
+    energy_slider: Entity<SliderState>,
+    attention_slider: Entity<SliderState>,
+    energy_value: f32,
+    attention_value: f32,
+    current_mental_state_name: Option<String>,
+    context_expanded: bool,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl RightSidebarView {
     pub fn new(
         database_store: Entity<DatabaseStore>,
         drag_drop_store: Entity<DragDropStore>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        // cx.subscribe(
-        //     &task_store,
-        //     |this, _task_store, _event: &TasksUpdated, cx| {
-        //         this.update_pipeline(cx);
-        //         cx.notify();
-        //     },
-        // )
-        // .detach();
+        let mut subscriptions = Vec::new();
 
-        cx.subscribe(
+        subscriptions.push(cx.subscribe(
             &database_store,
-            |this, _task_store, _event: &ActionsLoaded, cx| {
+            |this, _store, _event: &ActionsLoaded, cx| {
                 this.update_pipeline(cx);
                 cx.notify();
             },
-        )
-        .detach();
+        ));
 
-        cx.subscribe(
+        subscriptions.push(cx.subscribe(
             &database_store,
-            |this, _task_store, _event: &PipelineLoaded, cx| {
+            |this, _store, _event: &PipelineLoaded, cx| {
                 this.update_pipeline(cx);
                 cx.notify();
             },
-        )
-        .detach();
+        ));
 
-        let pipeline_list = cx.new(|cx| Pipeline::new(database_store, drag_drop_store, cx));
+        subscriptions.push(cx.subscribe_in(
+            &database_store,
+            window,
+            |this, store, _event: &ContextLoaded, window, cx| {
+                let energy = store.read(cx).get_context_energy().unwrap_or(3.0);
+                let attention = store.read(cx).get_context_attention().unwrap_or(3.0);
+                this.energy_value = energy as f32;
+                this.attention_value = attention as f32;
+                this.energy_slider.update(cx, |slider, cx| {
+                    slider.set_value(energy as f32, window, cx);
+                });
+                this.attention_slider.update(cx, |slider, cx| {
+                    slider.set_value(attention as f32, window, cx);
+                });
+                cx.notify();
+            },
+        ));
+
+        subscriptions.push(cx.subscribe(
+            &database_store,
+            |this, store, _event: &MentalStatesLoaded, cx| {
+                this.current_mental_state_name = store
+                    .read(cx)
+                    .get_current_mental_state()
+                    .map(|state| state.name.clone());
+                cx.notify();
+            },
+        ));
+
+        subscriptions.push(cx.subscribe_in(
+            &database_store,
+            window,
+            |_this, store, _event: &SuggestionsLoaded, window, cx| {
+                let suggestions = store.read(cx).get_suggestions();
+                if suggestions.is_empty() {
+                    window.push_notification(
+                        (
+                            NotificationType::Info,
+                            "No suggestions available — add some actions to the pipeline first.",
+                        ),
+                        cx,
+                    );
+                    return;
+                }
+
+                let mut message = String::new();
+                for (i, (_instance, action, score)) in suggestions.iter().enumerate() {
+                    if i > 0 {
+                        message.push('\n');
+                    }
+                    message.push_str(&format!(
+                        "{}. {} — {:.0}%",
+                        i + 1,
+                        action.title,
+                        score * 100.0
+                    ));
+                }
+
+                window.push_notification(
+                    gpui_component::notification::Notification::new()
+                        .title("What should I do next?")
+                        .message(message)
+                        .with_type(NotificationType::Success),
+                    cx,
+                );
+            },
+        ));
+
+        let energy_slider = cx.new(|_cx| {
+            SliderState::new()
+                .min(1.0)
+                .max(5.0)
+                .step(1.0)
+                .default_value(3.0)
+        });
+
+        let attention_slider = cx.new(|_cx| {
+            SliderState::new()
+                .min(1.0)
+                .max(5.0)
+                .step(1.0)
+                .default_value(3.0)
+        });
+
+        {
+            let db = database_store.clone();
+            subscriptions.push(cx.subscribe(
+                &energy_slider,
+                move |this, _slider, event: &SliderEvent, cx| match event {
+                    SliderEvent::Change(value) => {
+                        this.energy_value = value.start();
+                        db.update(cx, |store, cx| {
+                            store.update_energy(this.energy_value as f64, cx);
+                        });
+                    }
+                },
+            ));
+        }
+
+        {
+            let db = database_store.clone();
+            subscriptions.push(cx.subscribe(
+                &attention_slider,
+                move |this, _slider, event: &SliderEvent, cx| match event {
+                    SliderEvent::Change(value) => {
+                        this.attention_value = value.start();
+                        db.update(cx, |store, cx| {
+                            store.update_attention(this.attention_value as f64, cx);
+                        });
+                    }
+                },
+            ));
+        }
+
+        let pipeline_list = cx.new(|cx| Pipeline::new(database_store.clone(), drag_drop_store, cx));
+
+        // Load initial context and mental state data
+        database_store.update(cx, |store, cx| {
+            store.load_current_context(cx);
+            store.load_current_mental_state(cx);
+        });
+
+        let energy = database_store.read(cx).get_context_energy().unwrap_or(3.0);
+        let attention = database_store
+            .read(cx)
+            .get_context_attention()
+            .unwrap_or(3.0);
+        let current_mental_state_name = database_store
+            .read(cx)
+            .get_current_mental_state()
+            .map(|state| state.name.clone());
 
         Self {
             collapsed: false,
             pipeline: pipeline_list,
+            database_store,
+            energy_slider,
+            attention_slider,
+            energy_value: energy as f32,
+            attention_value: attention as f32,
+            current_mental_state_name,
+            context_expanded: true,
+            _subscriptions: subscriptions,
         }
     }
 
@@ -483,6 +725,167 @@ impl RightSidebarView {
     pub fn is_collapsed(&self) -> bool {
         self.collapsed
     }
+
+    fn energy_label(value: f32) -> &'static str {
+        match value.round() as i32 {
+            1 => "Exhausted",
+            2 => "Low",
+            3 => "Moderate",
+            4 => "High",
+            5 => "Energized",
+            _ => "Moderate",
+        }
+    }
+
+    fn attention_label(value: f32) -> &'static str {
+        match value.round() as i32 {
+            1 => "Scattered",
+            2 => "Distracted",
+            3 => "Moderate",
+            4 => "Focused",
+            5 => "Locked In",
+            _ => "Moderate",
+        }
+    }
+
+    fn render_context_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let energy_label = Self::energy_label(self.energy_value);
+        let attention_label = Self::attention_label(self.attention_value);
+
+        v_flex()
+            .w_full()
+            .px_3()
+            .gap_2()
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        Label::new("Context")
+                            .text_sm()
+                            .text_color(theme.muted_foreground),
+                    )
+                    .child(
+                        Button::new("toggle-context")
+                            .icon(if self.context_expanded {
+                                IconName::ChevronUp
+                            } else {
+                                IconName::ChevronDown
+                            })
+                            .ghost()
+                            .xsmall()
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.context_expanded = !this.context_expanded;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .when(self.context_expanded, |this| {
+                this.child(
+                    v_flex()
+                        .w_full()
+                        .gap_3()
+                        .child(
+                            v_flex()
+                                .w_full()
+                                .gap_1()
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(Label::new("Energy").text_xs())
+                                        .child(
+                                            Label::new(energy_label)
+                                                .text_xs()
+                                                .text_color(theme.muted_foreground),
+                                        ),
+                                )
+                                .child(Slider::new(&self.energy_slider)),
+                        )
+                        .child(
+                            v_flex()
+                                .w_full()
+                                .gap_1()
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(Label::new("Attention").text_xs())
+                                        .child(
+                                            Label::new(attention_label)
+                                                .text_xs()
+                                                .text_color(theme.muted_foreground),
+                                        ),
+                                )
+                                .child(Slider::new(&self.attention_slider)),
+                        )
+                        .when_some(self.current_mental_state_name.clone(), |this, name| {
+                            this.child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        Label::new("State:")
+                                            .text_xs()
+                                            .text_color(theme.muted_foreground),
+                                    )
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py(px(2.0))
+                                            .rounded(px(4.0))
+                                            .bg(theme.accent.opacity(0.15))
+                                            .child(
+                                                Label::new(name)
+                                                    .text_xs()
+                                                    .text_color(theme.accent_foreground),
+                                            ),
+                                    ),
+                            )
+                        }),
+                )
+            })
+    }
+
+    fn render_pipeline_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .w_full()
+            .px_3()
+            .items_center()
+            .justify_between()
+            .child(Label::new("Pipeline").text_lg().font(font("Georgia")))
+            .child(
+                h_flex()
+                    .gap(px(2.0))
+                    .child(
+                        Button::new("suggest-next")
+                            .icon(IconName::Star)
+                            .ghost()
+                            .xsmall()
+                            .tooltip("What should I do next?")
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.database_store.update(cx, |store, cx| {
+                                    store.suggest_next(3, cx);
+                                });
+                            })),
+                    )
+                    .child(
+                        Button::new("refresh-pipeline")
+                            .icon(IconName::Redo)
+                            .ghost()
+                            .xsmall()
+                            .tooltip("Re-score and reorder by priority")
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.database_store.update(cx, |store, cx| {
+                                    store.refresh_pipeline(cx);
+                                });
+                            })),
+                    ),
+            )
+    }
 }
 
 impl EventEmitter<()> for RightSidebarView {}
@@ -501,14 +904,19 @@ impl Render for RightSidebarView {
                     .bg(cx.theme().background)
                     .rounded_lg()
                     .child(
-                        // right sidebar content
                         v_flex()
                             .size_full()
                             .pt_4()
                             .gap_3()
-                            // .rounded_lg()
                             .items_center()
-                            .child(Label::new("Pipeline").text_lg().font(font("Georgia")))
+                            .child(self.render_context_section(cx))
+                            .child(
+                                div().w_full().px_3().child(
+                                    gpui_component::divider::Divider::horizontal()
+                                        .color(cx.theme().border),
+                                ),
+                            )
+                            .child(self.render_pipeline_header(cx))
                             .child(self.pipeline.clone()),
                     ),
             )

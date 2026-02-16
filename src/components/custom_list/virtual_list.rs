@@ -146,7 +146,7 @@ pub fn v_virtual_list<R, V>(
     view: Entity<V>,
     id: impl Into<ElementId>,
     items_count: usize,
-    item_size: Size<Pixels>,
+    item_size: Pixels,
     f: impl 'static + Fn(&mut V, Range<usize>, &mut Window, &mut Context<V>) -> Vec<R>,
 ) -> VirtualList
 where
@@ -168,7 +168,7 @@ pub fn h_virtual_list<R, V>(
     view: Entity<V>,
     id: impl Into<ElementId>,
     items_count: usize,
-    item_size: Size<Pixels>,
+    item_size: Pixels,
     f: impl 'static + Fn(&mut V, Range<usize>, &mut Window, &mut Context<V>) -> Vec<R>,
 ) -> VirtualList
 where
@@ -183,7 +183,7 @@ pub(crate) fn virtual_list<R, V>(
     id: impl Into<ElementId>,
     axis: Axis,
     items_count: usize,
-    item_size: Size<Pixels>,
+    item_size: Pixels,
     f: impl 'static + Fn(&mut V, Range<usize>, &mut Window, &mut Context<V>) -> Vec<R>,
 ) -> VirtualList
 where
@@ -224,7 +224,7 @@ pub struct VirtualList {
     base: Stateful<Div>,
     scroll_handle: VirtualListScrollHandle,
     items_count: usize,
-    item_size: Size<Pixels>,
+    item_size: Pixels,
     render_items: Box<
         dyn for<'a> Fn(Range<usize>, &'a mut Window, &'a mut App) -> SmallVec<[AnyElement; 64]>,
     >,
@@ -276,11 +276,11 @@ impl VirtualList {
         let item_bounds = match self.axis {
             Axis::Vertical => Bounds::new(
                 point(px(0.), content_bounds.top() + item_position),
-                size(content_bounds.size.width, self.item_size.height),
+                size(content_bounds.size.width, self.item_size),
             ),
             Axis::Horizontal => Bounds::new(
                 point(content_bounds.left() + item_position, px(0.)),
-                size(self.item_size.width, content_bounds.size.height),
+                size(self.item_size, content_bounds.size.height),
             ),
         };
 
@@ -395,14 +395,14 @@ impl Element for VirtualList {
                     .to_pixels(font_size.into(), rem_size);
 
                 // Calculate item size including gap (except for last item)
-                let item_size_with_gap = self.item_size.along(self.axis) + gap;
+                let item_size_with_gap = self.item_size + gap;
 
                 // Calculate total content size
                 let content_size = if self.axis.is_horizontal() {
                     Size {
                         width: if self.items_count > 0 {
                             item_size_with_gap * self.items_count.saturating_sub(1) as f32
-                                + self.item_size.width
+                                + self.item_size
                         } else {
                             px(0.)
                         },
@@ -413,7 +413,7 @@ impl Element for VirtualList {
                         width: longest_item_size.width,
                         height: if self.items_count > 0 {
                             item_size_with_gap * self.items_count.saturating_sub(1) as f32
-                                + self.item_size.height
+                                + self.item_size
                         } else {
                             px(0.)
                         },
@@ -488,14 +488,13 @@ impl Element for VirtualList {
             .gap
             .along(self.axis)
             .to_pixels(font_size.into(), rem_size);
-        let item_size_with_gap = self.item_size.along(self.axis) + gap;
+        let item_size_with_gap = self.item_size + gap;
         let longest_item_size = self.measure_item(None, window, cx);
 
         let content_size = if self.axis.is_horizontal() {
             Size {
                 width: if self.items_count > 0 {
-                    item_size_with_gap * self.items_count.saturating_sub(1) as f32
-                        + self.item_size.width
+                    item_size_with_gap * self.items_count.saturating_sub(1) as f32 + self.item_size
                 } else {
                     px(0.)
                 },
@@ -505,8 +504,7 @@ impl Element for VirtualList {
             Size {
                 width: longest_item_size.width,
                 height: if self.items_count > 0 {
-                    item_size_with_gap * self.items_count.saturating_sub(1) as f32
-                        + self.item_size.height
+                    item_size_with_gap * self.items_count.saturating_sub(1) as f32 + self.item_size
                 } else {
                     px(0.)
                 },
@@ -697,12 +695,12 @@ impl Element for VirtualList {
 
                             let available_space = match self.axis {
                                 Axis::Horizontal => size(
-                                    AvailableSpace::Definite(self.item_size.width),
+                                    AvailableSpace::Definite(self.item_size),
                                     AvailableSpace::Definite(content_bounds.size.height),
                                 ),
                                 Axis::Vertical => size(
                                     AvailableSpace::Definite(content_bounds.size.width),
-                                    AvailableSpace::Definite(self.item_size.height),
+                                    AvailableSpace::Definite(self.item_size),
                                 ),
                             };
 

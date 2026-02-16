@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{fmt, time::Instant};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension};
@@ -33,6 +33,36 @@ pub struct PipelineItem {
     pub created_at: Option<String>,
     /// Free-form JSON metadata for transient UI hints or reason traces
     pub metadata: Option<String>,
+}
+
+impl fmt::Display for PipelineItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(ref title) = self.action_title {
+            write!(f, "{}", title)?;
+        } else {
+            write!(f, "Pipeline item")?;
+        }
+
+        let mut details = Vec::new();
+
+        if let Some(ref item_type) = self.item_type {
+            details.push(format!("type: {}", item_type));
+        }
+
+        if let Some(position) = self.position {
+            details.push(format!("pos: {}", position));
+        }
+
+        if let Some(ref pipeline_id) = self.pipeline_id {
+            details.push(format!("pipeline: {}", pipeline_id));
+        }
+
+        if !details.is_empty() {
+            write!(f, " ({})", details.join(", "))?;
+        }
+
+        Ok(())
+    }
 }
 
 impl PipelineItem {
@@ -83,6 +113,18 @@ pub struct Pipeline {
     pub name: String,
     pub description: Option<String>,
     pub created_at: Option<String>,
+}
+
+impl fmt::Display for Pipeline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name)?;
+
+        if let Some(ref description) = self.description {
+            write!(f, " - {}", description)?;
+        }
+
+        Ok(())
+    }
 }
 
 pub fn fetch_pipeline_items(conn: &Connection, pipeline_id: &str) -> Result<Vec<PipelineItem>> {

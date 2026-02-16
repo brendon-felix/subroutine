@@ -1,6 +1,7 @@
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use gpui::{
-    App, Entity, FocusHandle, Focusable, KeyBinding, Keystroke, Pixels, StyleRefinement, Window,
-    actions, div, prelude::*, px,
+    App, Entity, FocusHandle, Focusable, KeyBinding, Keystroke, SharedString, StyleRefinement,
+    Window, actions, div, prelude::*, px,
 };
 use gpui_component::{
     ActiveTheme, StyledExt, h_flex,
@@ -16,7 +17,14 @@ mod list;
 pub use command::*;
 pub use list::*;
 
-use crate::components::custom_list::{List, ListEvent, ListState};
+use crate::components::{
+    custom_list::{List, ListEvent, ListOptions, ListState},
+    popover::popover,
+};
+
+pub fn kbd(keystroke: &'static str) -> Kbd {
+    Kbd::new(Keystroke::parse(keystroke).unwrap())
+}
 
 actions!(
     command_palette,
@@ -33,14 +41,38 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
+pub struct CommandPaletteOptions {
+    pub max_visible_items: usize,
+    // pub item_height: Pixels,
+    pub fuzzy_search: bool,
+    // pub show_recent_commands: bool,
+    // pub placeholder_text: String,
+    // pub execute_on_select: bool,
+    // pub close_on_select: bool,
+}
+
+impl Default for CommandPaletteOptions {
+    fn default() -> Self {
+        Self {
+            max_visible_items: 7,
+            // item_height: px(48.0),
+            fuzzy_search: true,
+            // show_recent_commands: true,
+            // placeholder_text: "Type a command or search...".to_string(),
+            // execute_on_select: true,
+            // close_on_select: true,
+        }
+    }
+}
+
 #[allow(unused)]
 pub struct CommandPaletteState {
     pub focus_handle: FocusHandle,
     pub search_query: Option<String>,
     pub input_state: Entity<InputState>,
     pub list_state: Entity<ListState<CommandList>>,
-    pub list_height: Pixels,
     // pub recent_commands: Vec<SharedString>,
+    pub options: CommandPaletteOptions,
 }
 
 impl Focusable for CommandPaletteState {
@@ -70,23 +102,32 @@ impl CommandPaletteState {
         .detach();
 
         let list_state = cx.new(|cx| {
-            let mut state = ListState::new(CommandList::new(commands.clone()), window, cx);
+            let cmd_list = CommandList::new(commands.clone());
+            let paddings = cmd_list.options.paddings.clone();
+            let item_size = cmd_list.options.item_size;
+            let gap = cmd_list.options.gap;
+            let mut state = ListState::new(cmd_list, window, cx).options(ListOptions {
+                paddings,
+                item_size,
+                gap,
+                ..Default::default()
+            });
             state.set_selected_index(Some(0));
             state
         });
         cx.subscribe(&list_state, |_this, list_state, event: &ListEvent, cx| {
             match event {
-                // ListEvent::Select(ix) => {
-                //     if let Some(_selected_cmd) = list_state
-                //         .read(cx)
-                //         .delegate()
-                //         .filtered_commands()
-                //         .get(*ix)
-                //         .cloned()
-                //     {
-                //         println!("Selected command: {}", selected_cmd.name);
-                //     }
-                // }
+                ListEvent::Select(ix) => {
+                    if let Some(selected_cmd) = list_state
+                        .read(cx)
+                        .delegate()
+                        .filtered_commands()
+                        .get(*ix)
+                        .cloned()
+                    {
+                        println!("Selected command: {}", selected_cmd.label);
+                    }
+                }
                 ListEvent::Confirm(ix) => {
                     if let Some(_selected_cmd) = list_state
                         .read(cx)
@@ -98,26 +139,28 @@ impl CommandPaletteState {
                         cx.dispatch_action(&SelectCommand);
                     }
                 }
-                // ListEvent::Cancel => {
-                //     println!("Command selection cancelled");
-                // }
                 _ => {}
             }
             cx.notify();
         })
         .detach();
 
-        let list_height = commands.len() as f32 * px(50.);
+        let options = CommandPaletteOptions::default();
 
         Self {
             focus_handle: cx.focus_handle(),
             search_query: None,
             input_state,
             list_state,
-            list_height,
             // recent_commands: Vec::new(),
+            options,
         }
     }
+
+    // pub fn options(mut self, options: CommandPaletteOptions) -> Self {
+    //     self.options = options;
+    //     self
+    // }
 
     pub fn update_search(&mut self, cx: &mut Context<Self>) {
         if let Some(query) = self.search_query.as_ref() {
@@ -125,19 +168,73 @@ impl CommandPaletteState {
             let list_state = self.list_state.read(cx);
             let commands = list_state.delegate().commands().clone();
 
+            // let filtered_commands = if query.is_empty() {
+            //     commands
+            // } else {
+            //     let mut matches: Vec<(Command, i32)> = commands
+            //         .iter()
+            //         .filter(|cmd| cmd.matches(&query))
+            //         .map(|cmd| (cmd.clone(), cmd.match_score(&query)))
+            //         .collect();
+            //     matches.sort_by(|a, b| b.1.cmp(&a.1));
+            //     matches.into_iter().map(|(cmd, _)| cmd).collect()
+            // };
+
+            let score_fn = if self.options.fuzzy_search {
+                |cmd: &Command, query: &str| {
+                    let query = query.to_lowercase();
+                    let label = cmd.label.to_lowercase();
+                    let search_terms: Vec<SharedString> = cmd
+                        .search_terms
+                        .iter()
+                        .map(|s| s.to_lowercase().into())
+                        .collect();
+
+                    let matcher = SkimMatcherV2::default();
+
+                    let label_score = matcher.fuzzy_match(&label, &query).unwrap_or(-1000);
+
+                    let terms_score = search_terms
+                        .iter()
+                        .filter_map(|term| matcher.fuzzy_match(term, &query))
+                        .max()
+                        .unwrap_or(-1000);
+
+                    (label_score * 2).max(terms_score)
+                }
+            } else {
+                |cmd: &Command, query: &str| {
+                    let query = query.to_lowercase();
+                    let label = cmd.label.to_lowercase();
+                    let search_terms: Vec<SharedString> = cmd
+                        .search_terms
+                        .iter()
+                        .map(|s| s.to_lowercase().into())
+                        .collect();
+
+                    let label_score = if label.contains(&query) { 100 } else { -1000 };
+
+                    let terms_score = if search_terms.iter().any(|term| term.contains(&query)) {
+                        100
+                    } else {
+                        -1000
+                    };
+
+                    label_score.max(terms_score)
+                }
+            };
+
             let filtered_commands = if query.is_empty() {
                 commands
             } else {
-                let mut matches: Vec<(Command, i32)> = commands
+                let mut matches: Vec<(Command, i64)> = commands
                     .iter()
-                    .filter(|cmd| cmd.matches(&query))
-                    .map(|cmd| (cmd.clone(), cmd.match_score(&query)))
+                    .map(|cmd| (cmd.clone(), score_fn(cmd, query)))
+                    .filter(|(_cmd, score)| *score > -1000)
                     .collect();
                 matches.sort_by(|a, b| b.1.cmp(&a.1));
                 matches.into_iter().map(|(cmd, _)| cmd).collect()
             };
-
-            self.list_height = filtered_commands.len() as f32 * px(50.);
 
             self.list_state.update(cx, |list_state, _cx| {
                 let delegate = list_state.delegate_mut();
@@ -161,7 +258,7 @@ impl CommandPaletteState {
                 .get(selected_ix)
                 .cloned()
             {
-                println!("Executing command: {}", selected_cmd.name);
+                println!("Executing command: {}", selected_cmd.label);
                 if let Some(handler) = &selected_cmd.on_select {
                     handler(window, cx);
                     return true;
@@ -170,90 +267,82 @@ impl CommandPaletteState {
         }
         false
     }
+
+    pub fn render_help_bar(&mut self, cx: &Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+
+        div()
+            .flex_none()
+            .px_4()
+            .py_2()
+            .border_t_1()
+            .border_color(theme.border)
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_4()
+                    .text_xs()
+                    .justify_center()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .child(kbd("up").pr_0().rounded_r_none())
+                                    .child(kbd("down").pl_0().rounded_l_none()),
+                            )
+                            .child(Label::new("to navigate").text_color(theme.muted_foreground)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(kbd("enter"))
+                            .child(Label::new("to use").text_color(theme.muted_foreground)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(kbd("esc"))
+                            .child(Label::new("to dismiss").text_color(theme.muted_foreground)),
+                    ),
+            )
+    }
 }
 
 impl Render for CommandPaletteState {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
-        // Build inner dialog card and let the shared overlay shell handle backdrop,
-        // occlusion, centering and shared key context/close behaviour.
+        let num_items = self
+            .list_state
+            .read(cx)
+            .delegate()
+            .filtered_commands()
+            .len();
+
+        let num_visible = num_items.min(self.options.max_visible_items);
+        let delegate = self.list_state.read(cx).delegate();
+        let item_height = delegate.options.item_size;
+        let gap = delegate.options.gap;
+        let paddings = self.list_state.read(cx).delegate().options.paddings.clone();
+        let p_top = paddings.top.unwrap_or_default();
+        let p_bottom = paddings.bottom.unwrap_or_default();
+        let list_height = num_visible as f32 * item_height
+            + p_top
+            + p_bottom
+            + (num_visible.saturating_sub(1) * gap);
+
         let inner = v_flex() // command palette container (inner)
             .key_context("CommandPalette")
             .track_focus(&self.focus_handle)
-            // .w(px(640.0))
-            .w_128()
-            .max_h(px(402.0))
+            .w(px(600.0))
             .bg(theme.group_box)
             .text_color(theme.group_box_foreground)
             .border_1()
             .border_color(theme.border)
             .rounded_lg()
             .shadow_xl()
-            .on_any_mouse_down(|_event, _window, cx| {
-                cx.stop_propagation();
-            })
-            .child(
-                div()
-                    .flex_none()
-                    // .items_center()
-                    .px(px(16.0))
-                    .py(px(12.0))
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(Input::new(&self.input_state).size_full()), // .font_family("monospace"),
-            )
-            .child(
-                v_flex()
-                    .h(self.list_height)
-                    .child(List::new(&self.list_state)),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .px(px(16.0))
-                    .py(px(8.0))
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_4()
-                            .text_color(theme.muted_foreground)
-                            .text_sm()
-                            .justify_center()
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        h_flex()
-                                            .child(
-                                                Kbd::new(Keystroke::parse("up").unwrap())
-                                                    .pr_0()
-                                                    .rounded_r_none(),
-                                            )
-                                            .child(
-                                                Kbd::new(Keystroke::parse("down").unwrap())
-                                                    .pl_0()
-                                                    .rounded_l_none(),
-                                            ),
-                                    )
-                                    .child(Label::new("Navigate")),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(Kbd::new(Keystroke::parse("enter").unwrap()))
-                                    .child(Label::new("Select")),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(Kbd::new(Keystroke::parse("esc").unwrap()))
-                                    .child(Label::new("Close")),
-                            ),
-                    ),
-            )
+            .occlude()
             .on_action(cx.listener(|this, NavigateUp, window, cx| {
                 this.list_state.update(cx, |list_state, cx| {
                     list_state.select_prev(window, cx);
@@ -265,11 +354,46 @@ impl Render for CommandPaletteState {
                     list_state.select_next(window, cx);
                 });
                 cx.notify();
-            }));
+            }))
+            .child(
+                div()
+                    .px_3()
+                    .py_3()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(Input::new(&self.input_state).size_full()),
+            )
+            .when_else(
+                // if
+                num_items > 0,
+                // then
+                |this| {
+                    this.child(
+                        v_flex()
+                            .bg(theme.group_box)
+                            .flex_basis(list_height)
+                            .child(List::new(&self.list_state)),
+                    )
+                },
+                // else
+                |this| {
+                    this.child(
+                        div()
+                            .w_full()
+                            .flex_basis(item_height + p_top + p_bottom)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(theme.muted_foreground)
+                            .child(Label::new("No commands found")),
+                    )
+                },
+            )
+            .child(self.render_help_bar(cx));
 
         // Use a div wrapper so we can attach action handlers (InteractiveElement) while
         // reusing the overlay shell for visual chrome and backdrop behaviour.
-        crate::components::overlay::shell(theme, inner)
+        popover(inner, cx)
     }
 }
 

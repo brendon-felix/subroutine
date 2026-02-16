@@ -1,51 +1,46 @@
 use gpui::{
-    App, Context, IntoElement, Keystroke, ParentElement, Styled, Window, div,
-    prelude::FluentBuilder,
+    App, Context, EdgesRefinement, IntoElement, Keystroke, ParentElement, Styled, Window, div,
+    prelude::FluentBuilder, px,
 };
-use gpui_component::{StyledExt, h_flex, kbd::Kbd, label::Label};
-// use gpui_component::list::{ListDelegate, ListState};
+use gpui_component::{h_flex, kbd::Kbd, label::Label};
 
 use crate::components::{
     command_palette::Command,
-    custom_list::{ListDelegate, ListItem, ListState},
+    custom_list::{ListDelegate, ListItem, ListOptions, ListState},
 };
 
 pub struct CommandList {
-    commands: Vec<Command>,
-    filtered_commands: Vec<Command>,
-    selected_ix: Option<usize>,
+    pub commands: Vec<Command>,
+    pub filtered_commands: Vec<Command>,
+    pub selected_ix: Option<usize>,
+    pub options: ListOptions,
 }
 
 impl CommandList {
     pub fn new(commands: Vec<Command>) -> Self {
-        // let items = (1..=200).map(|i| format!("This is item {}", i)).collect();
+        let options = ListOptions {
+            item_size: px(48.0),
+            gap: px(4.0),
+            scrollbar_visible: true,
+            paddings: EdgesRefinement {
+                top: Some(px(12.)),
+                right: Some(px(12.)),
+                bottom: Some(px(12.)),
+                left: Some(px(12.)),
+            },
+        };
+
         Self {
             commands: commands.clone(),
             filtered_commands: commands,
             selected_ix: None,
+            options,
         }
     }
 
     pub fn commands(&self) -> &Vec<Command> {
         &self.commands
     }
-
-    // pub fn update_commands(&mut self, commands: Vec<Command>) {
-    //     self.commands = commands;
-    //     self.filtered_commands = self.commands.clone();
-    // }
-
-    // pub fn filter_commands<F>(&mut self, filter_fn: F)
-    // where
-    //     F: Fn(&Command) -> bool,
-    // {
-    //     self.filtered_commands = self
-    //         .commands
-    //         .iter()
-    //         .cloned()
-    //         .filter(|cmd| filter_fn(cmd))
-    //         .collect();
-    // }
 
     pub fn set_filtered_commands(&mut self, commands: Vec<Command>) {
         self.filtered_commands = commands;
@@ -65,44 +60,33 @@ impl ListDelegate for CommandList {
         _cx: &mut Context<ListState<Self>>,
     ) -> Option<ListItem> {
         let item = self.filtered_commands.get(ix)?;
-        // let is_selected = Some(ix) == self.selected_ix;
         ListItem::new(ix)
             .rounded_sm()
             .child(
-                h_flex()
-                    .size_full()
-                    .items_center()
-                    .justify_center()
-                    // .py_4()
-                    // .h_full()
-                    // .bg(gpui::rgb(0xFF0000))
-                    .px_4()
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .gap_3()
-                            .min_w_0()
-                            .flex_1()
-                            .justify_between()
-                            .child(Label::new(&item.name).font_semibold().truncate())
-                            .when_some(item.shortcut.as_ref(), |this, shortcut| {
-                                // if let Some(parsed) = Keystroke::parse(shortcut).ok() {
-                                //     this.child(Kbd::new(parsed).text_sm())
-                                // } else {
-                                //     this
-                                // }
-                                let keystroke =
-                                    Keystroke::parse(shortcut).unwrap_or(Keystroke::default());
+                h_flex().size_full().items_center().justify_center().child(
+                    h_flex()
+                        .items_center()
+                        .gap_3()
+                        .min_w_0()
+                        .flex_1()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .gap_3()
+                                .when_some(item.icon.as_ref(), |this, icon| {
+                                    this.child(icon.clone())
+                                })
+                                .child(Label::new(&item.label).truncate()),
+                        )
+                        .when_some(item.shortcut.as_ref(), |this, shortcut| {
+                            if let Some(keystroke) = Keystroke::parse(shortcut).ok() {
                                 this.child(Kbd::new(keystroke).text_sm())
-                            }),
-                    ),
+                            } else {
+                                this
+                            }
+                        }),
+                ),
             )
-            // .selected(is_selected)
-            // .on_click({
-            //     cx.listener(move |list_state, _event, _window, cx| {
-            //         cx.notify();
-            //     })
-            // })
             .into()
     }
 

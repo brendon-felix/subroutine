@@ -3,51 +3,74 @@ name = "subroutine"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["crates/cli", "crates/database", "crates/ticks"]
+
 [workspace.dependencies]
+# Error handling
 anyhow = "1.0.100"
-# futures = "0.3.31"
-tokio = { version = "1.48.0", features = ["full"] }
-# tokio-util = "0.7.17"
-serde = { version = "1.0.228", features = ["derive"] }
-# serde_json = "1.0.145"
-# axum = "0.8.6"
-dirs = "6.0.0"
-# chrono = "0.4.42"
-# unicode-segmentation = "1.10"
-# schemars = "0.8"
-# smol = "2.0.2"
-# smallvec = "1.15.1"
-# rust-embed = "8.11.0"
 
-
-
-[dependencies]
-anyhow = "1.0.100"
-futures = "0.3.31"
-# gpui = { path = "/Users/felixb/Projects/zed/crates/gpui" }
-# gpui = "0.2.2"
-gpui = { git = "https://github.com/zed-industries/zed" }
-# gpui-component = "0.5.0"
-gpui-component = { git = "https://github.com/longbridge/gpui-component" }
-# gpui-macros = "0.2.2"
-open = "5.3.3"
-ticks = { path = "crates/ticks" }
-database = { path = "crates/database" }
+# Async runtime
 tokio = { version = "1.48.0", features = ["full"] }
 tokio-util = "0.7.17"
+futures = "0.3.31"
+smol = "2.0.2"
+
+# Serialization
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+
+# Database
+rusqlite = { version = "0.38.0", features = ["bundled"] }
+rusqlite_migration = "2.4.1"
+uuid = { version = "1.20.0", features = ["v4"] }
+
+# CLI
+clap = { version = "4.5.30", features = ["derive"] }
+
+# Web
 axum = "0.8.6"
+
+# Utilities
 dirs = "6.0.0"
 chrono = "0.4.42"
 unicode-segmentation = "1.10"
 schemars = "0.8"
-smol = "2.0.2"
-# gpui-component-assets = "0.5.0"
-gpui_transitions = { path = "/Users/felixb/Projects/gpui_transitions" }
 smallvec = "1.15.1"
 rust-embed = "8.11.0"
 tracing = "0.1.44"
 im = "15.1.0"
-
 regex = "1.12.2"
+fuzzy-matcher = "0.3.7"
+open = "5.3.3"
+rand = "0.9"
+
+# Workspace crates
+ticks = { path = "crates/ticks" }
+database = { path = "crates/database" }
+
+[dependencies]
+anyhow = { workspace = true }
+futures = { workspace = true }
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component" }
+gpui_transitions = { path = "/Users/felixb/Projects/gpui_transitions" }
+open = { workspace = true }
+ticks = { workspace = true }
+database = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+axum = { workspace = true }
+dirs = { workspace = true }
+chrono = { workspace = true }
+unicode-segmentation = { workspace = true }
+schemars = { workspace = true }
+smol = { workspace = true }
+smallvec = { workspace = true }
+rust-embed = { workspace = true }
+tracing = { workspace = true }
+im = { workspace = true }
+regex = { workspace = true }
+fuzzy-matcher = { workspace = true }

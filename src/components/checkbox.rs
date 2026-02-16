@@ -6,12 +6,12 @@ use std::{rc::Rc, time::Duration};
 // };
 use gpui::{
     Animation, AnimationExt, AnyElement, App, Corners, Div, Edges, ElementId, InteractiveElement,
-    IntoElement, ParentElement, Pixels, RenderOnce, StatefulInteractiveElement, StyleRefinement,
-    Styled, Window, div, prelude::FluentBuilder as _, px, relative, rems, svg,
+    IntoElement, MouseButton, ParentElement, Pixels, RenderOnce, StatefulInteractiveElement,
+    StyleRefinement, Styled, Window, div, prelude::FluentBuilder as _, px, relative, rems, svg,
 };
 use gpui_component::{
-    ActiveTheme, Disableable, IconName, IconNamed, Selectable, Sizable, Size, StyledExt,
-    text::Text, v_flex,
+    ActiveTheme, Disableable, IconName, IconNamed, InteractiveElementExt, Selectable, Sizable,
+    Size, StyledExt, text::Text, v_flex,
 };
 
 trait FocusableExt<T: ParentElement + Styled + Sized> {
@@ -108,12 +108,15 @@ pub struct Checkbox {
     style: StyleRefinement,
     label: Option<Text>,
     children: Vec<AnyElement>,
+    check_started: bool,
     checked: bool,
     disabled: bool,
     size: Size,
     tab_stop: bool,
     tab_index: isize,
-    on_click: Option<Rc<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
+    // on_click: Option<Rc<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
+    on_mouse_up: Option<Rc<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
+    on_mouse_down: Option<Rc<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
 }
 
 #[allow(unused)]
@@ -126,10 +129,13 @@ impl Checkbox {
             style: StyleRefinement::default(),
             label: None,
             children: Vec::new(),
+            check_started: false,
             checked: false,
             disabled: false,
             size: Size::default(),
-            on_click: None,
+            // on_click: None,
+            on_mouse_up: None,
+            on_mouse_down: None,
             tab_stop: true,
             tab_index: 0,
         }
@@ -147,11 +153,28 @@ impl Checkbox {
         self
     }
 
+    /// Set the checked state for the checkbox.
+    pub fn check_started(mut self, check_started: bool) -> Self {
+        self.check_started = check_started;
+        self
+    }
+
     /// Set the click handler for the checkbox.
     ///
     /// The `&bool` parameter indicates the new checked state after the click.
-    pub fn on_click(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
-        self.on_click = Some(Rc::new(handler));
+    pub fn on_mouse_up(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.on_mouse_up = Some(Rc::new(handler));
+        self
+    }
+
+    /// Set the click handler for the checkbox.
+    ///
+    /// The `&bool` parameter indicates the new checked state after the click.
+    pub fn on_mouse_down(
+        mut self,
+        handler: impl Fn(&bool, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_mouse_down = Some(Rc::new(handler));
         self
     }
 
@@ -167,14 +190,29 @@ impl Checkbox {
         self
     }
 
-    fn handle_click(
-        on_click: &Option<Rc<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
+    fn handle_mouse_up(
+        on_mouse_up: &Option<Rc<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
+        checked_started: bool,
         checked: bool,
         window: &mut Window,
         cx: &mut App,
     ) {
         let new_checked = !checked;
-        if let Some(f) = on_click {
+        if let Some(f) = on_mouse_up {
+            (f)(&new_checked, window, cx);
+        }
+    }
+
+    // fn handle_mouse_down(checked_started: bool, checked: bool, window: &mut Window, cx: &mut App) {}
+    fn handle_mouse_down(
+        on_mouse_down: &Option<Rc<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
+        checked_started: bool,
+        checked: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let new_checked = !checked;
+        if let Some(f) = on_mouse_down {
             (f)(&new_checked, window, cx);
         }
     }
@@ -185,6 +223,9 @@ impl InteractiveElement for Checkbox {
         self.base.interactivity()
     }
 }
+
+impl InteractiveElementExt for Checkbox {}
+
 impl StatefulInteractiveElement for Checkbox {}
 
 impl Styled for Checkbox {
@@ -226,6 +267,7 @@ impl Sizable for Checkbox {
 pub(crate) fn checkbox_check_icon(
     id: ElementId,
     size: Size,
+    check_started: bool,
     checked: bool,
     disabled: bool,
     window: &mut Window,
@@ -250,27 +292,31 @@ pub(crate) fn checkbox_check_icon(
             _ => this.size_3(),
         })
         .text_color(color)
-        .map(|this| match checked {
+        .map(|this| match check_started {
             true => this.path(IconName::Check.path()),
             _ => this,
         })
         .map(|this| {
-            if !disabled && checked != *toggle_state.read(cx) {
+            if !disabled && check_started != *toggle_state.read(cx) {
                 let duration = Duration::from_secs_f64(0.25);
                 cx.spawn({
                     let toggle_state = toggle_state.clone();
                     async move |cx| {
                         cx.background_executor().timer(duration).await;
-                        _ = toggle_state.update(cx, |this, _| *this = checked);
+                        _ = toggle_state.update(cx, |this, _| *this = check_started);
                     }
                 })
                 .detach();
 
                 this.with_animation(
-                    ElementId::NamedInteger("toggle".into(), checked as u64),
+                    ElementId::NamedInteger("toggle".into(), check_started as u64),
                     Animation::new(Duration::from_secs_f64(0.25)),
                     move |this, delta| {
-                        this.opacity(if checked { 1.0 * delta } else { 1.0 - delta })
+                        this.opacity(if check_started {
+                            1.0 * delta
+                        } else {
+                            1.0 - delta
+                        })
                     },
                 )
                 .into_any_element()
@@ -301,6 +347,9 @@ impl RenderOnce for Checkbox {
             border_color
         };
         let radius = cx.theme().radius.min(px(4.));
+
+        let check_started = self.check_started;
+        let checked = self.checked;
 
         div().child(
             self.base
@@ -359,6 +408,7 @@ impl RenderOnce for Checkbox {
                         .child(checkbox_check_icon(
                             self.id,
                             self.size,
+                            check_started,
                             checked,
                             self.disabled,
                             window,
@@ -395,11 +445,29 @@ impl RenderOnce for Checkbox {
                     window.prevent_default();
                 })
                 .when(!self.disabled, |this| {
-                    this.on_click({
-                        let on_click = self.on_click.clone();
+                    // this.on_click({
+                    this.on_mouse_down(MouseButton::Left, {
+                        // let on_click = self.on_click.clone();
+                        let on_mouse_down = self.on_mouse_down.clone();
                         move |_, window, cx| {
                             window.prevent_default();
-                            Self::handle_click(&on_click, checked, window, cx);
+                            // Self::handle_click(&on_click, checked, window, cx);
+                            Self::handle_mouse_down(
+                                &on_mouse_down,
+                                check_started,
+                                checked,
+                                window,
+                                cx,
+                            );
+                        }
+                    })
+                    .on_mouse_up(MouseButton::Left, {
+                        // let on_click = self.on_click.clone();
+                        let on_mouse_up = self.on_mouse_up.clone();
+                        move |_, window, cx| {
+                            window.prevent_default();
+                            // Self::handle_click(&on_click, checked, window, cx);
+                            Self::handle_mouse_up(&on_mouse_up, check_started, checked, window, cx);
                         }
                     })
                 }),

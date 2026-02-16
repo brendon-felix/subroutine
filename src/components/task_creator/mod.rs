@@ -7,7 +7,10 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::{components::overlay::CloseOverlay, stores::DatabaseStore};
+use crate::{
+    components::popover::{CloseOverlay, popover},
+    stores::DatabaseStore,
+};
 
 // actions!(
 //     task_creator,
@@ -151,6 +154,6 @@ impl Render for TaskCreator {
         );
 
         // Reuse the centralized overlay shell for consistent overlay chrome and behaviour.
-        crate::components::overlay::shell(theme, inner)
+        popover(inner, cx)
     }
 }

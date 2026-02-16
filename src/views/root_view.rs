@@ -5,28 +5,44 @@ use gpui::{
     Window, actions, div, px,
 };
 use gpui::{KeyBinding, prelude::*};
-use gpui_component::{ActiveTheme, Root, ThemeMode};
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::notification::{Notification, NotificationType};
+use gpui_component::{ActiveTheme, IconName, Root, ThemeMode, WindowExt};
 
 use crate::app::ResultExt;
 use crate::components::command_palette::{
     CloseCommandPalette, Command, CommandPalette, CommandPaletteExt, CommandPaletteState,
     SelectCommand,
 };
-use crate::components::overlay::CloseOverlay;
+use crate::components::popover::CloseOverlay;
 use crate::components::resizable::{h_resizable, resizable_panel};
 use crate::components::task_creator::TaskCreator;
 use crate::stores::{DatabaseStore, DragDropStore};
 use crate::themes::SwitchThemeMode;
-use crate::views::{MainView, MainViewMode, RightSidebarView};
+use crate::views::{
+    ActionEditor, MainView, MainViewMode, RightSidebarView, RoutineEditor,
+    routines_view::StartRoutineEditor,
+};
 
 actions!(
     root_view,
-    [ToggleCommandPalette, ToggleTaskCreator, ToggleSideBar]
+    [
+        StartCommandPalette,
+        StartTaskCreator,
+        // StartActionEditor,
+        ToggleSideBar
+    ]
 );
 
-pub enum Overlay {
+pub enum CurrentOverlay {
     CommandPalette(Entity<CommandPaletteState>),
     TaskCreator(Entity<TaskCreator>),
+    ActionEditor(Entity<ActionEditor>),
+    RoutineEditor(Entity<RoutineEditor>),
+}
+
+pub struct StartActionEditor {
+    pub action_id: Option<String>,
 }
 
 pub struct RootView {
@@ -35,7 +51,7 @@ pub struct RootView {
     right_sidebar: Entity<RightSidebarView>,
     // right_sidebar_collapsed: bool,
     focus_handle: FocusHandle,
-    overlay: Option<Overlay>,
+    overlay: Option<CurrentOverlay>,
 }
 
 impl RootView {
@@ -45,17 +61,53 @@ impl RootView {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.bind_keys([
-            KeyBinding::new("cmd-p", ToggleCommandPalette, None),
-            KeyBinding::new("cmd-t", ToggleTaskCreator, None),
+            KeyBinding::new("cmd-p", StartCommandPalette, None),
+            KeyBinding::new("cmd-t", StartTaskCreator, None),
             KeyBinding::new("alt-]", ToggleSideBar, None),
         ]);
 
         let drag_drop_store = cx.new(|cx| DragDropStore::new(cx));
         let main_view =
             cx.new(|cx| MainView::new(database_store.clone(), drag_drop_store.clone(), window, cx));
+
+        let list_state = main_view.read(cx).action_list.read(cx).list_state.clone();
+
         let right_sidebar = cx.new(|cx| {
             RightSidebarView::new(database_store.clone(), drag_drop_store.clone(), window, cx)
         });
+
+        let pipeline = right_sidebar.read(cx).pipeline.clone();
+
+        cx.subscribe_in(
+            &list_state,
+            window,
+            |this, list, event: &StartActionEditor, window, cx| {
+                let action_id = event.action_id.clone();
+                this.open_action_editor(action_id, window, cx);
+            },
+        )
+        .detach();
+
+        cx.subscribe_in(
+            &pipeline,
+            window,
+            |this, list, event: &StartActionEditor, window, cx| {
+                let action_id = event.action_id.clone();
+                this.open_action_editor(action_id, window, cx);
+            },
+        )
+        .detach();
+
+        cx.subscribe_in(
+            &main_view,
+            window,
+            |this, _main_view, event: &StartRoutineEditor, window, cx| {
+                let routine_id = event.routine_id.clone();
+                this.open_routine_editor(routine_id, window, cx);
+            },
+        )
+        .detach();
+
         let focus_handle = cx.focus_handle();
         cx.focus_self(window);
 
@@ -69,33 +121,79 @@ impl RootView {
         }
     }
 
-    fn toggle_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.overlay, Some(Overlay::CommandPalette(_))) {
-            self.overlay = None;
-            cx.focus_self(window);
-        } else {
-            // `command_palette` is provided by `CommandPaletteExt` impl below
-            let entity = self.command_palette(window, cx);
-            self.overlay = Some(Overlay::CommandPalette(entity));
-        }
+    fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let entity = self.command_palette(window, cx);
+        self.overlay = Some(CurrentOverlay::CommandPalette(entity));
     }
 
-    fn toggle_task_creator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.overlay, Some(Overlay::TaskCreator(_))) {
-            self.overlay = None;
-            cx.focus_self(window);
-        } else {
-            let database_store = self.database_store.clone();
-            let entity = cx.new(|cx| TaskCreator::new(database_store, window, cx));
-            self.overlay = Some(Overlay::TaskCreator(entity));
+    fn open_task_creator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let database_store = self.database_store.clone();
+        let entity = cx.new(|cx| TaskCreator::new(database_store, window, cx));
+        self.overlay = Some(CurrentOverlay::TaskCreator(entity));
+    }
+
+    fn open_action_editor(
+        &mut self,
+        action_id: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let database_store = self.database_store.clone();
+        let editor = cx.new(|cx| ActionEditor::new(database_store, window, cx));
+        if let Some(action_id) = action_id {
+            editor.update(cx, |editor, cx| {
+                editor.load_action(&action_id, cx);
+            });
         }
+        self.overlay = Some(CurrentOverlay::ActionEditor(editor));
+    }
+
+    fn open_routine_editor(
+        &mut self,
+        routine_id: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let database_store = self.database_store.clone();
+        let editor = cx.new(|cx| RoutineEditor::new(database_store, routine_id, window, cx));
+        self.overlay = Some(CurrentOverlay::RoutineEditor(editor));
+    }
+
+    fn close_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.overlay = None;
+        cx.focus_self(window);
     }
 }
 
 impl CommandPaletteExt for RootView {
     fn commands(&self, cx: &mut Context<Self>) -> Vec<Command> {
+        let entity = cx.entity();
         vec![
-            Command::new("home-view", "Switch to Home View").on_select({
+            Command::new("What should I do next?")
+                .icon(IconName::Star)
+                .search_terms(["suggest", "recommendation", "next", "what", "do"])
+                .on_select({
+                    let store = self.database_store.clone();
+                    move |_window, cx| {
+                        cx.update_entity(&store, |store, cx| {
+                            store.suggest_next(3, cx);
+                        });
+                    }
+                }),
+            Command::new("Refresh Pipeline")
+                .icon(IconName::Redo)
+                .search_terms([
+                    "score", "reorder", "sort", "priority", "refresh", "pipeline",
+                ])
+                .on_select({
+                    let store = self.database_store.clone();
+                    move |_window, cx| {
+                        cx.update_entity(&store, |store, cx| {
+                            store.refresh_pipeline(cx);
+                        });
+                    }
+                }),
+            Command::new("Switch to Home View").on_select({
                 let entity = self.main_view.clone();
                 move |_window, cx| {
                     cx.update_entity(&entity, |main_view, cx| {
@@ -103,31 +201,69 @@ impl CommandPaletteExt for RootView {
                     });
                 }
             }),
-            // Command::new("task-view", "Switch to Task List View").on_select({
-            //     let entity = self.main_view.clone();
-            //     move |_window, cx| {
-            //         cx.update_entity(&entity, |main_view, cx| {
-            //             main_view.set_mode(MainViewMode::TaskList, cx);
-            //         });
-            //     }
-            // }),
-            // Command::new("test-view", "Switch to Test View").on_select({
-            //     let entity = self.main_view.clone();
-            //     move |_window, cx| {
-            //         cx.update_entity(&entity, |main_view, cx| {
-            //             main_view.set_mode(MainViewMode::Test, cx);
-            //         });
-            //     }
-            // }),
-            Command::new("action-editor", "Switch to Action Editor").on_select({
+            Command::new("Switch to Routines")
+                .icon(IconName::Play)
+                .search_terms(["routine", "routines", "sequence", "steps"])
+                .on_select({
+                    let entity = self.main_view.clone();
+                    move |_window, cx| {
+                        cx.update_entity(&entity, |main_view, cx| {
+                            main_view.set_mode(MainViewMode::Routines, cx);
+                        });
+                    }
+                }),
+            Command::new("New Routine")
+                .icon(IconName::Plus)
+                .search_terms(["create", "routine", "new", "add"])
+                .on_select({
+                    let entity = cx.entity();
+                    move |window, cx| {
+                        cx.update_entity(&entity, |root_view, cx| {
+                            root_view.open_routine_editor(None, window, cx);
+                            cx.notify();
+                        });
+                    }
+                }),
+            Command::new("Switch to Test View").on_select({
                 let entity = self.main_view.clone();
                 move |_window, cx| {
                     cx.update_entity(&entity, |main_view, cx| {
-                        main_view.set_mode(MainViewMode::ActionEditor, cx);
+                        main_view.set_mode(MainViewMode::Test, cx);
                     });
                 }
             }),
-            Command::new("action-list", "Switch to Action List").on_select({
+            Command::new("Cause an error (test)").on_select({
+                |window, cx| {
+                    window.push_notification((NotificationType::Error, "This is an error"), cx);
+                }
+            }),
+            Command::new("Cause a warning (test)").on_select({
+                |window, cx| {
+                    window.push_notification((NotificationType::Warning, "This is a warning"), cx);
+                }
+            }),
+            Command::new("Save notify").on_select({
+                let entity = cx.entity();
+                |window, cx| {
+                    window.push_notification(
+                        Notification::new()
+                            .id::<SaveConfirmation>()
+                            .title("Unsaved Changes")
+                            .message("You have unsaved changes. Save before leaving?")
+                            .autohide(false)
+                            .action(|_, window, cx| {
+                                Button::new("save")
+                                    .primary()
+                                    .label("Save")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dismiss(window, cx);
+                                    }))
+                            }),
+                        cx,
+                    );
+                }
+            }),
+            Command::new("Switch to Action List").on_select({
                 let entity = self.main_view.clone();
                 move |_window, cx| {
                     cx.update_entity(&entity, |main_view, cx| {
@@ -135,49 +271,48 @@ impl CommandPaletteExt for RootView {
                     });
                 }
             }),
-            // Command::new("refresh-tasks", "Refresh task list").on_select({
-            //     let entity = self.task_store.clone();
-            //     move |_window, cx| {
-            //         cx.update_entity(&entity, |tasks, cx| {
-            //             tasks.refresh_tasks(cx).log_err();
-            //         });
-            //     }
-            // }),
-            Command::new("edit-copy", "Copy")
-                .description("Copy selected text")
-                .shortcut("Cmd+C")
+            Command::new("Copy")
+                .shortcut("cmd-c")
+                .icon(IconName::Copy)
+                .search_terms(["duplicate", "clip", "clipboard", "cut"])
                 .on_select(|_window, _cx| {}),
-            Command::new("edit-paste", "Paste")
-                .description("Paste from clipboard")
-                .shortcut("Cmd+V")
+            Command::new("Paste")
+                .shortcut("cmd-v")
+                .icon(IconName::Copy)
+                .search_terms(["insert", "clip", "clipboard", "cut"])
                 .on_select(|_window, _cx| {}),
-            Command::new("edit-find", "Find")
-                .description("Search in current file")
-                .shortcut("Cmd+F")
+            Command::new("Find")
+                .shortcut("cmd-f")
+                .icon(IconName::Search)
+                .search_terms(["search", "lookup", "find"])
                 .on_select(|_window, _cx| {}),
-            Command::new("view-toggle", "Toggle Right Sidebar")
-                .description("Show or hide the sidebar")
+            Command::new("Toggle Right Sidebar")
                 .shortcut("alt-]")
+                .icon(IconName::PanelRight)
+                .search_terms(["sidebar", "panel", "toggle"])
                 .on_select(|window, cx| {
                     window.dispatch_action(Box::new(ToggleSideBar), cx);
                 }),
-            Command::new("app-quit", "Quit Application")
-                .description("Exit the application")
+            Command::new("Quit Application")
                 .shortcut("cmd-q")
+                .icon(IconName::CircleX)
+                .search_terms(["exit", "close", "quit", "leave"])
                 .on_select(|_window, cx| {
                     cx.quit();
                 }),
             {
                 if cx.theme().mode == ThemeMode::Dark {
-                    Command::new("light-mode", "Switch to Light Mode")
-                        .description("Switch between light and dark themes")
+                    Command::new("Switch to Light Mode")
+                        .icon(IconName::Sun)
+                        .search_terms(["theme", "light", "dark", "appearance"])
                         .on_select(|window, cx| {
                             let action = SwitchThemeMode(ThemeMode::Light);
                             window.dispatch_action(Box::new(action), cx);
                         })
                 } else {
-                    Command::new("dark-mode", "Switch to Dark Mode")
-                        .description("Switch between light and dark themes")
+                    Command::new("Switch to Dark Mode")
+                        .icon(IconName::Moon)
+                        .search_terms(["theme", "light", "dark", "appearance"])
                         .on_select(|window, cx| {
                             let action = SwitchThemeMode(ThemeMode::Dark);
                             window.dispatch_action(Box::new(action), cx);
@@ -187,6 +322,8 @@ impl CommandPaletteExt for RootView {
         ]
     }
 }
+
+struct SaveConfirmation;
 
 impl Focusable for RootView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
@@ -248,11 +385,11 @@ impl Render for RootView {
                     }),
                 )
                 // Overlay toggles
-                .on_action(cx.listener(|this, _: &ToggleCommandPalette, window, cx| {
-                    this.toggle_command_palette(window, cx);
+                .on_action(cx.listener(|this, _: &StartCommandPalette, window, cx| {
+                    this.open_command_palette(window, cx);
                 }))
-                .on_action(cx.listener(|this, _: &ToggleTaskCreator, window, cx| {
-                    this.toggle_task_creator(window, cx);
+                .on_action(cx.listener(|this, _: &StartTaskCreator, window, cx| {
+                    this.open_task_creator(window, cx);
                 }))
                 // Shared overlay close
                 .on_action(cx.listener(|this, _: &CloseOverlay, window, cx| {
@@ -268,7 +405,7 @@ impl Render for RootView {
                 }))
                 // When SelectCommand is dispatched, forward it to the active command palette
                 .on_action(cx.listener(|this, _: &SelectCommand, window, cx| {
-                    if let Some(Overlay::CommandPalette(entity)) = &this.overlay {
+                    if let Some(CurrentOverlay::CommandPalette(entity)) = &this.overlay {
                         let executed = cx.update_entity(
                             entity,
                             |cmd_palette: &mut CommandPaletteState, cx| {
@@ -285,8 +422,12 @@ impl Render for RootView {
                 .child(main_area)
                 // Render overlay if present
                 .when_some(self.overlay.as_ref(), |content, overlay| match overlay {
-                    Overlay::CommandPalette(cmd) => content.child(CommandPalette::new(cmd.clone())),
-                    Overlay::TaskCreator(entity) => content.child(entity.clone()),
+                    CurrentOverlay::CommandPalette(state) => {
+                        content.child(CommandPalette::new(state.clone()))
+                    }
+                    CurrentOverlay::TaskCreator(creator) => content.child(creator.clone()),
+                    CurrentOverlay::ActionEditor(editor) => content.child(editor.clone()),
+                    CurrentOverlay::RoutineEditor(editor) => content.child(editor.clone()),
                 }),
         );
 

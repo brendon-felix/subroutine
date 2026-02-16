@@ -3,7 +3,9 @@ use gpui::{
     ParentElement, RenderOnce, Stateful, StatefulInteractiveElement, StyleRefinement, Styled,
     Window, div, prelude::FluentBuilder,
 };
-use gpui_component::{ActiveTheme, Disableable, Selectable, StyledExt, h_flex};
+use gpui_component::{
+    ActiveTheme, Disableable, InteractiveElementExt, Selectable, StyledExt, h_flex,
+};
 use smallvec::SmallVec;
 
 pub enum SelectedPosition {
@@ -110,6 +112,8 @@ impl InteractiveElement for ListItem {
         self.base.interactivity()
     }
 }
+
+impl InteractiveElementExt for ListItem {}
 
 impl StatefulInteractiveElement for ListItem {}
 

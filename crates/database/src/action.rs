@@ -1,5 +1,8 @@
+use std::fmt;
+
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use chrono::{DateTime, Utc};
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -26,7 +29,7 @@ pub struct Action {
     pub transition_difficulty: Option<i64>,
     /// Enjoyment after starting the action (-5 to +5)
     pub enjoyment_after_start: Option<i64>,
-    /// General importance of the action (-5 to +5)
+    /// General importance of the action (0 to 5)
     pub importance: Option<i64>,
     /// Whether the urgency of the action grows over time
     pub urgency_growth: Option<bool>,
@@ -36,6 +39,61 @@ pub struct Action {
     pub preferred_time_of_day: Option<String>,
     /// Free-form JSON or string blob for feature metadata
     pub metadata: Option<String>,
+}
+
+impl Default for Action {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            action_type: "task".to_string(),
+            title: String::new(),
+            description: None,
+            duration_bucket: None,
+            energy_rate: None,
+            attention_level: None,
+            transition_difficulty: None,
+            enjoyment_after_start: None,
+            importance: None,
+            urgency_growth: None,
+            created_at: None,
+            preferred_time_of_day: None,
+            metadata: None,
+        }
+    }
+}
+
+impl fmt::Display for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.title)?;
+
+        if let Some(ref description) = self.description {
+            write!(f, " - {}", description)?;
+        }
+
+        let mut details = Vec::new();
+
+        if let Some(duration) = self.duration_bucket {
+            details.push(format!("{}min", duration));
+        }
+
+        if let Some(energy) = self.energy_rate {
+            details.push(format!("energy: {}", energy));
+        }
+
+        if let Some(attention) = self.attention_level {
+            details.push(format!("attention: {}", attention));
+        }
+
+        if let Some(importance) = self.importance {
+            details.push(format!("importance: {}", importance));
+        }
+
+        if !details.is_empty() {
+            write!(f, " ({})", details.join(", "))?;
+        }
+
+        Ok(())
+    }
 }
 
 impl Action {
@@ -103,6 +161,25 @@ impl Action {
         self.importance = Some(importance);
         self
     }
+
+    /// Parse the preferred_time_of_day JSON string into a Vec<String>.
+    /// Returns empty vec if None or parsing fails.
+    pub fn preferred_time_of_day_vec(&self) -> Vec<String> {
+        self.preferred_time_of_day
+            .as_ref()
+            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+            .unwrap_or_default()
+    }
+
+    /// Get the created_at timestamp as a DateTime<Utc>.
+    /// Returns current time if None or parsing fails.
+    pub fn created_at_datetime(&self) -> DateTime<Utc> {
+        self.created_at
+            .as_ref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now)
+    }
 }
 
 /// Additional requirements associated with an action.
@@ -114,6 +191,18 @@ pub struct ActionRequirement {
     pub value: String,
     pub accessibility_score: Option<i64>,
     pub created_at: Option<String>,
+}
+
+impl fmt::Display for ActionRequirement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.requirement_type, self.value)?;
+
+        if let Some(score) = self.accessibility_score {
+            write!(f, " (accessibility: {})", score)?;
+        }
+
+        Ok(())
+    }
 }
 
 impl ActionRequirement {
@@ -243,6 +332,58 @@ pub fn fetch_actions(conn: &Connection) -> Result<Vec<Action>> {
         .context("Failed to map action rows")?;
 
     Ok(actions)
+}
+
+/// Fetch a single action by its ID.
+pub fn fetch_action_by_id(conn: &Connection, action_id: &str) -> Result<Option<Action>> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT
+                id,
+                action_type,
+                title,
+                description,
+                duration_bucket,
+                energy_rate,
+                attention_level,
+                transition_difficulty,
+                enjoyment_after_start,
+                importance,
+                urgency_growth,
+                created_at,
+                preferred_time_of_day,
+                metadata
+            FROM actions
+            WHERE id = ?1
+        "#,
+        )
+        .context("Failed to prepare action fetch by id query")?;
+
+    let action = stmt
+        .query_row([action_id], |row| {
+            let urgency_growth: Option<i64> = row.get(10)?;
+            Ok(Action {
+                id: row.get(0)?,
+                action_type: row.get(1)?,
+                title: row.get(2)?,
+                description: row.get(3)?,
+                duration_bucket: row.get(4)?,
+                energy_rate: row.get(5)?,
+                attention_level: row.get(6)?,
+                transition_difficulty: row.get(7)?,
+                enjoyment_after_start: row.get(8)?,
+                importance: row.get(9)?,
+                urgency_growth: urgency_growth.map(|v| v != 0),
+                created_at: row.get(11)?,
+                preferred_time_of_day: row.get(12)?,
+                metadata: row.get(13)?,
+            })
+        })
+        .optional()
+        .context("Failed to fetch action by id")?;
+
+    Ok(action)
 }
 
 pub fn delete_action(conn: &Connection, action_id: &str) -> Result<()> {

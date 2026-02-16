@@ -11,6 +11,7 @@ use gpui_component::{
 };
 
 mod delegate;
+mod list;
 
 pub use delegate::*;
 

@@ -1,17 +1,22 @@
 use crate::{
     stores::{DatabaseStore, DragDropStore},
-    views::{ActionEditor, ActionListView, NavigateToView, action_list_view},
+    views::{
+        ActionEditor, ActionListView, NavigateToView, RoutineEditor, RoutinesView,
+        action_list_view, routines_view::NavigateFromRoutines, routines_view::StartRoutineEditor,
+        test_view::TestView,
+    },
 };
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, IntoElement, ParentElement, Render,
     Styled, Subscription, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
-    ActiveTheme, IconName,
+    ActiveTheme, IconName, WindowExt,
     button::{Button, ButtonVariants},
     divider::Divider,
     h_flex,
     label::Label,
+    notification::NotificationType,
     v_flex,
 };
 
@@ -19,17 +24,20 @@ use gpui_component::{
 pub enum MainViewMode {
     Home,
     // TaskList,
-    // Test,
-    ActionEditor,
+    Test,
+    // ActionEditor,
     ActionList,
+    Routines,
 }
 
 pub struct MainView {
     pub focus_handle: FocusHandle,
     // pub task_list: Entity<TaskListView>,
-    // pub test_view: Entity<TestView>,
-    pub action_editor: Entity<ActionEditor>,
+    pub test_view: Entity<TestView>,
+    // pub action_editor: Entity<ActionEditor>,
     pub action_list: Entity<ActionListView>,
+    pub routines_view: Entity<RoutinesView>,
+    database_store: Entity<DatabaseStore>,
     _subscriptions: Vec<Subscription>,
     mode: MainViewMode,
 }
@@ -41,34 +49,16 @@ impl MainView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        // let task_list =
-        //     cx.new(|cx| TaskListView::new(task_store.clone(), drag_drop_store.clone(), window, cx));
-        // let test_view = cx.new(|cx| TestView::new(task_store.clone(), cx));
-
-        let action_editor = cx.new(|cx| ActionEditor::new(database_store.clone(), window, cx));
+        let test_view = cx.new(|cx| TestView::new(cx));
 
         let action_list =
             cx.new(|cx| ActionListView::new(database_store.clone(), drag_drop_store, window, cx));
 
+        let routines_view = cx.new(|cx| RoutinesView::new(database_store.clone(), window, cx));
+
         let focus_handle = cx.focus_handle();
-        // window.focus(&focus_handle);
         cx.focus_self(window);
         let mut subscriptions = Vec::new();
-
-        // subscriptions.push(cx.subscribe(
-        //     &task_store,
-        //     |_this, _task_store, event: &ApiError, cx| {
-        //         eprintln!("API Error: {}", event.message);
-        //         cx.notify();
-        //     },
-        // ));
-
-        // subscriptions.push(cx.subscribe(
-        //     &task_store,
-        //     |_this, _task_store, _event: &TaskCreated, cx| {
-        //         cx.notify();
-        //     },
-        // ));
 
         subscriptions.push(cx.subscribe(
             &action_list,
@@ -77,11 +67,28 @@ impl MainView {
             },
         ));
 
+        subscriptions.push(cx.subscribe(
+            &routines_view,
+            |this, _routines_view, event: &NavigateFromRoutines, cx| {
+                this.set_mode(event.mode, cx);
+            },
+        ));
+
+        subscriptions.push(cx.subscribe(
+            &routines_view,
+            |this, _routines_view, event: &StartRoutineEditor, cx| {
+                cx.emit(StartRoutineEditor {
+                    routine_id: event.routine_id.clone(),
+                });
+            },
+        ));
+
         Self {
             focus_handle,
-            action_editor,
+            test_view,
             action_list,
-            // drag_drop_store,
+            routines_view,
+            database_store,
             _subscriptions: subscriptions,
             mode: MainViewMode::Home,
         }
@@ -99,14 +106,28 @@ impl MainView {
             .justify_center()
             .child(
                 div().flex().absolute().top_2().right_2().child(
-                    Button::new("home-to-tasks-btn")
-                        .w(px(112.0))
-                        .icon(IconName::Inbox)
-                        .ghost()
-                        .label("Actions")
-                        .on_click(cx.listener(|this, _event, _window, cx| {
-                            this.set_mode(MainViewMode::ActionList, cx);
-                        })),
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Button::new("home-to-routines-btn")
+                                .w(px(112.0))
+                                .icon(IconName::Play)
+                                .ghost()
+                                .label("Routines")
+                                .on_click(cx.listener(|this, _event, _window, cx| {
+                                    this.set_mode(MainViewMode::Routines, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("home-to-tasks-btn")
+                                .w(px(112.0))
+                                .icon(IconName::Inbox)
+                                .ghost()
+                                .label("Actions")
+                                .on_click(cx.listener(|this, _event, _window, cx| {
+                                    this.set_mode(MainViewMode::ActionList, cx);
+                                })),
+                        ),
                 ),
             )
             .child(
@@ -127,7 +148,6 @@ impl MainView {
                                 Label::new("Subroutine")
                                     .text_3xl()
                                     .content_stretch()
-                                    // .font(gpui::font("Hoefler Text")),
                                     .font(gpui::font("Georgia")),
                             ),
                     )
@@ -143,36 +163,84 @@ impl MainView {
                             .font(gpui::font("Georgia").italic()),
                     )
                     .child(
-                        v_flex()
-                            // .font(gpui::font("Georgia").italic())
-                            // .font(gpui::font("Monaco").italic())
-                            .gap_4()
-                            .children([
-                                h_flex().gap_4().justify_between().children([
-                                    Button::new("home-btn-0")
-                                        .flex_1()
-                                        .outline()
-                                        .label("analysis paralysis")
-                                        .text_color(cx.theme().red_light),
-                                    Button::new("home-btn-1")
-                                        .flex_1()
-                                        .outline()
-                                        .label("overstimulated")
-                                        .text_color(cx.theme().yellow_light),
-                                ]),
-                                h_flex().gap_4().justify_between().children([
-                                    Button::new("home-btn-2")
-                                        .flex_1()
-                                        .outline()
-                                        .label("hyperfocused")
-                                        .text_color(cx.theme().green_light),
-                                    Button::new("home-btn-3")
-                                        .flex_1()
-                                        .outline()
-                                        .label("an instense emotion")
-                                        .text_color(cx.theme().magenta_light),
-                                ]),
+                        v_flex().gap_4().children([
+                            h_flex().gap_4().justify_between().children([
+                                Button::new("home-btn-0")
+                                    .flex_1()
+                                    .outline()
+                                    .label("analysis paralysis")
+                                    .text_color(cx.theme().red_light)
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.database_store.update(cx, |store, cx| {
+                                            store.record_mental_state(
+                                                "analysis paralysis".to_string(),
+                                                Some(3),
+                                                cx,
+                                            );
+                                        });
+                                        window.push_notification(
+                                            "Mental state recorded: analysis paralysis",
+                                            cx,
+                                        );
+                                    })),
+                                Button::new("home-btn-1")
+                                    .flex_1()
+                                    .outline()
+                                    .label("overstimulated")
+                                    .text_color(cx.theme().yellow_light)
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.database_store.update(cx, |store, cx| {
+                                            store.record_mental_state(
+                                                "overstimulated".to_string(),
+                                                Some(3),
+                                                cx,
+                                            );
+                                        });
+                                        window.push_notification(
+                                            "Mental state recorded: overstimulated",
+                                            cx,
+                                        );
+                                    })),
                             ]),
+                            h_flex().gap_4().justify_between().children([
+                                Button::new("home-btn-2")
+                                    .flex_1()
+                                    .outline()
+                                    .label("hyperfocused")
+                                    .text_color(cx.theme().green_light)
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.database_store.update(cx, |store, cx| {
+                                            store.record_mental_state(
+                                                "hyperfocused".to_string(),
+                                                Some(3),
+                                                cx,
+                                            );
+                                        });
+                                        window.push_notification(
+                                            "Mental state recorded: hyperfocused",
+                                            cx,
+                                        );
+                                    })),
+                                Button::new("home-btn-3")
+                                    .flex_1()
+                                    .outline()
+                                    .label("an intense emotion")
+                                    .text_color(cx.theme().magenta_light)
+                                    .on_click(cx.listener(|this, _event, window, cx| {
+                                        this.database_store.update(cx, |store, cx| {
+                                            store.record_mental_state(
+                                                "intense emotion".to_string(),
+                                                Some(3),
+                                                cx,
+                                            );
+                                        });
+                                        window.push_notification(
+                                            "Mental state recorded: intense emotion",
+                                            cx,
+                                        );
+                                    })),
+                            ]),
+                        ]),
                     ),
             )
     }
@@ -184,14 +252,17 @@ impl Focusable for MainView {
     }
 }
 
+impl gpui::EventEmitter<StartRoutineEditor> for MainView {}
+
 impl Render for MainView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().flex().size_full().map(|this| match self.mode {
             MainViewMode::Home => this.child(self.render_home(cx)),
             // MainViewMode::TaskList => this.child(self.task_list.clone()),
-            // MainViewMode::Test => this.child(self.test_view.clone()),
-            MainViewMode::ActionEditor => this.child(self.action_editor.clone()),
+            MainViewMode::Test => this.child(self.test_view.clone()),
+            // MainViewMode::ActionEditor => this.child(self.action_editor.clone()),
             MainViewMode::ActionList => this.child(self.action_list.clone()),
+            MainViewMode::Routines => this.child(self.routines_view.clone()),
         })
     }
 }

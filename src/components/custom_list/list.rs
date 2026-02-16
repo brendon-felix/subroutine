@@ -1,12 +1,12 @@
 use std::ops::Range;
 
 use gpui::{
-    Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement, Pixels,
-    Render, RenderOnce, ScrollStrategy, Size, Styled, Window, actions, div, prelude::FluentBuilder,
-    px,
+    Action, App, Context, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseUpEvent,
+    ParentElement, Pixels, Render, RenderOnce, ScrollStrategy, Styled, Window, actions, div,
+    prelude::FluentBuilder, px,
 };
-use gpui_component::{scroll::Scrollbar, v_flex};
+use gpui_component::{StyledExt, scroll::Scrollbar, v_flex};
 use serde::Deserialize;
 
 use crate::components::custom_list::{
@@ -65,24 +65,26 @@ pub enum ListEvent {
     Cancel,
 }
 
-struct ListOptions {
+pub struct ListOptions {
     // size: Size,
-    item_size: Size<Pixels>,
-    scrollbar_visible: bool,
+    pub item_size: Pixels,
+    pub gap: Pixels,
+    pub scrollbar_visible: bool,
     // search_placeholder: Option<SharedString>,
     // max_height: Option<Length>,
-    // paddings: EdgesRefinement<DefiniteLength>,
+    pub paddings: EdgesRefinement<Pixels>,
 }
 
 impl Default for ListOptions {
     fn default() -> Self {
         Self {
             // size: Size::default(),
-            item_size: Size::new(px(0.0), px(50.0)),
+            item_size: px(48.0),
+            gap: px(4.0),
             scrollbar_visible: true,
             // max_height: None,
             // search_placeholder: None,
-            // paddings: EdgesRefinement::default(),
+            paddings: EdgesRefinement::default(),
         }
     }
 }
@@ -120,6 +122,11 @@ where
             selected_index: None,
             mouse_cursor_hidden: false,
         }
+    }
+
+    pub fn options(mut self, options: ListOptions) -> Self {
+        self.options = options;
+        self
     }
 
     pub fn delegate(&self) -> &D {
@@ -356,6 +363,8 @@ where
     fn render_items(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let scroll_handle = self.scroll_handle.clone();
         let scrollbar_visible = self.options.scrollbar_visible;
+        let paddings = self.options.paddings.clone();
+        let gap = self.options.gap.clone();
 
         v_flex()
             .h_full()
@@ -380,6 +389,8 @@ where
                                     .collect::<Vec<_>>()
                             },
                         )
+                        .paddings(paddings)
+                        .gap(gap)
                         .track_scroll(&scroll_handle)
                         .into_any_element(),
                     )
@@ -387,12 +398,6 @@ where
             })
             .when(scrollbar_visible && self.num_entries > 0, |this| {
                 this.child(Scrollbar::vertical(&scroll_handle))
-                // .paddings(EdgesRefinement {
-                //     right: Some(px(14.0)),
-                //     left: None,
-                //     top: None,
-                //     bottom: None,
-                // })
             })
     }
 }

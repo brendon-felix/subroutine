@@ -1,6 +1,7 @@
-use std::time::Instant;
+use std::{fmt, time::Instant};
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -39,6 +40,32 @@ pub struct Instance {
     pub metadata: Option<String>,
 }
 
+impl fmt::Display for Instance {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Instance [{}]", self.status)?;
+
+        let mut details = Vec::new();
+
+        if let Some(ref source) = self.source {
+            details.push(format!("source: {}", source));
+        }
+
+        if let Some(ref scheduled_start) = self.scheduled_start {
+            details.push(format!("starts: {}", scheduled_start));
+        }
+
+        if let Some(ref scheduled_end) = self.scheduled_end {
+            details.push(format!("ends: {}", scheduled_end));
+        }
+
+        if !details.is_empty() {
+            write!(f, " ({})", details.join(", "))?;
+        }
+
+        Ok(())
+    }
+}
+
 impl Instance {
     /// Create a new scheduled instance from an action id.
     pub fn new(action_id: impl Into<String>) -> Self {
@@ -54,6 +81,16 @@ impl Instance {
             latest_end: None,
             metadata: None,
         }
+    }
+
+    /// Get the created_at timestamp as a DateTime<Utc>.
+    /// Returns current time if None or parsing fails.
+    pub fn created_at_datetime(&self) -> DateTime<Utc> {
+        self.created_at
+            .as_ref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now)
     }
 }
 
