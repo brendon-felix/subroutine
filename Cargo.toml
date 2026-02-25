@@ -1,10 +1,8 @@
-[package]
-name = "subroutine"
-version = "0.1.0"
-edition = "2024"
-
 [workspace]
-members = ["crates/cli", "crates/database", "crates/ticks"]
+members = ["crates/app-core", "crates/cli", "crates/database", "crates/desktop"]
+
+[patch.crates-io]
+gpui = { git = "https://github.com/zed-industries/zed" }
 
 [workspace.dependencies]
 # Error handling
@@ -44,33 +42,8 @@ regex = "1.12.2"
 fuzzy-matcher = "0.3.7"
 open = "5.3.3"
 rand = "0.9"
+bitflags = "2.11.0"
 
 # Workspace crates
-ticks = { path = "crates/ticks" }
 database = { path = "crates/database" }
-
-[dependencies]
-anyhow = { workspace = true }
-futures = { workspace = true }
-gpui = { git = "https://github.com/zed-industries/zed" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component" }
-gpui_transitions = { path = "/Users/felixb/Projects/gpui_transitions" }
-open = { workspace = true }
-ticks = { workspace = true }
-database = { workspace = true }
-tokio = { workspace = true }
-tokio-util = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-axum = { workspace = true }
-dirs = { workspace = true }
-chrono = { workspace = true }
-unicode-segmentation = { workspace = true }
-schemars = { workspace = true }
-smol = { workspace = true }
-smallvec = { workspace = true }
-rust-embed = { workspace = true }
-tracing = { workspace = true }
-im = { workspace = true }
-regex = { workspace = true }
-fuzzy-matcher = { workspace = true }
+app-core = { path = "crates/app-core" }
