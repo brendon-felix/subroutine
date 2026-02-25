@@ -8,6 +8,7 @@ name = "subroutine-cli"
 path = "src/main.rs"
 
 [dependencies]
+app-core = { workspace = true }
 database = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }

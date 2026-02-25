@@ -1,46 +1,50 @@
-use anyhow::{Context, Result};
+use anyhow::{Result, bail};
+use app_core::SavedMentalState;
 use clap::Subcommand;
-use database::{
-    MentalState, MentalStateEvent, fetch_current_mental_state, fetch_mental_state_events,
-    fetch_mental_states, insert_mental_state, insert_mental_state_event,
-};
 use rusqlite::Connection;
-
-use crate::resolve::resolve_mental_state;
+use uuid::Uuid;
 
 #[derive(Debug, Subcommand)]
 pub enum MentalStatesCommand {
-    /// List all defined mental states
+    /// List all saved mental states
     List,
 
-    /// Create a new mental state definition
+    /// Show details for a saved mental state (by ID prefix or name prefix)
+    Show {
+        /// UUID prefix or name prefix
+        identifier: String,
+    },
+
+    /// Create a new saved mental state
     Create {
-        /// Name of the mental state (e.g. 'overwhelmed', 'focused', 'anxious')
+        /// Name for this mental state
         name: String,
 
-        /// Description of what this mental state means
-        #[arg(long)]
+        /// Optional description
+        #[arg(short, long)]
         description: Option<String>,
+
+        /// Attention mode: scattered (-2) to hyperfocused (+2)
+        #[arg(long, default_value = "0", allow_hyphen_values = true)]
+        attention: i8,
+
+        /// Sensory tolerance: understimulated (-2) to overstimulated (+2)
+        #[arg(long, default_value = "0", allow_hyphen_values = true)]
+        sensory: i8,
+
+        /// Emotional regulation: dysregulated (-2) to regulated (+2)
+        #[arg(long, default_value = "0", allow_hyphen_values = true)]
+        regulation: i8,
+
+        /// Social battery: drained (-2) to charged (+2)
+        #[arg(long, default_value = "0", allow_hyphen_values = true)]
+        social: i8,
     },
 
-    /// Record an occurrence of a mental state
-    Record {
-        /// Mental state name or ID
+    /// Delete a saved mental state (by ID prefix or name prefix)
+    Delete {
+        /// UUID prefix or name prefix
         identifier: String,
-
-        /// Intensity level (1-5, where 1 is mild and 5 is intense)
-        #[arg(long)]
-        intensity: Option<i64>,
-    },
-
-    /// Show the current (most recent) mental state
-    Current,
-
-    /// Show mental state history
-    History {
-        /// Number of events to show
-        #[arg(long, default_value = "10")]
-        limit: usize,
     },
 }
 
@@ -49,112 +53,175 @@ pub fn handle_mental_states_command(
     conn: &Connection,
 ) -> Result<()> {
     match command {
-        MentalStatesCommand::List => {
-            let states = fetch_mental_states(conn).context("Failed to fetch mental states")?;
+        MentalStatesCommand::List => list_mental_states(conn),
+        MentalStatesCommand::Show { identifier } => show_mental_state(conn, identifier),
+        MentalStatesCommand::Create {
+            name,
+            description,
+            attention,
+            sensory,
+            regulation,
+            social,
+        } => create_mental_state(
+            conn,
+            name,
+            description.as_deref(),
+            *attention,
+            *sensory,
+            *regulation,
+            *social,
+        ),
+        MentalStatesCommand::Delete { identifier } => delete_mental_state(conn, identifier),
+    }
+}
 
-            if states.is_empty() {
-                println!("No mental states defined.");
-                println!("Create one with: subroutine-cli mental-states create <name>");
-            } else {
-                println!("Mental states ({}):", states.len());
-                for state in states {
-                    println!("  {} (id: {})", state, state.id);
-                }
-            }
-        }
+fn list_mental_states(conn: &Connection) -> Result<()> {
+    let states = database::fetch_saved_mental_states(conn)?;
 
-        MentalStatesCommand::Create { name, description } => {
-            let mut state = MentalState::new(name);
-            state.description = description.clone();
+    if states.is_empty() {
+        println!("No saved mental states found.");
+        return Ok(());
+    }
 
-            let id = insert_mental_state(conn, &state).context("Failed to create mental state")?;
-
-            println!("✓ Mental state created (id: {})", id);
-            println!("  {}", state);
-        }
-
-        MentalStatesCommand::Record {
-            identifier,
-            intensity,
-        } => {
-            let state = resolve_mental_state(conn, identifier)?;
-
-            // Validate intensity if provided
-            if let Some(intensity_value) = intensity {
-                if *intensity_value < 1 || *intensity_value > 5 {
-                    anyhow::bail!("Intensity must be between 1 and 5");
-                }
-            }
-
-            let mut event = MentalStateEvent::new(&state.id);
-            event.intensity = *intensity;
-            event.recorded_at = Some(chrono::Utc::now().to_rfc3339());
-
-            let id = insert_mental_state_event(conn, &event)
-                .context("Failed to record mental state event")?;
-
-            println!("✓ Mental state recorded (event id: {})", id);
-            print!("  State: {}", state.name);
-            if let Some(intensity_value) = intensity {
-                println!(" (intensity: {}/5)", intensity_value);
-            } else {
-                println!();
-            }
-        }
-
-        MentalStatesCommand::Current => {
-            match fetch_current_mental_state(conn)
-                .context("Failed to fetch current mental state")?
-            {
-                Some(state) => {
-                    println!("Current mental state:");
-                    println!("  {}", state);
-                }
-                None => {
-                    println!("No mental state events recorded.");
-                    println!("Record one with: subroutine-cli mental-states record <name>");
-                }
-            }
-        }
-
-        MentalStatesCommand::History { limit } => {
-            let events = fetch_mental_state_events(conn, *limit)
-                .context("Failed to fetch mental state history")?;
-
-            if events.is_empty() {
-                println!("No mental state events found.");
-                println!("Record one with: subroutine-cli mental-states record <name>");
-            } else {
-                println!("Mental state history ({} event(s)):", events.len());
-
-                // Fetch all mental states to map IDs to names
-                let states = fetch_mental_states(conn)?;
-                let state_map: std::collections::HashMap<String, String> = states
-                    .iter()
-                    .map(|s| (s.id.clone(), s.name.clone()))
-                    .collect();
-
-                for event in events {
-                    let state_name = state_map
-                        .get(&event.mental_state_id)
-                        .map(|n| n.as_str())
-                        .unwrap_or("Unknown");
-
-                    print!("  {}", state_name);
-
-                    if let Some(intensity) = event.intensity {
-                        print!(" (intensity: {}/5)", intensity);
-                    }
-
-                    if let Some(ref recorded_at) = event.recorded_at {
-                        print!(" - {}", recorded_at);
-                    }
-
-                    println!();
-                }
-            }
-        }
+    println!("Saved mental states ({}):", states.len());
+    println!(
+        "  {:<8}  {:<16}  {:>4}  {:>4}  {:>4}  {:>4}  {}",
+        "ID", "Name", "Attn", "Sens", "Reg", "Soc", "Description"
+    );
+    println!("  {}", "-".repeat(72));
+    for state in &states {
+        let description = state.description.as_deref().unwrap_or("—");
+        println!(
+            "  {:<8}  {:<16}  {:>4}  {:>4}  {:>4}  {:>4}  {}",
+            &state.id.to_string()[..8],
+            state.name,
+            format!("{:+}", state.attention_mode),
+            format!("{:+}", state.sensory_tolerance),
+            format!("{:+}", state.emotional_regulation),
+            format!("{:+}", state.social_battery),
+            description,
+        );
     }
 
     Ok(())
+}
+
+fn show_mental_state(conn: &Connection, identifier: &str) -> Result<()> {
+    let state = resolve_mental_state(conn, identifier)?;
+
+    println!("Mental State Details:");
+    println!("  ID:          {}", state.id);
+    println!("  Name:        {}", state.name);
+    if let Some(ref desc) = state.description {
+        println!("  Description: {}", desc);
+    }
+    println!();
+    println!("  Axes:");
+    println!(
+        "    Attention mode:       {:>3}  (scattered -2 ↔ +2 hyperfocused)",
+        format!("{:+}", state.attention_mode)
+    );
+    println!(
+        "    Sensory tolerance:    {:>3}  (understimulated -2 ↔ +2 overstimulated)",
+        format!("{:+}", state.sensory_tolerance)
+    );
+    println!(
+        "    Emotional regulation: {:>3}  (dysregulated -2 ↔ +2 regulated)",
+        format!("{:+}", state.emotional_regulation)
+    );
+    println!(
+        "    Social battery:       {:>3}  (drained -2 ↔ +2 charged)",
+        format!("{:+}", state.social_battery)
+    );
+
+    Ok(())
+}
+
+fn create_mental_state(
+    conn: &Connection,
+    name: &str,
+    description: Option<&str>,
+    attention: i8,
+    sensory: i8,
+    regulation: i8,
+    social: i8,
+) -> Result<()> {
+    for (label, value) in [
+        ("attention", attention),
+        ("sensory", sensory),
+        ("regulation", regulation),
+        ("social", social),
+    ] {
+        if !(-2..=2).contains(&value) {
+            bail!("'{}' must be between -2 and +2, got {}", label, value);
+        }
+    }
+
+    let mut state = SavedMentalState::new(name).with_axes(attention, sensory, regulation, social);
+    if let Some(desc) = description {
+        state = state.with_description(desc);
+    }
+
+    let id = state.id;
+    database::insert_saved_mental_state(conn, &state)?;
+    println!("Created mental state '{}' ({})", name, &id.to_string()[..8]);
+    Ok(())
+}
+
+fn delete_mental_state(conn: &Connection, identifier: &str) -> Result<()> {
+    let state = resolve_mental_state(conn, identifier)?;
+    database::delete_saved_mental_state(conn, state.id)?;
+    println!(
+        "Deleted mental state '{}' ({})",
+        state.name,
+        &state.id.to_string()[..8]
+    );
+    Ok(())
+}
+
+/// Resolves a saved mental state by full UUID, UUID prefix, or name prefix.
+pub fn resolve_mental_state(conn: &Connection, identifier: &str) -> Result<SavedMentalState> {
+    if let Ok(uuid) = Uuid::parse_str(identifier) {
+        if let Some(state) = database::fetch_saved_mental_state_by_id(conn, uuid)? {
+            return Ok(state);
+        }
+        bail!("No mental state found with id '{}'", identifier);
+    }
+
+    let states = database::fetch_saved_mental_states(conn)?;
+
+    // Try UUID prefix match
+    let uuid_prefix_matches: Vec<&SavedMentalState> = states
+        .iter()
+        .filter(|s| s.id.to_string().starts_with(identifier))
+        .collect();
+
+    if uuid_prefix_matches.len() == 1 {
+        return Ok(uuid_prefix_matches[0].clone());
+    }
+    if uuid_prefix_matches.len() > 1 {
+        bail!(
+            "Multiple mental states match UUID prefix '{}'. Use a longer prefix.",
+            identifier
+        );
+    }
+
+    // Fall back to name prefix match (case-insensitive)
+    let name_matches: Vec<&SavedMentalState> = states
+        .iter()
+        .filter(|s| {
+            s.name
+                .to_lowercase()
+                .starts_with(&identifier.to_lowercase())
+        })
+        .collect();
+
+    match name_matches.len() {
+        0 => bail!("No mental state found matching '{}'", identifier),
+        1 => Ok(name_matches[0].clone()),
+        _ => bail!(
+            "Multiple mental states match name prefix '{}'. Use a more specific identifier.",
+            identifier
+        ),
+    }
 }

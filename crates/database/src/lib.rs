@@ -9,20 +9,20 @@ use rusqlite::Connection;
 use rusqlite_migration::{M, Migrations};
 
 mod action;
-mod context;
-mod events;
-mod instance;
+mod event;
 mod pipeline;
 mod routine;
-mod scoring;
+mod saved_action;
+mod saved_event;
+mod saved_mental_state;
 
 pub use action::*;
-pub use context::*;
-pub use events::*;
-pub use instance::*;
+pub use event::*;
 pub use pipeline::*;
 pub use routine::*;
-pub use scoring::*;
+pub use saved_action::*;
+pub use saved_event::*;
+pub use saved_mental_state::*;
 
 pub type DatabaseConnection = Arc<Mutex<Connection>>;
 
@@ -37,12 +37,9 @@ fn database_path() -> Result<PathBuf> {
 }
 
 pub fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![
-        M::up(include_str!("../migrations/20260128205548_init_schema.sql")),
-        M::up(include_str!(
-            "../migrations/20260216134152_add_event_type.sql"
-        )),
-    ])
+    Migrations::new(vec![M::up(include_str!(
+        "../migrations/20260225122443_init_schema.sql"
+    ))])
 }
 
 pub fn create_connection() -> Result<Connection> {
@@ -94,6 +91,7 @@ pub fn connect_and_migrate() -> Result<DatabaseConnection> {
         migrations()
             .to_latest(&mut connection)
             .context("Applying database migrations failed")?;
+        seed_starter_mental_states(&connection).context("Failed to seed starter mental states")?;
     }
 
     Ok(conn)

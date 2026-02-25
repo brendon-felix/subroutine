@@ -1,282 +1,275 @@
-use std::fmt;
-
 use anyhow::{Context, Result};
+use app_core::{Action, ActionContext, Constraints, TimesOfDay};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Something that can be performed (Tasks, Routines, Habits, etc.) by the user.
-///
-/// Actions are templates for Instances, which are specific occurrences of Actions.
+/// Flat database representation of an Action. All nested types from app-core are
+/// flattened into primitive columns that map directly to the actions table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Action {
-    /// Unique identifier for the action
+pub struct ActionModel {
     pub id: String,
-    /// Type of action: "task", "habit", etc
-    pub action_type: String,
-    /// Title of the action
     pub title: String,
-    /// Optional description of the action
-    pub description: Option<String>,
-    /// Number of minutes using fibonacci buckets (1,2,3,5,8,13,21,34,55,89,144)
-    pub duration_bucket: Option<i64>,
-    /// Energy rate required for the action (-5 to +5)
+    pub content: Option<String>,
+    pub created_at: String,
+    pub target_time: Option<String>,
+    pub ephemeral: bool,
+    pub saved_action_id: Option<String>,
+    pub routine_id: Option<String>,
+    pub subroutine_id: Option<String>,
+    // ActionContext
     pub energy_rate: Option<i64>,
-    /// Attention level required for the action (0 to 5)
     pub attention_level: Option<i64>,
-    /// Difficulty of transitioning into the action (0 to 5)
     pub transition_difficulty: Option<i64>,
-    /// Enjoyment after starting the action (-5 to +5)
-    pub enjoyment_after_start: Option<i64>,
-    /// General importance of the action (0 to 5)
     pub importance: Option<i64>,
-    /// Whether the urgency of the action grows over time
-    pub urgency_growth: Option<bool>,
-    /// ISO-8601 timestamp the row was created (stored as TEXT in SQLite)
-    pub created_at: Option<String>,
-    /// Preferred times of day expressed as free-form text (e.g. JSON array)
-    pub preferred_time_of_day: Option<String>,
-    /// Free-form JSON or string blob for feature metadata
-    pub metadata: Option<String>,
+    // Constraints
+    pub valid_times_of_day: Option<i64>,
+    pub earliest_start: Option<String>,
+    pub deadline: Option<String>,
+    pub minimum_duration_secs: Option<i64>,
+    pub transition_time_secs: Option<i64>,
+    pub spoons_required: Option<i64>,
+    pub dependencies: Option<String>,
 }
 
-impl Default for Action {
-    fn default() -> Self {
+impl From<&Action> for ActionModel {
+    fn from(action: &Action) -> Self {
+        let dependencies = if action.constraints.dependencies.is_empty() {
+            None
+        } else {
+            let ids: Vec<String> = action
+                .constraints
+                .dependencies
+                .iter()
+                .map(|id| id.to_string())
+                .collect();
+            serde_json::to_string(&ids).ok()
+        };
+
         Self {
-            id: Uuid::new_v4().to_string(),
-            action_type: "task".to_string(),
-            title: String::new(),
-            description: None,
-            duration_bucket: None,
-            energy_rate: None,
-            attention_level: None,
-            transition_difficulty: None,
-            enjoyment_after_start: None,
-            importance: None,
-            urgency_growth: None,
-            created_at: None,
-            preferred_time_of_day: None,
-            metadata: None,
+            id: action.id.to_string(),
+            title: action.title.clone(),
+            content: action.content.clone(),
+            created_at: action.created_at.to_rfc3339(),
+            target_time: action.target_time.map(|t| t.to_rfc3339()),
+            ephemeral: action.ephemeral,
+            saved_action_id: action.saved_action_id.map(|id| id.to_string()),
+            routine_id: action.routine_id.map(|id| id.to_string()),
+            subroutine_id: action.subroutine_id.map(|id| id.to_string()),
+            energy_rate: action.context.energy_rate.map(|v| v as i64),
+            attention_level: action.context.attention_level.map(|v| v as i64),
+            transition_difficulty: action.context.transition_difficulty.map(|v| v as i64),
+            importance: action.context.importance.map(|v| v as i64),
+            valid_times_of_day: action
+                .constraints
+                .valid_times_of_day
+                .map(|t| t.bits() as i64),
+            earliest_start: action.constraints.earliest_start.map(|t| t.to_rfc3339()),
+            deadline: action.constraints.deadline.map(|t| t.to_rfc3339()),
+            minimum_duration_secs: action.constraints.minimum_duration.map(|d| d.num_seconds()),
+            transition_time_secs: action.constraints.transition_time.map(|d| d.num_seconds()),
+            spoons_required: action.constraints.spoons_required.map(|v| v as i64),
+            dependencies,
         }
     }
 }
 
-impl fmt::Display for Action {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.title)?;
+impl TryFrom<ActionModel> for Action {
+    type Error = anyhow::Error;
 
-        if let Some(ref description) = self.description {
-            write!(f, " - {}", description)?;
-        }
+    fn try_from(model: ActionModel) -> Result<Self> {
+        let id = Uuid::parse_str(&model.id)
+            .with_context(|| format!("Invalid action id '{}'", model.id))?;
 
-        let mut details = Vec::new();
+        let saved_action_id = model
+            .saved_action_id
+            .as_deref()
+            .map(|s| Uuid::parse_str(s).with_context(|| format!("Invalid saved_action_id '{}'", s)))
+            .transpose()?;
 
-        if let Some(duration) = self.duration_bucket {
-            details.push(format!("{}min", duration));
-        }
+        let routine_id = model
+            .routine_id
+            .as_deref()
+            .map(|s| Uuid::parse_str(s).with_context(|| format!("Invalid routine_id '{}'", s)))
+            .transpose()?;
 
-        if let Some(energy) = self.energy_rate {
-            details.push(format!("energy: {}", energy));
-        }
+        let subroutine_id = model
+            .subroutine_id
+            .as_deref()
+            .map(|s| Uuid::parse_str(s).with_context(|| format!("Invalid subroutine_id '{}'", s)))
+            .transpose()?;
 
-        if let Some(attention) = self.attention_level {
-            details.push(format!("attention: {}", attention));
-        }
+        let created_at = DateTime::parse_from_rfc3339(&model.created_at)
+            .with_context(|| format!("Invalid created_at '{}'", model.created_at))?
+            .with_timezone(&Utc);
 
-        if let Some(importance) = self.importance {
-            details.push(format!("importance: {}", importance));
-        }
+        let target_time = model
+            .target_time
+            .as_deref()
+            .map(|s| {
+                DateTime::parse_from_rfc3339(s)
+                    .with_context(|| format!("Invalid target_time '{}'", s))
+                    .map(|dt| dt.with_timezone(&Utc))
+            })
+            .transpose()?;
 
-        if !details.is_empty() {
-            write!(f, " ({})", details.join(", "))?;
-        }
+        let earliest_start = model
+            .earliest_start
+            .as_deref()
+            .map(|s| {
+                DateTime::parse_from_rfc3339(s)
+                    .with_context(|| format!("Invalid earliest_start '{}'", s))
+                    .map(|dt| dt.with_timezone(&Utc))
+            })
+            .transpose()?;
 
-        Ok(())
+        let deadline = model
+            .deadline
+            .as_deref()
+            .map(|s| {
+                DateTime::parse_from_rfc3339(s)
+                    .with_context(|| format!("Invalid deadline '{}'", s))
+                    .map(|dt| dt.with_timezone(&Utc))
+            })
+            .transpose()?;
+
+        let valid_times_of_day = model
+            .valid_times_of_day
+            .map(|bits| {
+                TimesOfDay::from_bits(bits as u8)
+                    .with_context(|| format!("Invalid valid_times_of_day bits '{}'", bits))
+            })
+            .transpose()?;
+
+        let dependencies = model
+            .dependencies
+            .as_deref()
+            .map(|s| {
+                serde_json::from_str::<Vec<String>>(s)
+                    .context("Invalid dependencies JSON")?
+                    .into_iter()
+                    .map(|id| {
+                        Uuid::parse_str(&id)
+                            .with_context(|| format!("Invalid dependency UUID '{}'", id))
+                    })
+                    .collect::<Result<Vec<Uuid>>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        Ok(Action {
+            id,
+            title: model.title,
+            content: model.content,
+            created_at,
+            target_time,
+            ephemeral: model.ephemeral,
+            saved_action_id,
+            routine_id,
+            subroutine_id,
+            context: ActionContext {
+                energy_rate: model.energy_rate.map(|v| v as i8),
+                attention_level: model.attention_level.map(|v| v as u8),
+                transition_difficulty: model.transition_difficulty.map(|v| v as u8),
+                importance: model.importance.map(|v| v as u8),
+            },
+            constraints: Constraints {
+                valid_times_of_day,
+                earliest_start,
+                deadline,
+                minimum_duration: model.minimum_duration_secs.map(chrono::Duration::seconds),
+                transition_time: model.transition_time_secs.map(chrono::Duration::seconds),
+                spoons_required: model.spoons_required.map(|v| v as u32),
+                dependencies,
+            },
+        })
     }
 }
 
-impl Action {
-    /// Create a generic action with explicit type and title.
-    pub fn new(action_type: impl Into<String>, title: impl Into<String>) -> Self {
-        Self {
-            id: Uuid::new_v4().to_string(),
-            action_type: action_type.into(),
-            title: title.into(),
-            description: None,
-            duration_bucket: None,
-            energy_rate: None,
-            attention_level: None,
-            transition_difficulty: None,
-            enjoyment_after_start: None,
-            importance: None,
-            urgency_growth: None,
-            created_at: None,
-            preferred_time_of_day: None,
-            metadata: None,
-        }
-    }
-
-    /// Create a new task-style action with a generated id and defaults.
-    pub fn new_task(title: impl Into<String>) -> Self {
-        Self::new("task", title)
-    }
-
-    pub fn description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
-    }
-
-    pub fn duration_bucket(mut self, duration_bucket: i64) -> Self {
-        self.duration_bucket = Some(duration_bucket);
-        self
-    }
-
-    pub fn energy_rate(mut self, energy_rate: i64) -> Self {
-        self.energy_rate = Some(energy_rate);
-        self
-    }
-
-    pub fn attention_level(mut self, attention_level: i64) -> Self {
-        self.attention_level = Some(attention_level);
-        self
-    }
-
-    pub fn transition_difficulty(mut self, transition_difficulty: i64) -> Self {
-        self.transition_difficulty = Some(transition_difficulty);
-        self
-    }
-
-    pub fn enjoyment_after_start(mut self, enjoyment_after_start: i64) -> Self {
-        self.enjoyment_after_start = Some(enjoyment_after_start);
-        self
-    }
-
-    pub fn urgency_growth(mut self, urgency_growth: bool) -> Self {
-        self.urgency_growth = Some(urgency_growth);
-        self
-    }
-
-    pub fn importance(mut self, importance: i64) -> Self {
-        self.importance = Some(importance);
-        self
-    }
-
-    /// Parse the preferred_time_of_day JSON string into a Vec<String>.
-    /// Returns empty vec if None or parsing fails.
-    pub fn preferred_time_of_day_vec(&self) -> Vec<String> {
-        self.preferred_time_of_day
-            .as_ref()
-            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
-            .unwrap_or_default()
-    }
-
-    /// Get the created_at timestamp as a DateTime<Utc>.
-    /// Returns current time if None or parsing fails.
-    pub fn created_at_datetime(&self) -> DateTime<Utc> {
-        self.created_at
-            .as_ref()
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(Utc::now)
-    }
-}
-
-/// Additional requirements associated with an action.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActionRequirement {
-    pub id: String,
-    pub action_id: String,
-    pub requirement_type: String,
-    pub value: String,
-    pub accessibility_score: Option<i64>,
-    pub created_at: Option<String>,
-}
-
-impl fmt::Display for ActionRequirement {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.requirement_type, self.value)?;
-
-        if let Some(score) = self.accessibility_score {
-            write!(f, " (accessibility: {})", score)?;
-        }
-
-        Ok(())
-    }
-}
-
-impl ActionRequirement {
-    pub fn new(
-        action_id: impl Into<String>,
-        requirement_type: impl Into<String>,
-        value: impl Into<String>,
-    ) -> Self {
-        Self {
-            id: Uuid::new_v4().to_string(),
-            action_id: action_id.into(),
-            requirement_type: requirement_type.into(),
-            value: value.into(),
-            accessibility_score: None,
-            created_at: None,
-        }
-    }
+fn row_to_model(row: &rusqlite::Row) -> rusqlite::Result<ActionModel> {
+    Ok(ActionModel {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        content: row.get(2)?,
+        created_at: row.get(3)?,
+        target_time: row.get(4)?,
+        ephemeral: row.get::<_, i64>(5)? != 0,
+        saved_action_id: row.get(6)?,
+        routine_id: row.get(7)?,
+        subroutine_id: row.get(8)?,
+        energy_rate: row.get(9)?,
+        attention_level: row.get(10)?,
+        transition_difficulty: row.get(11)?,
+        importance: row.get(12)?,
+        valid_times_of_day: row.get(13)?,
+        earliest_start: row.get(14)?,
+        deadline: row.get(15)?,
+        minimum_duration_secs: row.get(16)?,
+        transition_time_secs: row.get(17)?,
+        spoons_required: row.get(18)?,
+        dependencies: row.get(19)?,
+    })
 }
 
 pub fn insert_action(conn: &Connection, action: &Action) -> Result<()> {
-    let urgency_growth = action.urgency_growth.map(|value| if value { 1 } else { 0 });
-
+    let model = ActionModel::from(action);
     conn.execute(
         r#"
             INSERT INTO actions (
-                id,
-                action_type,
-                title,
-                description,
-                duration_bucket,
-                energy_rate,
-                attention_level,
-                transition_difficulty,
-                enjoyment_after_start,
-                importance,
-                urgency_growth,
-                preferred_time_of_day,
-                metadata,
-                created_at
+                id, title, content, created_at, target_time, ephemeral,
+                saved_action_id, routine_id, subroutine_id,
+                energy_rate, attention_level, transition_difficulty, importance,
+                valid_times_of_day, earliest_start, deadline,
+                minimum_duration_secs, transition_time_secs, spoons_required,
+                dependencies
             )
             VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                COALESCE(?14, datetime('now'))
+                ?14, ?15, ?16, ?17, ?18, ?19, ?20
             )
             ON CONFLICT(id) DO UPDATE SET
-                action_type = excluded.action_type,
                 title = excluded.title,
-                description = excluded.description,
-                duration_bucket = excluded.duration_bucket,
+                content = excluded.content,
+                target_time = excluded.target_time,
+                ephemeral = excluded.ephemeral,
+                saved_action_id = excluded.saved_action_id,
+                routine_id = excluded.routine_id,
+                subroutine_id = excluded.subroutine_id,
                 energy_rate = excluded.energy_rate,
                 attention_level = excluded.attention_level,
                 transition_difficulty = excluded.transition_difficulty,
-                enjoyment_after_start = excluded.enjoyment_after_start,
                 importance = excluded.importance,
-                urgency_growth = excluded.urgency_growth,
-                preferred_time_of_day = excluded.preferred_time_of_day,
-                metadata = excluded.metadata
+                valid_times_of_day = excluded.valid_times_of_day,
+                earliest_start = excluded.earliest_start,
+                deadline = excluded.deadline,
+                minimum_duration_secs = excluded.minimum_duration_secs,
+                transition_time_secs = excluded.transition_time_secs,
+                spoons_required = excluded.spoons_required,
+                dependencies = excluded.dependencies
         "#,
-        (
-            &action.id,
-            &action.action_type,
-            &action.title,
-            &action.description,
-            action.duration_bucket,
-            action.energy_rate,
-            action.attention_level,
-            action.transition_difficulty,
-            action.enjoyment_after_start,
-            action.importance,
-            urgency_growth,
-            &action.preferred_time_of_day,
-            &action.metadata,
-            &action.created_at,
-        ),
+        rusqlite::params![
+            model.id,
+            model.title,
+            model.content,
+            model.created_at,
+            model.target_time,
+            model.ephemeral as i64,
+            model.saved_action_id,
+            model.routine_id,
+            model.subroutine_id,
+            model.energy_rate,
+            model.attention_level,
+            model.transition_difficulty,
+            model.importance,
+            model.valid_times_of_day,
+            model.earliest_start,
+            model.deadline,
+            model.minimum_duration_secs,
+            model.transition_time_secs,
+            model.spoons_required,
+            model.dependencies,
+        ],
     )
     .context("Failed to insert or update action")?;
     Ok(())
@@ -287,113 +280,58 @@ pub fn fetch_actions(conn: &Connection) -> Result<Vec<Action>> {
         .prepare(
             r#"
             SELECT
-                id,
-                action_type,
-                title,
-                description,
-                duration_bucket,
-                energy_rate,
-                attention_level,
-                transition_difficulty,
-                enjoyment_after_start,
-                importance,
-                urgency_growth,
-                created_at,
-                preferred_time_of_day,
-                metadata
+                id, title, content, created_at, target_time, ephemeral,
+                saved_action_id, routine_id, subroutine_id,
+                energy_rate, attention_level, transition_difficulty, importance,
+                valid_times_of_day, earliest_start, deadline,
+                minimum_duration_secs, transition_time_secs, spoons_required,
+                dependencies
             FROM actions
             ORDER BY created_at DESC
-        "#,
+            "#,
         )
         .context("Failed to prepare action fetch query")?;
 
     let actions = stmt
-        .query_map([], |row| {
-            let urgency_growth: Option<i64> = row.get(10)?;
-            Ok(Action {
-                id: row.get(0)?,
-                action_type: row.get(1)?,
-                title: row.get(2)?,
-                description: row.get(3)?,
-                duration_bucket: row.get(4)?,
-                energy_rate: row.get(5)?,
-                attention_level: row.get(6)?,
-                transition_difficulty: row.get(7)?,
-                enjoyment_after_start: row.get(8)?,
-                importance: row.get(9)?,
-                urgency_growth: urgency_growth.map(|v| v != 0),
-                created_at: row.get(11)?,
-                preferred_time_of_day: row.get(12)?,
-                metadata: row.get(13)?,
-            })
-        })
+        .query_map([], |row| row_to_model(row))
         .context("Failed to query actions")?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .context("Failed to map action rows")?;
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("Failed to map action rows")?
+        .into_iter()
+        .map(Action::try_from)
+        .collect::<Result<Vec<_>>>()
+        .context("Failed to convert action models")?;
 
     Ok(actions)
 }
 
-/// Fetch a single action by its ID.
-pub fn fetch_action_by_id(conn: &Connection, action_id: &str) -> Result<Option<Action>> {
+pub fn fetch_action_by_id(conn: &Connection, id: Uuid) -> Result<Option<Action>> {
     let mut stmt = conn
         .prepare(
             r#"
             SELECT
-                id,
-                action_type,
-                title,
-                description,
-                duration_bucket,
-                energy_rate,
-                attention_level,
-                transition_difficulty,
-                enjoyment_after_start,
-                importance,
-                urgency_growth,
-                created_at,
-                preferred_time_of_day,
-                metadata
+                id, title, content, created_at, target_time, ephemeral,
+                saved_action_id, routine_id, subroutine_id,
+                energy_rate, attention_level, transition_difficulty, importance,
+                valid_times_of_day, earliest_start, deadline,
+                minimum_duration_secs, transition_time_secs, spoons_required,
+                dependencies
             FROM actions
             WHERE id = ?1
-        "#,
+            "#,
         )
         .context("Failed to prepare action fetch by id query")?;
 
-    let action = stmt
-        .query_row([action_id], |row| {
-            let urgency_growth: Option<i64> = row.get(10)?;
-            Ok(Action {
-                id: row.get(0)?,
-                action_type: row.get(1)?,
-                title: row.get(2)?,
-                description: row.get(3)?,
-                duration_bucket: row.get(4)?,
-                energy_rate: row.get(5)?,
-                attention_level: row.get(6)?,
-                transition_difficulty: row.get(7)?,
-                enjoyment_after_start: row.get(8)?,
-                importance: row.get(9)?,
-                urgency_growth: urgency_growth.map(|v| v != 0),
-                created_at: row.get(11)?,
-                preferred_time_of_day: row.get(12)?,
-                metadata: row.get(13)?,
-            })
-        })
+    let model = stmt
+        .query_row([id.to_string()], |row| row_to_model(row))
         .optional()
         .context("Failed to fetch action by id")?;
 
-    Ok(action)
+    model.map(Action::try_from).transpose()
 }
 
-pub fn delete_action(conn: &Connection, action_id: &str) -> Result<()> {
-    conn.execute(
-        r#"
-            DELETE FROM actions
-            WHERE id = ?1
-        "#,
-        [action_id],
-    )
-    .with_context(|| format!("Failed to delete action '{}'", action_id))?;
+pub fn delete_action(conn: &Connection, id: Uuid) -> Result<()> {
+    conn.execute("DELETE FROM actions WHERE id = ?1", [id.to_string()])
+        .with_context(|| format!("Failed to delete action '{}'", id))?;
     Ok(())
 }

@@ -1,456 +1,257 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
+use app_core::{Routine, SavedStep};
 use clap::Subcommand;
-use database::{
-    InstantiateRoutineOptions, Routine, RoutineStep, count_routine_steps, delete_routine,
-    delete_routine_step_by_order, fetch_routine_steps, fetch_routines, insert_routine,
-    insert_routine_step, instantiate_routine, next_routine_step_order, shift_routine_steps,
-};
+use rusqlite::Connection;
+use uuid::Uuid;
 
-use crate::resolve::{Resolvable, resolve_action};
+use crate::saved_actions::resolve_saved_action;
 
-#[derive(Debug, Clone, Subcommand)]
+#[derive(Debug, Subcommand)]
 pub enum RoutinesCommand {
     /// List all routines
     List,
 
+    /// Show details for a routine (by ID prefix or title prefix)
+    Show {
+        /// UUID prefix or title prefix
+        identifier: String,
+    },
+
     /// Create a new routine
     Create {
-        /// Name of the routine
-        name: String,
+        /// Title of the routine
+        title: String,
 
         /// Optional description
-        #[arg(long, short)]
-        description: Option<String>,
-
-        /// Create a non-sequential (parallel) routine (default is sequential)
-        #[arg(long)]
-        parallel: bool,
-
-        /// Allow randomization of steps
-        #[arg(long)]
-        randomize: bool,
-
-        /// Default start time (HH:MM format)
-        #[arg(long)]
-        start_time: Option<String>,
-
-        /// Default end time (HH:MM format)
-        #[arg(long)]
-        end_time: Option<String>,
+        #[arg(short, long)]
+        content: Option<String>,
     },
 
-    /// Show routine details including its steps
-    Show {
-        /// Routine identifier (ID, prefix, or name)
-        identifier: String,
-    },
-
-    /// Delete a routine and its steps
+    /// Delete a routine (by ID prefix or title prefix)
     Delete {
-        /// Routine identifier (ID, prefix, or name)
+        /// UUID prefix or title prefix
         identifier: String,
     },
 
-    /// Add an action as a step in a routine
+    /// Add a saved action as a step to a routine
     AddStep {
-        /// Routine identifier (ID, prefix, or name)
+        /// Routine UUID prefix or title prefix
         routine: String,
 
-        /// Action identifier (ID, prefix, or title)
+        /// Saved action UUID prefix or title prefix
         action: String,
-
-        /// Position to insert at (shifts existing steps)
-        #[arg(long, short)]
-        position: Option<i64>,
-
-        /// Minimum duration in minutes (Fibonacci bucket)
-        #[arg(long)]
-        min_duration: Option<i64>,
-
-        /// Maximum duration in minutes (Fibonacci bucket)
-        #[arg(long)]
-        max_duration: Option<i64>,
     },
 
-    /// Remove a step from a routine by its order number
+    /// Remove a saved action step from a routine
     RemoveStep {
-        /// Routine identifier (ID, prefix, or name)
+        /// Routine UUID prefix or title prefix
         routine: String,
 
-        /// Step order number to remove
-        step_order: i64,
-    },
-
-    /// Start a routine by creating instances for all steps and adding them to the pipeline
-    Start {
-        /// Routine identifier (ID, prefix, or name)
-        identifier: String,
-
-        /// Randomize step order (overrides routine setting)
-        #[arg(long, short)]
-        randomize: bool,
-
-        /// Use sequential order even if routine allows randomization
-        #[arg(long, short)]
-        sequential: bool,
-
-        /// Starting position in the pipeline (defaults to end)
-        #[arg(long, short)]
-        position: Option<i64>,
+        /// Saved action UUID prefix or title prefix
+        action: String,
     },
 }
 
-// Implement Resolvable for Routine
-impl Resolvable for Routine {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn fetch_all(conn: &rusqlite::Connection) -> Result<Vec<Self>> {
-        fetch_routines(conn)
+pub fn handle_routines_command(command: &RoutinesCommand, conn: &Connection) -> Result<()> {
+    match command {
+        RoutinesCommand::List => list_routines(conn),
+        RoutinesCommand::Show { identifier } => show_routine(conn, identifier),
+        RoutinesCommand::Create { title, content } => {
+            create_routine(conn, title, content.as_deref())
+        }
+        RoutinesCommand::Delete { identifier } => delete_routine(conn, identifier),
+        RoutinesCommand::AddStep { routine, action } => add_step(conn, routine, action),
+        RoutinesCommand::RemoveStep { routine, action } => remove_step(conn, routine, action),
     }
 }
 
-/// Convenience function for resolving routines
-pub fn resolve_routine(conn: &rusqlite::Connection, identifier: &str) -> Result<Routine> {
-    Routine::resolve(conn, identifier)
+fn list_routines(conn: &Connection) -> Result<()> {
+    let routines = database::fetch_routines(conn)?;
+
+    if routines.is_empty() {
+        println!("No routines found.");
+        return Ok(());
+    }
+
+    println!("Routines ({}):", routines.len());
+    for routine in &routines {
+        let step_count = routine.steps.len();
+        let steps_label = if step_count == 1 { "step" } else { "steps" };
+        println!(
+            "  {} {} ({} {})",
+            &routine.id.to_string()[..8],
+            routine.title,
+            step_count,
+            steps_label
+        );
+    }
+
+    Ok(())
 }
 
-pub fn handle_routines_command(cmd: &RoutinesCommand, conn: &rusqlite::Connection) -> Result<()> {
-    match cmd {
-        RoutinesCommand::Start {
-            identifier,
-            randomize,
-            sequential,
-            position,
-        } => {
-            let routine = resolve_routine(conn, identifier)?;
+fn show_routine(conn: &Connection, identifier: &str) -> Result<()> {
+    let routine = resolve_routine(conn, identifier)?;
 
-            let randomize_option = if *randomize {
-                Some(true)
-            } else if *sequential {
-                Some(false)
-            } else {
-                None
-            };
+    println!("Routine Details:");
+    println!("  ID:      {}", routine.id);
+    println!("  Title:   {}", routine.title);
+    println!(
+        "  Created: {}",
+        routine.created_at.format("%Y-%m-%d %H:%M UTC")
+    );
 
-            let options = InstantiateRoutineOptions {
-                randomize: randomize_option,
-                start_position: *position,
-                pipeline_id: None,
-            };
+    if let Some(ref content) = routine.content {
+        println!("  Content: {}", content);
+    }
 
-            let result = instantiate_routine(conn, &routine, options)?;
+    println!();
 
-            if result.created_items.is_empty() {
-                println!(
-                    "\n⚠️  Routine '{}' has no steps to instantiate.",
-                    routine.name
-                );
-                println!(
-                    "Add steps with: subroutine-cli routines add-step \"{}\" <ACTION>",
-                    routine.name
-                );
-                return Ok(());
-            }
-
-            println!("\n🚀 Started routine: {}", routine.name);
-            if result.was_randomized {
-                println!("   (Step order was randomized)");
-            }
-            println!(
-                "\n📋 Added {} items to pipeline:",
-                result.created_items.len()
-            );
-
-            for (i, (instance, pipeline_item, action_title)) in
-                result.created_items.iter().enumerate()
-            {
-                let pos = pipeline_item.position.unwrap_or((i + 1) as i64);
-                let instance_prefix = &instance.id[..8.min(instance.id.len())];
-                println!("   {}. [{}] {}", pos, instance_prefix, action_title);
-            }
-
-            println!("\nView pipeline with: subroutine-cli pipeline list");
-            println!();
-            Ok(())
-        }
-
-        RoutinesCommand::List => {
-            let routines = fetch_routines(conn)?;
-
-            if routines.is_empty() {
-                println!("\nNo routines found.");
-                println!("Create one with: subroutine-cli routines create <NAME>");
-                return Ok(());
-            }
-
-            println!("\n📋 Routines ({}):", routines.len());
-            println!("{}", "─".repeat(60));
-
-            for routine in routines {
-                let step_count = count_routine_steps(conn, &routine.id)?;
-                let mode = if routine.is_sequential {
-                    "sequential"
-                } else {
-                    "parallel"
-                };
-                let randomize = if routine.allow_randomization {
-                    ", randomizable"
-                } else {
-                    ""
-                };
-
-                println!("\n📁 {}", routine.name);
-                println!("   ID: {}", &routine.id[..8]);
-                println!("   Steps: {} | Mode: {}{}", step_count, mode, randomize);
-
-                if let Some(ref desc) = routine.description {
-                    println!("   Description: {}", desc);
-                }
-
-                if let Some(ref start) = routine.default_start_time {
-                    print!("   Schedule: {}", start);
-                    if let Some(ref end) = routine.default_end_time {
-                        print!(" - {}", end);
-                    }
-                    println!();
+    if routine.steps.is_empty() {
+        println!("  Steps: (none)");
+    } else {
+        println!("  Steps ({}):", routine.steps.len());
+        for (index, step) in routine.steps.iter().enumerate() {
+            match step {
+                SavedStep::Action(id) => match database::fetch_saved_action_by_id(conn, *id)? {
+                    Some(saved) => println!(
+                        "    {}. [action] {} ({})",
+                        index + 1,
+                        saved.title,
+                        &id.to_string()[..8]
+                    ),
+                    None => println!(
+                        "    {}. [action] <missing saved action: {}>",
+                        index + 1,
+                        &id.to_string()[..8]
+                    ),
+                },
+                SavedStep::Event(id) => {
+                    println!("    {}. [event] <{}>", index + 1, &id.to_string()[..8]);
                 }
             }
-
-            println!();
-            Ok(())
         }
+    }
 
-        RoutinesCommand::Create {
-            name,
-            description,
-            parallel,
-            randomize,
-            start_time,
-            end_time,
-        } => {
-            let mut routine = Routine::new(name).is_sequential(!parallel);
+    Ok(())
+}
 
-            if *randomize {
-                routine = routine.allow_randomization(true);
-            }
+fn create_routine(conn: &Connection, title: &str, content: Option<&str>) -> Result<()> {
+    let mut routine = Routine::new(title);
 
-            if let Some(desc) = description {
-                routine = routine.description(desc);
-            }
+    if let Some(c) = content {
+        routine = routine.with_content(c);
+    }
 
-            if let Some(start) = start_time {
-                routine = routine.default_start_time(start);
-            }
+    let id = routine.id;
+    database::insert_routine(conn, &routine)?;
+    println!("Created routine '{}' ({})", title, &id.to_string()[..8]);
+    Ok(())
+}
 
-            if let Some(end) = end_time {
-                routine = routine.default_end_time(end);
-            }
+fn delete_routine(conn: &Connection, identifier: &str) -> Result<()> {
+    let routine = resolve_routine(conn, identifier)?;
+    database::delete_routine(conn, routine.id)?;
+    println!(
+        "Deleted routine '{}' ({})",
+        routine.title,
+        &routine.id.to_string()[..8]
+    );
+    Ok(())
+}
 
-            insert_routine(conn, &routine)?;
+fn add_step(conn: &Connection, routine_identifier: &str, action_identifier: &str) -> Result<()> {
+    let mut routine = resolve_routine(conn, routine_identifier)?;
+    let saved = resolve_saved_action(conn, action_identifier)?;
+    let step = SavedStep::Action(saved.id);
 
-            println!("\n✅ Routine created:");
-            println!("   Name: {}", routine.name);
-            println!("   ID: {}", routine.id);
-            println!(
-                "   Mode: {}",
-                if routine.is_sequential {
-                    "sequential"
-                } else {
-                    "parallel"
-                }
-            );
+    if routine.steps.contains(&step) {
+        bail!(
+            "'{}' is already a step in routine '{}'.",
+            saved.title,
+            routine.title
+        );
+    }
 
-            if routine.allow_randomization {
-                println!("   Randomization: enabled");
-            }
+    routine.steps.push(step);
+    database::insert_routine(conn, &routine)?;
 
-            if let Some(ref desc) = routine.description {
-                println!("   Description: {}", desc);
-            }
+    println!(
+        "Added '{}' as step {} in routine '{}'.",
+        saved.title,
+        routine.steps.len(),
+        routine.title
+    );
+    Ok(())
+}
 
-            println!(
-                "\nAdd steps with: subroutine-cli routines add-step \"{}\" <ACTION>",
-                name
-            );
-            println!();
-            Ok(())
+fn remove_step(conn: &Connection, routine_identifier: &str, action_identifier: &str) -> Result<()> {
+    let mut routine = resolve_routine(conn, routine_identifier)?;
+    let saved = resolve_saved_action(conn, action_identifier)?;
+    let step = SavedStep::Action(saved.id);
+
+    let original_len = routine.steps.len();
+    routine.steps.retain(|s| s != &step);
+
+    if routine.steps.len() == original_len {
+        bail!(
+            "'{}' is not a step in routine '{}'.",
+            saved.title,
+            routine.title
+        );
+    }
+
+    database::insert_routine(conn, &routine)?;
+
+    println!(
+        "Removed '{}' from routine '{}'.",
+        saved.title, routine.title
+    );
+    Ok(())
+}
+
+/// Resolves a routine by full UUID, UUID prefix, or title prefix.
+pub fn resolve_routine(conn: &Connection, identifier: &str) -> Result<Routine> {
+    if let Ok(uuid) = Uuid::parse_str(identifier) {
+        if let Some(routine) = database::fetch_routine_by_id(conn, uuid)? {
+            return Ok(routine);
         }
+        bail!("No routine found with id '{}'", identifier);
+    }
 
-        RoutinesCommand::Show { identifier } => {
-            let routine = resolve_routine(conn, identifier)?;
-            let steps = fetch_routine_steps(conn, &routine.id)?;
+    let routines = database::fetch_routines(conn)?;
 
-            println!("\n📁 {}", routine.name);
-            println!("{}", "─".repeat(60));
-            println!("ID: {}", routine.id);
+    // Try UUID prefix match first
+    let uuid_prefix_matches: Vec<&Routine> = routines
+        .iter()
+        .filter(|r| r.id.to_string().starts_with(identifier))
+        .collect();
 
-            if let Some(ref desc) = routine.description {
-                println!("Description: {}", desc);
-            }
+    if uuid_prefix_matches.len() == 1 {
+        return Ok(uuid_prefix_matches[0].clone());
+    }
+    if uuid_prefix_matches.len() > 1 {
+        bail!(
+            "Multiple routines match UUID prefix '{}'. Use a longer prefix.",
+            identifier
+        );
+    }
 
-            let mode = if routine.is_sequential {
-                "sequential"
-            } else {
-                "parallel"
-            };
-            println!(
-                "Mode: {}{}",
-                mode,
-                if routine.allow_randomization {
-                    " (randomizable)"
-                } else {
-                    ""
-                }
-            );
+    // Fall back to title prefix match (case-insensitive)
+    let title_matches: Vec<&Routine> = routines
+        .iter()
+        .filter(|r| {
+            r.title
+                .to_lowercase()
+                .starts_with(&identifier.to_lowercase())
+        })
+        .collect();
 
-            if let Some(ref start) = routine.default_start_time {
-                print!("Schedule: {}", start);
-                if let Some(ref end) = routine.default_end_time {
-                    print!(" - {}", end);
-                }
-                println!();
-            }
-
-            if steps.is_empty() {
-                println!("\nNo steps yet.");
-                println!(
-                    "Add steps with: subroutine-cli routines add-step \"{}\" <ACTION>",
-                    routine.name
-                );
-            } else {
-                println!("\n📝 Steps ({}):", steps.len());
-                println!("{}", "─".repeat(40));
-
-                for step in &steps {
-                    let title = step.action_title.as_deref().unwrap_or("(unknown action)");
-                    print!("  {}. {}", step.step_order, title);
-
-                    let mut details = Vec::new();
-                    if let Some(min) = step.min_duration_bucket {
-                        if let Some(max) = step.max_duration_bucket {
-                            details.push(format!("{}-{}min", min, max));
-                        } else {
-                            details.push(format!("≥{}min", min));
-                        }
-                    } else if let Some(max) = step.max_duration_bucket {
-                        details.push(format!("≤{}min", max));
-                    }
-
-                    if !details.is_empty() {
-                        print!(" ({})", details.join(", "));
-                    }
-
-                    println!();
-                }
-            }
-
-            println!();
-            Ok(())
-        }
-
-        RoutinesCommand::Delete { identifier } => {
-            let routine = resolve_routine(conn, identifier)?;
-            let step_count = count_routine_steps(conn, &routine.id)?;
-
-            delete_routine(conn, &routine.id)?;
-
-            println!("\n🗑️  Deleted routine: {}", routine.name);
-            if step_count > 0 {
-                println!("   ({} steps were also removed)", step_count);
-            }
-
-            println!();
-            Ok(())
-        }
-
-        RoutinesCommand::AddStep {
-            routine,
-            action,
-            position,
-            min_duration,
-            max_duration,
-        } => {
-            let routine = resolve_routine(conn, routine)?;
-            let action = resolve_action(conn, action)?;
-
-            // Determine the step order
-            let step_order = if let Some(pos) = position {
-                // Shift existing steps at or after this position
-                shift_routine_steps(conn, &routine.id, *pos, 1)?;
-                *pos
-            } else {
-                // Append at the end
-                next_routine_step_order(conn, &routine.id)?
-            };
-
-            let mut step = RoutineStep::new(&routine.id, &action.id, step_order);
-
-            if let Some(min) = min_duration {
-                step = step.min_duration_bucket(*min);
-            }
-
-            if let Some(max) = max_duration {
-                step = step.max_duration_bucket(*max);
-            }
-
-            insert_routine_step(conn, &step)?;
-
-            println!("\n✅ Step added to '{}':", routine.name);
-            println!("   Position: {}", step_order);
-            println!("   Action: {}", action.title);
-
-            if let Some(min) = min_duration {
-                if let Some(max) = max_duration {
-                    println!("   Duration: {}-{} min", min, max);
-                } else {
-                    println!("   Min Duration: {} min", min);
-                }
-            } else if let Some(max) = max_duration {
-                println!("   Max Duration: {} min", max);
-            }
-
-            println!();
-            Ok(())
-        }
-
-        RoutinesCommand::RemoveStep {
-            routine,
-            step_order,
-        } => {
-            let routine = resolve_routine(conn, routine)?;
-
-            // Get the step to show what was deleted
-            let steps = fetch_routine_steps(conn, &routine.id)?;
-            let step = steps
-                .iter()
-                .find(|s| s.step_order == *step_order)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Step {} not found in routine '{}'",
-                        step_order,
-                        routine.name
-                    )
-                })?;
-
-            let action_title = step
-                .action_title
-                .clone()
-                .unwrap_or_else(|| "(unknown)".to_string());
-
-            delete_routine_step_by_order(conn, &routine.id, *step_order)?;
-
-            println!("\n🗑️  Removed step {} from '{}':", step_order, routine.name);
-            println!("   Action: {}", action_title);
-            println!("   (Remaining steps have been re-ordered)");
-
-            println!();
-            Ok(())
-        }
+    match title_matches.len() {
+        0 => bail!("No routine found matching '{}'", identifier),
+        1 => Ok(title_matches[0].clone()),
+        _ => bail!(
+            "Multiple routines match title prefix '{}'. Use a more specific identifier.",
+            identifier
+        ),
     }
 }

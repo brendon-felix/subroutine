@@ -1,1055 +1,693 @@
-use std::fmt;
-
 use anyhow::{Context, Result};
-use rand::seq::SliceRandom;
-use rusqlite::Connection;
+use app_core::{RecurrenceRule, Routine, SavedConstraints, SavedStep, Subroutine, TimesOfDay};
+use chrono::{DateTime, NaiveTime, Utc};
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::action::fetch_action_by_id;
-use crate::instance::{Instance, insert_instance};
-use crate::pipeline::{
-    DEFAULT_PIPELINE_ID, PipelineItem, insert_pipeline_item, next_pipeline_position,
-};
+// --- Shared helpers ---
 
-/// Template grouping actions into sequences (ordered or randomizable).
+fn saved_constraints_from_fields(
+    valid_times_of_day: Option<i64>,
+    deadline: Option<&str>,
+    minimum_duration_secs: Option<i64>,
+    transition_time_secs: Option<i64>,
+    spoons_required: Option<i64>,
+    dependencies: Option<&str>,
+) -> Result<SavedConstraints> {
+    let deadline = deadline
+        .map(|s| {
+            NaiveTime::parse_from_str(s, "%H:%M:%S")
+                .with_context(|| format!("Invalid deadline time '{}'", s))
+        })
+        .transpose()?;
+
+    let valid_times_of_day = valid_times_of_day
+        .map(|bits| {
+            TimesOfDay::from_bits(bits as u8)
+                .with_context(|| format!("Invalid valid_times_of_day bits '{}'", bits))
+        })
+        .transpose()?;
+
+    let dependencies = dependencies
+        .map(|s| {
+            serde_json::from_str::<Vec<String>>(s)
+                .context("Invalid dependencies JSON")?
+                .into_iter()
+                .map(|id| {
+                    Uuid::parse_str(&id)
+                        .with_context(|| format!("Invalid dependency UUID '{}'", id))
+                })
+                .collect::<Result<Vec<Uuid>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+
+    Ok(SavedConstraints {
+        valid_times_of_day,
+        deadline,
+        minimum_duration: minimum_duration_secs.map(chrono::Duration::seconds),
+        transition_time: transition_time_secs.map(chrono::Duration::seconds),
+        spoons_required: spoons_required.map(|v| v as u32),
+        dependencies,
+    })
+}
+
+fn recurrence_from_fields(
+    min_interval_secs: Option<i64>,
+    max_interval_secs: Option<i64>,
+    auto_reschedule: bool,
+) -> Option<RecurrenceRule> {
+    let has_recurrence =
+        min_interval_secs.is_some() || max_interval_secs.is_some() || auto_reschedule;
+    if has_recurrence {
+        Some(RecurrenceRule {
+            min_interval: min_interval_secs.map(chrono::Duration::seconds),
+            max_interval: max_interval_secs.map(chrono::Duration::seconds),
+            auto_reschedule,
+        })
+    } else {
+        None
+    }
+}
+
+fn dependencies_to_json(dependencies: &[Uuid]) -> Option<String> {
+    if dependencies.is_empty() {
+        None
+    } else {
+        let ids: Vec<String> = dependencies.iter().map(|id| id.to_string()).collect();
+        serde_json::to_string(&ids).ok()
+    }
+}
+
+// --- Routine ---
+
+/// Flat database representation of a Routine. Steps are loaded separately from
+/// the routine_steps junction table, which stores a step_type discriminant.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Routine {
+pub struct RoutineModel {
     pub id: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub is_sequential: bool,
-    pub allow_randomization: bool,
-    pub default_start_time: Option<String>,
-    pub default_end_time: Option<String>,
-    pub created_at: Option<String>,
+    pub title: String,
+    pub content: Option<String>,
+    pub created_at: String,
+    // SavedConstraints (inline)
+    pub valid_times_of_day: Option<i64>,
+    pub deadline: Option<String>,
+    pub minimum_duration_secs: Option<i64>,
+    pub transition_time_secs: Option<i64>,
+    pub spoons_required: Option<i64>,
+    pub dependencies: Option<String>,
+    // RecurrenceRule (flattened)
+    pub recurrence_min_interval_secs: Option<i64>,
+    pub recurrence_max_interval_secs: Option<i64>,
+    pub recurrence_auto_reschedule: bool,
+    // Loaded from routine_steps junction table as (step_type, step_id) pairs
+    pub steps: Vec<(String, String)>,
 }
 
-impl fmt::Display for Routine {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.name)?;
-
-        if let Some(ref description) = self.description {
-            write!(f, " - {}", description)?;
-        }
-
-        let mut details = Vec::new();
-
-        if self.is_sequential {
-            details.push("sequential");
-        } else {
-            details.push("parallel");
-        }
-
-        if self.allow_randomization {
-            details.push("randomizable");
-        }
-
-        if self.default_start_time.is_some() {
-            details.push("scheduled");
-        }
-
-        if !details.is_empty() {
-            write!(f, " ({})", details.join(", "))?;
-        }
-
-        Ok(())
-    }
+fn row_to_routine_model(row: &rusqlite::Row) -> rusqlite::Result<RoutineModel> {
+    Ok(RoutineModel {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        content: row.get(2)?,
+        created_at: row.get(3)?,
+        valid_times_of_day: row.get(4)?,
+        deadline: row.get(5)?,
+        minimum_duration_secs: row.get(6)?,
+        transition_time_secs: row.get(7)?,
+        spoons_required: row.get(8)?,
+        dependencies: row.get(9)?,
+        recurrence_min_interval_secs: row.get(10)?,
+        recurrence_max_interval_secs: row.get(11)?,
+        recurrence_auto_reschedule: row.get::<_, i64>(12)? != 0,
+        steps: Vec::new(), // populated separately
+    })
 }
 
-impl Routine {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            id: Uuid::new_v4().to_string(),
-            name: name.into(),
-            description: None,
-            is_sequential: true,
-            allow_randomization: false,
-            default_start_time: None,
-            default_end_time: None,
-            created_at: None,
-        }
-    }
+fn fetch_routine_steps(conn: &Connection, routine_id: &str) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT step_type, step_id FROM routine_steps
+            WHERE routine_id = ?1
+            ORDER BY position ASC
+            "#,
+        )
+        .context("Failed to prepare routine_steps fetch query")?;
 
-    pub fn description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
-    }
+    let steps = stmt
+        .query_map([routine_id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .context("Failed to query routine_steps")?
+        .collect::<rusqlite::Result<Vec<(String, String)>>>()
+        .context("Failed to map routine_steps rows")?;
 
-    pub fn is_sequential(mut self, is_sequential: bool) -> Self {
-        self.is_sequential = is_sequential;
-        self
-    }
-
-    pub fn allow_randomization(mut self, allow_randomization: bool) -> Self {
-        self.allow_randomization = allow_randomization;
-        self
-    }
-
-    pub fn default_start_time(mut self, time: impl Into<String>) -> Self {
-        self.default_start_time = Some(time.into());
-        self
-    }
-
-    pub fn default_end_time(mut self, time: impl Into<String>) -> Self {
-        self.default_end_time = Some(time.into());
-        self
-    }
+    Ok(steps)
 }
 
-/// Steps belonging to routines.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RoutineStep {
-    pub id: String,
-    pub routine_id: String,
-    pub action_id: String,
-    pub step_order: i64,
-    pub min_duration_bucket: Option<i64>,
-    pub max_duration_bucket: Option<i64>,
-    pub created_at: Option<String>,
-    /// Populated when fetching steps with action details
-    pub action_title: Option<String>,
-}
-
-impl fmt::Display for RoutineStep {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Step {}", self.step_order)?;
-
-        if let Some(ref title) = self.action_title {
-            write!(f, ": {}", title)?;
-        }
-
-        let mut details = Vec::new();
-
-        if let Some(min) = self.min_duration_bucket {
-            if let Some(max) = self.max_duration_bucket {
-                details.push(format!("duration: {}-{}min", min, max));
-            } else {
-                details.push(format!("min: {}min", min));
-            }
-        } else if let Some(max) = self.max_duration_bucket {
-            details.push(format!("max: {}min", max));
-        }
-
-        if !details.is_empty() {
-            write!(f, " ({})", details.join(", "))?;
-        }
-
-        Ok(())
-    }
-}
-
-impl RoutineStep {
-    pub fn new(
-        routine_id: impl Into<String>,
-        action_id: impl Into<String>,
-        step_order: i64,
-    ) -> Self {
-        Self {
-            id: Uuid::new_v4().to_string(),
-            routine_id: routine_id.into(),
-            action_id: action_id.into(),
-            step_order,
-            min_duration_bucket: None,
-            max_duration_bucket: None,
-            created_at: None,
-            action_title: None,
-        }
-    }
-
-    pub fn min_duration_bucket(mut self, min: i64) -> Self {
-        self.min_duration_bucket = Some(min);
-        self
-    }
-
-    pub fn max_duration_bucket(mut self, max: i64) -> Self {
-        self.max_duration_bucket = Some(max);
-        self
-    }
-}
-
-/// Insert or update a routine.
-pub fn insert_routine(conn: &Connection, routine: &Routine) -> Result<()> {
-    let is_sequential = if routine.is_sequential { 1 } else { 0 };
-    let allow_randomization = if routine.allow_randomization { 1 } else { 0 };
-
+fn insert_routine_steps(
+    conn: &Connection,
+    routine_id: &str,
+    steps: &[(String, String)],
+) -> Result<()> {
     conn.execute(
-        r#"
-            INSERT INTO routines (
-                id,
-                name,
-                description,
-                is_sequential,
-                allow_randomization,
-                default_start_time,
-                default_end_time,
-                created_at
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, COALESCE(?8, datetime('now')))
-            ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                description = excluded.description,
-                is_sequential = excluded.is_sequential,
-                allow_randomization = excluded.allow_randomization,
-                default_start_time = excluded.default_start_time,
-                default_end_time = excluded.default_end_time
-        "#,
-        (
-            &routine.id,
-            &routine.name,
-            &routine.description,
-            is_sequential,
-            allow_randomization,
-            &routine.default_start_time,
-            &routine.default_end_time,
-            &routine.created_at,
-        ),
+        "DELETE FROM routine_steps WHERE routine_id = ?1",
+        [routine_id],
     )
-    .context("Failed to insert or update routine")?;
+    .context("Failed to clear routine_steps before insert")?;
+
+    for (position, (step_type, step_id)) in steps.iter().enumerate() {
+        conn.execute(
+            r#"
+            INSERT INTO routine_steps (routine_id, step_type, step_id, position)
+            VALUES (?1, ?2, ?3, ?4)
+            "#,
+            rusqlite::params![routine_id, step_type, step_id, position as i64],
+        )
+        .context("Failed to insert routine_steps row")?;
+    }
 
     Ok(())
 }
 
-/// Fetch all routines ordered by created_at DESC.
+impl From<&Routine> for RoutineModel {
+    fn from(routine: &Routine) -> Self {
+        Self {
+            id: routine.id.to_string(),
+            title: routine.title.clone(),
+            content: routine.content.clone(),
+            created_at: routine.created_at.to_rfc3339(),
+            valid_times_of_day: routine
+                .constraints
+                .valid_times_of_day
+                .map(|t| t.bits() as i64),
+            deadline: routine
+                .constraints
+                .deadline
+                .map(|t| t.format("%H:%M:%S").to_string()),
+            minimum_duration_secs: routine
+                .constraints
+                .minimum_duration
+                .map(|d| d.num_seconds()),
+            transition_time_secs: routine.constraints.transition_time.map(|d| d.num_seconds()),
+            spoons_required: routine.constraints.spoons_required.map(|v| v as i64),
+            dependencies: dependencies_to_json(&routine.constraints.dependencies),
+            recurrence_min_interval_secs: routine
+                .recurrence
+                .as_ref()
+                .and_then(|r| r.min_interval)
+                .map(|d| d.num_seconds()),
+            recurrence_max_interval_secs: routine
+                .recurrence
+                .as_ref()
+                .and_then(|r| r.max_interval)
+                .map(|d| d.num_seconds()),
+            recurrence_auto_reschedule: routine
+                .recurrence
+                .as_ref()
+                .map_or(false, |r| r.auto_reschedule),
+            steps: routine
+                .steps
+                .iter()
+                .map(|step| match step {
+                    SavedStep::Action(id) => ("action".to_string(), id.to_string()),
+                    SavedStep::Event(id) => ("event".to_string(), id.to_string()),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl TryFrom<RoutineModel> for Routine {
+    type Error = anyhow::Error;
+
+    fn try_from(model: RoutineModel) -> Result<Self> {
+        let id = Uuid::parse_str(&model.id)
+            .with_context(|| format!("Invalid routine id '{}'", model.id))?;
+
+        let created_at = DateTime::parse_from_rfc3339(&model.created_at)
+            .with_context(|| format!("Invalid created_at '{}'", model.created_at))?
+            .with_timezone(&Utc);
+
+        let constraints = saved_constraints_from_fields(
+            model.valid_times_of_day,
+            model.deadline.as_deref(),
+            model.minimum_duration_secs,
+            model.transition_time_secs,
+            model.spoons_required,
+            model.dependencies.as_deref(),
+        )?;
+
+        let recurrence = recurrence_from_fields(
+            model.recurrence_min_interval_secs,
+            model.recurrence_max_interval_secs,
+            model.recurrence_auto_reschedule,
+        );
+
+        let steps = model
+            .steps
+            .into_iter()
+            .map(|(step_type, step_id)| {
+                let id = Uuid::parse_str(&step_id)
+                    .with_context(|| format!("Invalid step_id '{}'", step_id))?;
+                match step_type.as_str() {
+                    "action" => Ok(SavedStep::Action(id)),
+                    "event" => Ok(SavedStep::Event(id)),
+                    other => anyhow::bail!("Unknown step_type '{}'", other),
+                }
+            })
+            .collect::<Result<Vec<SavedStep>>>()?;
+
+        Ok(Routine {
+            id,
+            title: model.title,
+            content: model.content,
+            created_at,
+            constraints,
+            recurrence,
+            steps,
+        })
+    }
+}
+
+pub fn insert_routine(conn: &Connection, routine: &Routine) -> Result<()> {
+    let model = RoutineModel::from(routine);
+
+    conn.execute(
+        r#"
+            INSERT INTO routines (
+                id, title, content, created_at,
+                valid_times_of_day, deadline,
+                minimum_duration_secs, transition_time_secs, spoons_required,
+                dependencies,
+                recurrence_min_interval_secs, recurrence_max_interval_secs,
+                recurrence_auto_reschedule
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                content = excluded.content,
+                valid_times_of_day = excluded.valid_times_of_day,
+                deadline = excluded.deadline,
+                minimum_duration_secs = excluded.minimum_duration_secs,
+                transition_time_secs = excluded.transition_time_secs,
+                spoons_required = excluded.spoons_required,
+                dependencies = excluded.dependencies,
+                recurrence_min_interval_secs = excluded.recurrence_min_interval_secs,
+                recurrence_max_interval_secs = excluded.recurrence_max_interval_secs,
+                recurrence_auto_reschedule = excluded.recurrence_auto_reschedule
+        "#,
+        rusqlite::params![
+            model.id,
+            model.title,
+            model.content,
+            model.created_at,
+            model.valid_times_of_day,
+            model.deadline,
+            model.minimum_duration_secs,
+            model.transition_time_secs,
+            model.spoons_required,
+            model.dependencies,
+            model.recurrence_min_interval_secs,
+            model.recurrence_max_interval_secs,
+            model.recurrence_auto_reschedule as i64,
+        ],
+    )
+    .context("Failed to insert or update routine")?;
+
+    insert_routine_steps(conn, &model.id, &model.steps)?;
+
+    Ok(())
+}
+
 pub fn fetch_routines(conn: &Connection) -> Result<Vec<Routine>> {
     let mut stmt = conn
         .prepare(
             r#"
             SELECT
-                id,
-                name,
-                description,
-                is_sequential,
-                allow_randomization,
-                default_start_time,
-                default_end_time,
-                created_at
+                id, title, content, created_at,
+                valid_times_of_day, deadline,
+                minimum_duration_secs, transition_time_secs, spoons_required,
+                dependencies,
+                recurrence_min_interval_secs, recurrence_max_interval_secs,
+                recurrence_auto_reschedule
             FROM routines
             ORDER BY created_at DESC
-        "#,
-        )
-        .context("Failed to prepare routines fetch query")?;
-
-    let routines = stmt
-        .query_map([], |row| {
-            let is_sequential: i64 = row.get(3)?;
-            let allow_randomization: i64 = row.get(4)?;
-            Ok(Routine {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                description: row.get(2)?,
-                is_sequential: is_sequential != 0,
-                allow_randomization: allow_randomization != 0,
-                default_start_time: row.get(5)?,
-                default_end_time: row.get(6)?,
-                created_at: row.get(7)?,
-            })
-        })
-        .context("Failed to query routines")?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .context("Failed to map routine rows")?;
-
-    Ok(routines)
-}
-
-/// Fetch a single routine by ID.
-pub fn fetch_routine_by_id(conn: &Connection, routine_id: &str) -> Result<Option<Routine>> {
-    let mut stmt = conn
-        .prepare(
-            r#"
-            SELECT
-                id,
-                name,
-                description,
-                is_sequential,
-                allow_randomization,
-                default_start_time,
-                default_end_time,
-                created_at
-            FROM routines
-            WHERE id = ?1
-        "#,
+            "#,
         )
         .context("Failed to prepare routine fetch query")?;
 
-    let mut rows = stmt
-        .query_map([routine_id], |row| {
-            let is_sequential: i64 = row.get(3)?;
-            let allow_randomization: i64 = row.get(4)?;
-            Ok(Routine {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                description: row.get(2)?,
-                is_sequential: is_sequential != 0,
-                allow_randomization: allow_randomization != 0,
-                default_start_time: row.get(5)?,
-                default_end_time: row.get(6)?,
-                created_at: row.get(7)?,
-            })
-        })
-        .context("Failed to query routine by ID")?;
+    let models = stmt
+        .query_map([], |row| row_to_routine_model(row))
+        .context("Failed to query routines")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("Failed to map routine rows")?;
 
-    match rows.next() {
-        Some(result) => Ok(Some(result.context("Failed to map routine row")?)),
-        None => Ok(None),
-    }
+    models
+        .into_iter()
+        .map(|mut model| {
+            model.steps = fetch_routine_steps(conn, &model.id)?;
+            Routine::try_from(model)
+        })
+        .collect()
 }
 
-/// Delete a routine by ID. Steps cascade automatically due to foreign key constraint.
-pub fn delete_routine(conn: &Connection, routine_id: &str) -> Result<()> {
-    let deleted = conn
-        .execute(
+pub fn fetch_routine_by_id(conn: &Connection, id: Uuid) -> Result<Option<Routine>> {
+    let mut stmt = conn
+        .prepare(
             r#"
-            DELETE FROM routines
+            SELECT
+                id, title, content, created_at,
+                valid_times_of_day, deadline,
+                minimum_duration_secs, transition_time_secs, spoons_required,
+                dependencies,
+                recurrence_min_interval_secs, recurrence_max_interval_secs,
+                recurrence_auto_reschedule
+            FROM routines
             WHERE id = ?1
-        "#,
-            [routine_id],
+            "#,
         )
-        .with_context(|| format!("Failed to delete routine '{}'", routine_id))?;
+        .context("Failed to prepare routine fetch by id query")?;
 
-    if deleted == 0 {
-        return Err(anyhow::anyhow!("Routine '{}' not found", routine_id));
-    }
+    let model = stmt
+        .query_row([id.to_string()], |row| row_to_routine_model(row))
+        .optional()
+        .context("Failed to fetch routine by id")?;
 
-    Ok(())
-}
-
-/// Get the next step_order value for a routine (max + 1, or 1 if no steps exist).
-pub fn next_routine_step_order(conn: &Connection, routine_id: &str) -> Result<i64> {
-    let max_order: Option<i64> = conn
-        .query_row(
-            r#"
-            SELECT MAX(step_order)
-            FROM routine_steps
-            WHERE routine_id = ?1
-        "#,
-            [routine_id],
-            |row| row.get(0),
-        )
-        .context("Failed to query max step_order")?;
-
-    Ok(max_order.unwrap_or(0) + 1)
-}
-
-/// Shift step orders at or after a given position by a delta (usually +1 or -1).
-pub fn shift_routine_steps(
-    conn: &Connection,
-    routine_id: &str,
-    from_position: i64,
-    delta: i64,
-) -> Result<()> {
-    conn.execute(
-        r#"
-            UPDATE routine_steps
-            SET step_order = step_order + ?3
-            WHERE routine_id = ?1 AND step_order >= ?2
-        "#,
-        (routine_id, from_position, delta),
-    )
-    .context("Failed to shift routine steps")?;
-
-    Ok(())
-}
-
-/// Insert a routine step. If position is specified, shifts existing steps.
-pub fn insert_routine_step(conn: &Connection, step: &RoutineStep) -> Result<()> {
-    conn.execute(
-        r#"
-            INSERT INTO routine_steps (
-                id,
-                routine_id,
-                action_id,
-                step_order,
-                min_duration_bucket,
-                max_duration_bucket,
-                created_at
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, COALESCE(?7, datetime('now')))
-        "#,
-        (
-            &step.id,
-            &step.routine_id,
-            &step.action_id,
-            step.step_order,
-            step.min_duration_bucket,
-            step.max_duration_bucket,
-            &step.created_at,
-        ),
-    )
-    .context("Failed to insert routine step")?;
-
-    Ok(())
-}
-
-/// Fetch all steps for a routine, ordered by step_order, with action titles.
-pub fn fetch_routine_steps(conn: &Connection, routine_id: &str) -> Result<Vec<RoutineStep>> {
-    let mut stmt = conn
-        .prepare(
-            r#"
-            SELECT
-                rs.id,
-                rs.routine_id,
-                rs.action_id,
-                rs.step_order,
-                rs.min_duration_bucket,
-                rs.max_duration_bucket,
-                rs.created_at,
-                a.title
-            FROM routine_steps rs
-            LEFT JOIN actions a ON rs.action_id = a.id
-            WHERE rs.routine_id = ?1
-            ORDER BY rs.step_order ASC
-        "#,
-        )
-        .context("Failed to prepare routine steps fetch query")?;
-
-    let steps = stmt
-        .query_map([routine_id], |row| {
-            Ok(RoutineStep {
-                id: row.get(0)?,
-                routine_id: row.get(1)?,
-                action_id: row.get(2)?,
-                step_order: row.get(3)?,
-                min_duration_bucket: row.get(4)?,
-                max_duration_bucket: row.get(5)?,
-                created_at: row.get(6)?,
-                action_title: row.get(7)?,
-            })
+    model
+        .map(|mut model| {
+            model.steps = fetch_routine_steps(conn, &model.id)?;
+            Routine::try_from(model)
         })
-        .context("Failed to query routine steps")?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .context("Failed to map routine step rows")?;
-
-    Ok(steps)
+        .transpose()
 }
 
-/// Fetch a single routine step by ID.
-pub fn fetch_routine_step_by_id(conn: &Connection, step_id: &str) -> Result<Option<RoutineStep>> {
-    let mut stmt = conn
-        .prepare(
-            r#"
-            SELECT
-                rs.id,
-                rs.routine_id,
-                rs.action_id,
-                rs.step_order,
-                rs.min_duration_bucket,
-                rs.max_duration_bucket,
-                rs.created_at,
-                a.title
-            FROM routine_steps rs
-            LEFT JOIN actions a ON rs.action_id = a.id
-            WHERE rs.id = ?1
-        "#,
-        )
-        .context("Failed to prepare routine step fetch query")?;
-
-    let mut rows = stmt
-        .query_map([step_id], |row| {
-            Ok(RoutineStep {
-                id: row.get(0)?,
-                routine_id: row.get(1)?,
-                action_id: row.get(2)?,
-                step_order: row.get(3)?,
-                min_duration_bucket: row.get(4)?,
-                max_duration_bucket: row.get(5)?,
-                created_at: row.get(6)?,
-                action_title: row.get(7)?,
-            })
-        })
-        .context("Failed to query routine step by ID")?;
-
-    match rows.next() {
-        Some(result) => Ok(Some(result.context("Failed to map routine step row")?)),
-        None => Ok(None),
-    }
-}
-
-/// Find a routine step by routine_id and step_order.
-pub fn fetch_routine_step_by_order(
-    conn: &Connection,
-    routine_id: &str,
-    step_order: i64,
-) -> Result<Option<RoutineStep>> {
-    let mut stmt = conn
-        .prepare(
-            r#"
-            SELECT
-                rs.id,
-                rs.routine_id,
-                rs.action_id,
-                rs.step_order,
-                rs.min_duration_bucket,
-                rs.max_duration_bucket,
-                rs.created_at,
-                a.title
-            FROM routine_steps rs
-            LEFT JOIN actions a ON rs.action_id = a.id
-            WHERE rs.routine_id = ?1 AND rs.step_order = ?2
-        "#,
-        )
-        .context("Failed to prepare routine step fetch query")?;
-
-    let mut rows = stmt
-        .query_map((routine_id, step_order), |row| {
-            Ok(RoutineStep {
-                id: row.get(0)?,
-                routine_id: row.get(1)?,
-                action_id: row.get(2)?,
-                step_order: row.get(3)?,
-                min_duration_bucket: row.get(4)?,
-                max_duration_bucket: row.get(5)?,
-                created_at: row.get(6)?,
-                action_title: row.get(7)?,
-            })
-        })
-        .context("Failed to query routine step by order")?;
-
-    match rows.next() {
-        Some(result) => Ok(Some(result.context("Failed to map routine step row")?)),
-        None => Ok(None),
-    }
-}
-
-/// Delete a routine step by ID and re-order remaining steps.
-pub fn delete_routine_step(conn: &Connection, step_id: &str) -> Result<()> {
-    // First get the step to know its routine_id and step_order
-    let step = fetch_routine_step_by_id(conn, step_id)?
-        .ok_or_else(|| anyhow::anyhow!("Routine step '{}' not found", step_id))?;
-
-    // Delete the step
+pub fn delete_routine(conn: &Connection, id: Uuid) -> Result<()> {
     conn.execute(
-        r#"
-            DELETE FROM routine_steps
-            WHERE id = ?1
-        "#,
-        [step_id],
+        "DELETE FROM routine_steps WHERE routine_id = ?1",
+        [id.to_string()],
     )
-    .with_context(|| format!("Failed to delete routine step '{}'", step_id))?;
+    .with_context(|| format!("Failed to delete routine_steps for routine '{}'", id))?;
 
-    // Shift remaining steps down to fill the gap
-    shift_routine_steps(conn, &step.routine_id, step.step_order + 1, -1)?;
+    conn.execute("DELETE FROM routines WHERE id = ?1", [id.to_string()])
+        .with_context(|| format!("Failed to delete routine '{}'", id))?;
 
     Ok(())
 }
 
-/// Delete a routine step by routine_id and step_order.
-pub fn delete_routine_step_by_order(
-    conn: &Connection,
-    routine_id: &str,
-    step_order: i64,
-) -> Result<()> {
-    let step = fetch_routine_step_by_order(conn, routine_id, step_order)?
-        .ok_or_else(|| anyhow::anyhow!("Step {} not found in routine", step_order))?;
+// --- Subroutine ---
 
-    delete_routine_step(conn, &step.id)
+/// Flat database representation of a Subroutine. Steps are SavedAction IDs only
+/// (subroutines do not contain events), loaded from subroutine_steps.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubroutineModel {
+    pub id: String,
+    pub title: String,
+    pub content: Option<String>,
+    pub created_at: String,
+    // SavedConstraints (inline)
+    pub valid_times_of_day: Option<i64>,
+    pub deadline: Option<String>,
+    pub minimum_duration_secs: Option<i64>,
+    pub transition_time_secs: Option<i64>,
+    pub spoons_required: Option<i64>,
+    pub dependencies: Option<String>,
+    // RecurrenceRule (flattened)
+    pub recurrence_min_interval_secs: Option<i64>,
+    pub recurrence_max_interval_secs: Option<i64>,
+    pub recurrence_auto_reschedule: bool,
+    // Loaded from subroutine_steps junction table
+    pub steps: Vec<String>,
 }
 
-/// Count the number of steps in a routine.
-pub fn count_routine_steps(conn: &Connection, routine_id: &str) -> Result<i64> {
-    let count: i64 = conn
-        .query_row(
-            r#"
-            SELECT COUNT(*)
-            FROM routine_steps
-            WHERE routine_id = ?1
-        "#,
-            [routine_id],
-            |row| row.get(0),
-        )
-        .context("Failed to count routine steps")?;
-
-    Ok(count)
-}
-
-/// Result of instantiating a routine into the pipeline.
-#[derive(Debug, Clone)]
-pub struct RoutineInstantiationResult {
-    /// The routine that was instantiated
-    pub routine: Routine,
-    /// The instances created, paired with their pipeline items and action titles
-    pub created_items: Vec<(Instance, PipelineItem, String)>,
-    /// Whether randomization was applied
-    pub was_randomized: bool,
-}
-
-/// Options for instantiating a routine.
-#[derive(Debug, Clone, Default)]
-pub struct InstantiateRoutineOptions {
-    /// Override randomization setting (if None, uses routine's allow_randomization)
-    pub randomize: Option<bool>,
-    /// Starting position in the pipeline (if None, appends to end)
-    pub start_position: Option<i64>,
-    /// Pipeline ID to add items to (if None, uses default pipeline)
-    pub pipeline_id: Option<String>,
-}
-
-/// Instantiate a routine by creating instances for all its steps and adding them to the pipeline.
-///
-/// This function:
-/// 1. Fetches all steps for the routine
-/// 2. Optionally randomizes the step order (based on routine settings or override)
-/// 3. Creates an Instance for each step's action
-/// 4. Adds each instance to the pipeline at sequential positions
-/// 5. Returns information about what was created
-pub fn instantiate_routine(
-    conn: &Connection,
-    routine: &Routine,
-    options: InstantiateRoutineOptions,
-) -> Result<RoutineInstantiationResult> {
-    let mut steps = fetch_routine_steps(conn, &routine.id)?;
-
-    if steps.is_empty() {
-        return Ok(RoutineInstantiationResult {
-            routine: routine.clone(),
-            created_items: Vec::new(),
-            was_randomized: false,
-        });
-    }
-
-    let should_randomize = options.randomize.unwrap_or(routine.allow_randomization);
-    if should_randomize {
-        let mut rng = rand::rng();
-        steps.shuffle(&mut rng);
-    }
-
-    let pipeline_id = options
-        .pipeline_id
-        .as_deref()
-        .unwrap_or(DEFAULT_PIPELINE_ID);
-
-    let mut current_position = match options.start_position {
-        Some(pos) => pos,
-        None => next_pipeline_position(conn, pipeline_id)?,
-    };
-
-    let mut created_items = Vec::with_capacity(steps.len());
-
-    for step in &steps {
-        let action = fetch_action_by_id(conn, &step.action_id)?
-            .ok_or_else(|| anyhow::anyhow!("Action {} not found for step", step.action_id))?;
-
-        let mut instance = Instance::new(&action.id);
-        instance.source = Some("routine".to_string());
-
-        insert_instance(conn, &instance)?;
-
-        let pipeline_item = PipelineItem::new_for_instance(
-            pipeline_id,
-            &instance.id,
-            &action.title,
-            current_position,
-        );
-        insert_pipeline_item(conn, &pipeline_item)?;
-
-        created_items.push((instance, pipeline_item, action.title.clone()));
-        current_position += 1;
-    }
-
-    Ok(RoutineInstantiationResult {
-        routine: routine.clone(),
-        created_items,
-        was_randomized: should_randomize,
+fn row_to_subroutine_model(row: &rusqlite::Row) -> rusqlite::Result<SubroutineModel> {
+    Ok(SubroutineModel {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        content: row.get(2)?,
+        created_at: row.get(3)?,
+        valid_times_of_day: row.get(4)?,
+        deadline: row.get(5)?,
+        minimum_duration_secs: row.get(6)?,
+        transition_time_secs: row.get(7)?,
+        spoons_required: row.get(8)?,
+        dependencies: row.get(9)?,
+        recurrence_min_interval_secs: row.get(10)?,
+        recurrence_max_interval_secs: row.get(11)?,
+        recurrence_auto_reschedule: row.get::<_, i64>(12)? != 0,
+        steps: Vec::new(), // populated separately
     })
 }
 
-/// Instantiate a routine by ID.
-pub fn instantiate_routine_by_id(
-    conn: &Connection,
-    routine_id: &str,
-    options: InstantiateRoutineOptions,
-) -> Result<RoutineInstantiationResult> {
-    let routine = fetch_routine_by_id(conn, routine_id)?
-        .ok_or_else(|| anyhow::anyhow!("Routine '{}' not found", routine_id))?;
+fn fetch_subroutine_steps(conn: &Connection, subroutine_id: &str) -> Result<Vec<String>> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT saved_action_id FROM subroutine_steps
+            WHERE subroutine_id = ?1
+            ORDER BY position ASC
+            "#,
+        )
+        .context("Failed to prepare subroutine_steps fetch query")?;
 
-    instantiate_routine(conn, &routine, options)
+    let ids = stmt
+        .query_map([subroutine_id], |row| row.get(0))
+        .context("Failed to query subroutine_steps")?
+        .collect::<rusqlite::Result<Vec<String>>>()
+        .context("Failed to map subroutine_steps rows")?;
+
+    Ok(ids)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{Action, insert_action};
-    use rusqlite::Connection;
-    use rusqlite_migration::{M, Migrations};
+fn insert_subroutine_steps(conn: &Connection, subroutine_id: &str, steps: &[String]) -> Result<()> {
+    conn.execute(
+        "DELETE FROM subroutine_steps WHERE subroutine_id = ?1",
+        [subroutine_id],
+    )
+    .context("Failed to clear subroutine_steps before insert")?;
 
-    fn setup_test_db() -> Connection {
-        let mut conn = Connection::open_in_memory().expect("Failed to open in-memory database");
-        let migrations = Migrations::new(vec![
-            M::up(include_str!("../migrations/20260128205548_init_schema.sql")),
-            M::up(include_str!(
-                "../migrations/20260216134152_add_event_type.sql"
-            )),
-        ]);
-        migrations
-            .to_latest(&mut conn)
-            .expect("Failed to apply migrations");
-        conn
+    for (position, saved_action_id) in steps.iter().enumerate() {
+        conn.execute(
+            r#"
+            INSERT INTO subroutine_steps (subroutine_id, saved_action_id, position)
+            VALUES (?1, ?2, ?3)
+            "#,
+            rusqlite::params![subroutine_id, saved_action_id, position as i64],
+        )
+        .context("Failed to insert subroutine_steps row")?;
     }
 
-    fn create_test_action(conn: &Connection, title: &str) -> Action {
-        let action = Action::new_task(title);
-        insert_action(conn, &action).expect("Failed to insert action");
-        action
-    }
-
-    #[test]
-    fn test_insert_and_fetch_routine() {
-        let conn = setup_test_db();
-
-        let routine = Routine::new("Morning Routine")
-            .description("Start the day right")
-            .is_sequential(true)
-            .allow_randomization(false);
-
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
-
-        let routines = fetch_routines(&conn).expect("Failed to fetch routines");
-        assert_eq!(routines.len(), 1);
-        assert_eq!(routines[0].name, "Morning Routine");
-        assert_eq!(
-            routines[0].description,
-            Some("Start the day right".to_string())
-        );
-        assert!(routines[0].is_sequential);
-        assert!(!routines[0].allow_randomization);
-    }
-
-    #[test]
-    fn test_fetch_routine_by_id() {
-        let conn = setup_test_db();
-
-        let routine = Routine::new("Test Routine");
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
-
-        let fetched = fetch_routine_by_id(&conn, &routine.id)
-            .expect("Failed to fetch routine")
-            .expect("Routine should exist");
-
-        assert_eq!(fetched.id, routine.id);
-        assert_eq!(fetched.name, "Test Routine");
-    }
-
-    #[test]
-    fn test_delete_routine() {
-        let conn = setup_test_db();
-
-        let routine = Routine::new("To Delete");
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
-
-        delete_routine(&conn, &routine.id).expect("Failed to delete routine");
-
-        let fetched = fetch_routine_by_id(&conn, &routine.id).expect("Failed to fetch routine");
-        assert!(fetched.is_none());
-    }
-
-    #[test]
-    fn test_routine_steps_crud() {
-        let conn = setup_test_db();
-
-        let routine = Routine::new("Test Routine");
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
-
-        let action1 = create_test_action(&conn, "Brush teeth");
-        let action2 = create_test_action(&conn, "Shower");
-        let action3 = create_test_action(&conn, "Get dressed");
-
-        // Add steps
-        let step1 = RoutineStep::new(&routine.id, &action1.id, 1);
-        let step2 = RoutineStep::new(&routine.id, &action2.id, 2);
-        let step3 = RoutineStep::new(&routine.id, &action3.id, 3);
-
-        insert_routine_step(&conn, &step1).expect("Failed to insert step 1");
-        insert_routine_step(&conn, &step2).expect("Failed to insert step 2");
-        insert_routine_step(&conn, &step3).expect("Failed to insert step 3");
-
-        // Fetch steps
-        let steps = fetch_routine_steps(&conn, &routine.id).expect("Failed to fetch steps");
-        assert_eq!(steps.len(), 3);
-        assert_eq!(steps[0].step_order, 1);
-        assert_eq!(steps[0].action_title, Some("Brush teeth".to_string()));
-        assert_eq!(steps[1].step_order, 2);
-        assert_eq!(steps[2].step_order, 3);
-
-        // Delete middle step
-        delete_routine_step(&conn, &step2.id).expect("Failed to delete step");
-
-        let steps = fetch_routine_steps(&conn, &routine.id).expect("Failed to fetch steps");
-        assert_eq!(steps.len(), 2);
-        assert_eq!(steps[0].step_order, 1);
-        assert_eq!(steps[1].step_order, 2); // Was 3, now shifted down
-    }
-
-    #[test]
-    fn test_next_routine_step_order() {
-        let conn = setup_test_db();
-
-        let routine = Routine::new("Test Routine");
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
-
-        // Empty routine should return 1
-        let next = next_routine_step_order(&conn, &routine.id).expect("Failed to get next order");
-        assert_eq!(next, 1);
-
-        // Add a step
-        let action = create_test_action(&conn, "Test Action");
-        let step = RoutineStep::new(&routine.id, &action.id, 1);
-        insert_routine_step(&conn, &step).expect("Failed to insert step");
-
-        let next = next_routine_step_order(&conn, &routine.id).expect("Failed to get next order");
-        assert_eq!(next, 2);
-    }
-
-    #[test]
-    fn test_shift_routine_steps() {
-        let conn = setup_test_db();
-
-        let routine = Routine::new("Test Routine");
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
-
-        let action1 = create_test_action(&conn, "Step 1");
-        let action2 = create_test_action(&conn, "Step 2");
-        let action3 = create_test_action(&conn, "Step 3");
-
-        let step1 = RoutineStep::new(&routine.id, &action1.id, 1);
-        let step2 = RoutineStep::new(&routine.id, &action2.id, 2);
-        let step3 = RoutineStep::new(&routine.id, &action3.id, 3);
-
-        insert_routine_step(&conn, &step1).expect("Failed to insert step 1");
-        insert_routine_step(&conn, &step2).expect("Failed to insert step 2");
-        insert_routine_step(&conn, &step3).expect("Failed to insert step 3");
-
-        // Shift steps 2 and 3 up by 1 (to make room for insertion at position 2)
-        shift_routine_steps(&conn, &routine.id, 2, 1).expect("Failed to shift steps");
-
-        let steps = fetch_routine_steps(&conn, &routine.id).expect("Failed to fetch steps");
-        assert_eq!(steps[0].step_order, 1);
-        assert_eq!(steps[1].step_order, 3); // Was 2
-        assert_eq!(steps[2].step_order, 4); // Was 3
-    }
-
-    #[test]
-    fn test_fetch_routine_step_by_order() {
-        let conn = setup_test_db();
-
-        let routine = Routine::new("Test Routine");
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
-
-        let action = create_test_action(&conn, "Test Action");
-        let step = RoutineStep::new(&routine.id, &action.id, 1);
-        insert_routine_step(&conn, &step).expect("Failed to insert step");
-
-        let fetched = fetch_routine_step_by_order(&conn, &routine.id, 1)
-            .expect("Failed to fetch step")
-            .expect("Step should exist");
-
-        assert_eq!(fetched.id, step.id);
-        assert_eq!(fetched.step_order, 1);
-    }
-
-    #[test]
-    fn test_routine_cascade_delete() {
-        let conn = setup_test_db();
-
-        let routine = Routine::new("Test Routine");
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
-
-        let action = create_test_action(&conn, "Test Action");
-        let step = RoutineStep::new(&routine.id, &action.id, 1);
-        insert_routine_step(&conn, &step).expect("Failed to insert step");
-
-        // Verify step exists
-        let steps = fetch_routine_steps(&conn, &routine.id).expect("Failed to fetch steps");
-        assert_eq!(steps.len(), 1);
-
-        // Delete routine
-        delete_routine(&conn, &routine.id).expect("Failed to delete routine");
-
-        // Steps should be deleted via cascade
-        let steps = fetch_routine_steps(&conn, &routine.id).expect("Failed to fetch steps");
-        assert_eq!(steps.len(), 0);
-    }
-
-    #[test]
-    fn test_step_duration_bounds() {
-        let conn = setup_test_db();
-
-        let routine = Routine::new("Test Routine");
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
-
-        let action = create_test_action(&conn, "Timed Task");
-        let step = RoutineStep::new(&routine.id, &action.id, 1)
-            .min_duration_bucket(5)
-            .max_duration_bucket(13);
-
-        insert_routine_step(&conn, &step).expect("Failed to insert step");
-
-        let steps = fetch_routine_steps(&conn, &routine.id).expect("Failed to fetch steps");
-        assert_eq!(steps.len(), 1);
-        assert_eq!(steps[0].min_duration_bucket, Some(5));
-        assert_eq!(steps[0].max_duration_bucket, Some(13));
-    }
-
-    #[test]
-    fn test_count_routine_steps() {
-        let conn = setup_test_db();
-
-        let routine = Routine::new("Test Routine");
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
-
-        // Empty routine
-        let count = count_routine_steps(&conn, &routine.id).expect("Failed to count steps");
-        assert_eq!(count, 0);
-
-        // Add steps
-        let action1 = create_test_action(&conn, "Step 1");
-        let action2 = create_test_action(&conn, "Step 2");
-
-        insert_routine_step(&conn, &RoutineStep::new(&routine.id, &action1.id, 1))
-            .expect("Failed to insert step");
-        insert_routine_step(&conn, &RoutineStep::new(&routine.id, &action2.id, 2))
-            .expect("Failed to insert step");
-
-        let count = count_routine_steps(&conn, &routine.id).expect("Failed to count steps");
-        assert_eq!(count, 2);
-    }
-
-    #[test]
-    fn test_routine_parallel_mode() {
-        let conn = setup_test_db();
-
-        let routine = Routine::new("Parallel Tasks")
-            .is_sequential(false)
-            .allow_randomization(true);
-
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
-
-        let fetched = fetch_routine_by_id(&conn, &routine.id)
-            .expect("Failed to fetch routine")
-            .expect("Routine should exist");
-
-        assert!(!fetched.is_sequential);
-        assert!(fetched.allow_randomization);
-    }
-
-    #[test]
-    fn test_instantiate_routine_basic() {
-        let conn = setup_test_db();
-        crate::pipeline::ensure_default_pipeline(&conn).expect("Failed to create default pipeline");
-
-        let routine = Routine::new("Morning Routine");
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
-
-        let action1 = create_test_action(&conn, "Brush teeth");
-        let action2 = create_test_action(&conn, "Make coffee");
-        let action3 = create_test_action(&conn, "Check emails");
-
-        let step1 = RoutineStep::new(&routine.id, &action1.id, 1);
-        let step2 = RoutineStep::new(&routine.id, &action2.id, 2);
-        let step3 = RoutineStep::new(&routine.id, &action3.id, 3);
-
-        insert_routine_step(&conn, &step1).expect("Failed to insert step 1");
-        insert_routine_step(&conn, &step2).expect("Failed to insert step 2");
-        insert_routine_step(&conn, &step3).expect("Failed to insert step 3");
-
-        let options = InstantiateRoutineOptions::default();
-        let result = instantiate_routine(&conn, &routine, options).expect("Failed to instantiate");
-
-        assert_eq!(result.created_items.len(), 3);
-        assert!(!result.was_randomized);
-
-        // Check that instances were created with source = "routine"
-        for (instance, _pipeline_item, _title) in &result.created_items {
-            assert_eq!(instance.source.as_deref(), Some("routine"));
+    Ok(())
+}
+
+impl From<&Subroutine> for SubroutineModel {
+    fn from(subroutine: &Subroutine) -> Self {
+        Self {
+            id: subroutine.id.to_string(),
+            title: subroutine.title.clone(),
+            content: subroutine.content.clone(),
+            created_at: subroutine.created_at.to_rfc3339(),
+            valid_times_of_day: subroutine
+                .constraints
+                .valid_times_of_day
+                .map(|t| t.bits() as i64),
+            deadline: subroutine
+                .constraints
+                .deadline
+                .map(|t| t.format("%H:%M:%S").to_string()),
+            minimum_duration_secs: subroutine
+                .constraints
+                .minimum_duration
+                .map(|d| d.num_seconds()),
+            transition_time_secs: subroutine
+                .constraints
+                .transition_time
+                .map(|d| d.num_seconds()),
+            spoons_required: subroutine.constraints.spoons_required.map(|v| v as i64),
+            dependencies: dependencies_to_json(&subroutine.constraints.dependencies),
+            recurrence_min_interval_secs: subroutine
+                .recurrence
+                .as_ref()
+                .and_then(|r| r.min_interval)
+                .map(|d| d.num_seconds()),
+            recurrence_max_interval_secs: subroutine
+                .recurrence
+                .as_ref()
+                .and_then(|r| r.max_interval)
+                .map(|d| d.num_seconds()),
+            recurrence_auto_reschedule: subroutine
+                .recurrence
+                .as_ref()
+                .map_or(false, |r| r.auto_reschedule),
+            steps: subroutine.steps.iter().map(|id| id.to_string()).collect(),
         }
-
-        // Verify pipeline items are in order
-        let items =
-            crate::pipeline::fetch_pipeline_items(&conn, crate::pipeline::DEFAULT_PIPELINE_ID)
-                .expect("Failed to fetch pipeline items");
-        assert_eq!(items.len(), 3);
-        assert_eq!(items[0].position, Some(1));
-        assert_eq!(items[1].position, Some(2));
-        assert_eq!(items[2].position, Some(3));
     }
+}
 
-    #[test]
-    fn test_instantiate_routine_empty() {
-        let conn = setup_test_db();
-        crate::pipeline::ensure_default_pipeline(&conn).expect("Failed to create default pipeline");
+impl TryFrom<SubroutineModel> for Subroutine {
+    type Error = anyhow::Error;
 
-        let routine = Routine::new("Empty Routine");
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
+    fn try_from(model: SubroutineModel) -> Result<Self> {
+        let id = Uuid::parse_str(&model.id)
+            .with_context(|| format!("Invalid subroutine id '{}'", model.id))?;
 
-        let options = InstantiateRoutineOptions::default();
-        let result = instantiate_routine(&conn, &routine, options).expect("Failed to instantiate");
+        let created_at = DateTime::parse_from_rfc3339(&model.created_at)
+            .with_context(|| format!("Invalid created_at '{}'", model.created_at))?
+            .with_timezone(&Utc);
 
-        assert!(result.created_items.is_empty());
-        assert!(!result.was_randomized);
+        let constraints = saved_constraints_from_fields(
+            model.valid_times_of_day,
+            model.deadline.as_deref(),
+            model.minimum_duration_secs,
+            model.transition_time_secs,
+            model.spoons_required,
+            model.dependencies.as_deref(),
+        )?;
+
+        let recurrence = recurrence_from_fields(
+            model.recurrence_min_interval_secs,
+            model.recurrence_max_interval_secs,
+            model.recurrence_auto_reschedule,
+        );
+
+        let steps = model
+            .steps
+            .iter()
+            .map(|s| Uuid::parse_str(s).with_context(|| format!("Invalid step UUID '{}'", s)))
+            .collect::<Result<Vec<Uuid>>>()?;
+
+        Ok(Subroutine {
+            id,
+            title: model.title,
+            content: model.content,
+            created_at,
+            constraints,
+            recurrence,
+            steps,
+        })
     }
+}
 
-    #[test]
-    fn test_instantiate_routine_with_position() {
-        let conn = setup_test_db();
-        crate::pipeline::ensure_default_pipeline(&conn).expect("Failed to create default pipeline");
+pub fn insert_subroutine(conn: &Connection, subroutine: &Subroutine) -> Result<()> {
+    let model = SubroutineModel::from(subroutine);
 
-        let routine = Routine::new("Test Routine");
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
+    conn.execute(
+        r#"
+            INSERT INTO subroutines (
+                id, title, content, created_at,
+                valid_times_of_day, deadline,
+                minimum_duration_secs, transition_time_secs, spoons_required,
+                dependencies,
+                recurrence_min_interval_secs, recurrence_max_interval_secs,
+                recurrence_auto_reschedule
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                content = excluded.content,
+                valid_times_of_day = excluded.valid_times_of_day,
+                deadline = excluded.deadline,
+                minimum_duration_secs = excluded.minimum_duration_secs,
+                transition_time_secs = excluded.transition_time_secs,
+                spoons_required = excluded.spoons_required,
+                dependencies = excluded.dependencies,
+                recurrence_min_interval_secs = excluded.recurrence_min_interval_secs,
+                recurrence_max_interval_secs = excluded.recurrence_max_interval_secs,
+                recurrence_auto_reschedule = excluded.recurrence_auto_reschedule
+        "#,
+        rusqlite::params![
+            model.id,
+            model.title,
+            model.content,
+            model.created_at,
+            model.valid_times_of_day,
+            model.deadline,
+            model.minimum_duration_secs,
+            model.transition_time_secs,
+            model.spoons_required,
+            model.dependencies,
+            model.recurrence_min_interval_secs,
+            model.recurrence_max_interval_secs,
+            model.recurrence_auto_reschedule as i64,
+        ],
+    )
+    .context("Failed to insert or update subroutine")?;
 
-        let action = create_test_action(&conn, "Test Action");
-        let step = RoutineStep::new(&routine.id, &action.id, 1);
-        insert_routine_step(&conn, &step).expect("Failed to insert step");
+    insert_subroutine_steps(conn, &model.id, &model.steps)?;
 
-        let options = InstantiateRoutineOptions {
-            start_position: Some(10),
-            ..Default::default()
-        };
-        let result = instantiate_routine(&conn, &routine, options).expect("Failed to instantiate");
+    Ok(())
+}
 
-        assert_eq!(result.created_items.len(), 1);
-        let (_instance, pipeline_item, _title) = &result.created_items[0];
-        assert_eq!(pipeline_item.position, Some(10));
-    }
+pub fn fetch_subroutines(conn: &Connection) -> Result<Vec<Subroutine>> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT
+                id, title, content, created_at,
+                valid_times_of_day, deadline,
+                minimum_duration_secs, transition_time_secs, spoons_required,
+                dependencies,
+                recurrence_min_interval_secs, recurrence_max_interval_secs,
+                recurrence_auto_reschedule
+            FROM subroutines
+            ORDER BY created_at DESC
+            "#,
+        )
+        .context("Failed to prepare subroutine fetch query")?;
 
-    #[test]
-    fn test_instantiate_routine_randomization_flag() {
-        let conn = setup_test_db();
-        crate::pipeline::ensure_default_pipeline(&conn).expect("Failed to create default pipeline");
+    let models = stmt
+        .query_map([], |row| row_to_subroutine_model(row))
+        .context("Failed to query subroutines")?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("Failed to map subroutine rows")?;
 
-        // Create routine with randomization disabled
-        let routine = Routine::new("Sequential Routine").allow_randomization(false);
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
+    models
+        .into_iter()
+        .map(|mut model| {
+            model.steps = fetch_subroutine_steps(conn, &model.id)?;
+            Subroutine::try_from(model)
+        })
+        .collect()
+}
 
-        let action = create_test_action(&conn, "Test Action");
-        let step = RoutineStep::new(&routine.id, &action.id, 1);
-        insert_routine_step(&conn, &step).expect("Failed to insert step");
+pub fn fetch_subroutine_by_id(conn: &Connection, id: Uuid) -> Result<Option<Subroutine>> {
+    let mut stmt = conn
+        .prepare(
+            r#"
+            SELECT
+                id, title, content, created_at,
+                valid_times_of_day, deadline,
+                minimum_duration_secs, transition_time_secs, spoons_required,
+                dependencies,
+                recurrence_min_interval_secs, recurrence_max_interval_secs,
+                recurrence_auto_reschedule
+            FROM subroutines
+            WHERE id = ?1
+            "#,
+        )
+        .context("Failed to prepare subroutine fetch by id query")?;
 
-        // Override with randomize = true
-        let options = InstantiateRoutineOptions {
-            randomize: Some(true),
-            ..Default::default()
-        };
-        let result = instantiate_routine(&conn, &routine, options).expect("Failed to instantiate");
+    let model = stmt
+        .query_row([id.to_string()], |row| row_to_subroutine_model(row))
+        .optional()
+        .context("Failed to fetch subroutine by id")?;
 
-        assert!(result.was_randomized);
-    }
+    model
+        .map(|mut model| {
+            model.steps = fetch_subroutine_steps(conn, &model.id)?;
+            Subroutine::try_from(model)
+        })
+        .transpose()
+}
 
-    #[test]
-    fn test_instantiate_routine_by_id() {
-        let conn = setup_test_db();
-        crate::pipeline::ensure_default_pipeline(&conn).expect("Failed to create default pipeline");
+pub fn delete_subroutine(conn: &Connection, id: Uuid) -> Result<()> {
+    conn.execute(
+        "DELETE FROM subroutine_steps WHERE subroutine_id = ?1",
+        [id.to_string()],
+    )
+    .with_context(|| format!("Failed to delete subroutine_steps for subroutine '{}'", id))?;
 
-        let routine = Routine::new("Test Routine");
-        insert_routine(&conn, &routine).expect("Failed to insert routine");
+    conn.execute("DELETE FROM subroutines WHERE id = ?1", [id.to_string()])
+        .with_context(|| format!("Failed to delete subroutine '{}'", id))?;
 
-        let action = create_test_action(&conn, "Test Action");
-        let step = RoutineStep::new(&routine.id, &action.id, 1);
-        insert_routine_step(&conn, &step).expect("Failed to insert step");
-
-        let options = InstantiateRoutineOptions::default();
-        let result = instantiate_routine_by_id(&conn, &routine.id, options)
-            .expect("Failed to instantiate by id");
-
-        assert_eq!(result.created_items.len(), 1);
-        assert_eq!(result.routine.id, routine.id);
-    }
+    Ok(())
 }

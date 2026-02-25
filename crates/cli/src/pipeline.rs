@@ -1,447 +1,330 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
+use app_core::{Context, MentalState, Pipeline, PipelineEntry};
 use clap::Subcommand;
 use rusqlite::Connection;
+use std::collections::HashSet;
+use uuid::Uuid;
 
-use crate::resolve::{resolve_action, resolve_pipeline_item_in};
+use crate::actions::resolve_action;
+use crate::saved_actions::resolve_saved_action;
 
 #[derive(Debug, Subcommand)]
 pub enum PipelineCommand {
-    /// List all items in the pipeline
-    List {
-        /// Show current scores for each item
-        #[arg(short, long)]
-        scored: bool,
+    /// Show the current pipeline (backlog and queue)
+    Show {
+        /// Also show scores for each entry (requires a mental state)
+        #[arg(long)]
+        scores: bool,
 
-        /// Pipeline ID (defaults to "default")
-        #[arg(short, long, default_value = "default")]
-        pipeline: String,
+        /// Mental state UUID prefix or name to use for scoring
+        #[arg(long)]
+        mental_state: Option<String>,
     },
 
-    /// Get smart task suggestions based on current context (doesn't add to pipeline)
-    Suggest {
-        /// Number of suggestions to show
-        #[arg(short, long, default_value = "3")]
-        count: usize,
-    },
-
-    /// Re-score and re-order pipeline items based on current context
+    /// Refresh the pipeline: score all entries and auto-promote/demote based on threshold
     Refresh {
-        /// Pipeline ID (defaults to "default")
-        #[arg(short, long, default_value = "default")]
-        pipeline: String,
+        /// Mental state UUID prefix or name to use for scoring
+        #[arg(long)]
+        mental_state: Option<String>,
+
+        /// Remaining spoons to use for scoring (default: 10)
+        #[arg(long, default_value = "10")]
+        spoons: u32,
     },
 
-    /// Show detailed scoring breakdown for a pipeline item
-    Explain {
-        /// Pipeline item ID or action title prefix
-        identifier: String,
-
-        /// Pipeline ID (defaults to "default")
-        #[arg(short, long, default_value = "default")]
-        pipeline: String,
-    },
-
-    /// Add an action instance to the pipeline
+    /// Instantiate a saved action and add it to the pipeline backlog
     Add {
-        /// Action ID or title prefix to add
-        action: String,
-
-        /// Position to insert at (defaults to end)
-        #[arg(short, long)]
-        position: Option<i64>,
-
-        /// Pipeline ID (defaults to "default")
-        #[arg(long, default_value = "default")]
-        pipeline: String,
-    },
-
-    /// Move a pipeline item to a new position
-    Move {
-        /// Pipeline item ID or action title prefix
+        /// Saved action UUID prefix or title prefix
         identifier: String,
-
-        /// New position (1-indexed)
-        #[arg(short, long)]
-        position: i64,
-
-        /// Pipeline ID (defaults to "default")
-        #[arg(long, default_value = "default")]
-        pipeline: String,
     },
 
-    /// Remove an item from the pipeline (doesn't delete the instance)
+    /// Remove an entry from the pipeline entirely (from backlog or queue)
     Remove {
-        /// Pipeline item ID or action title prefix
+        /// Action UUID prefix or title prefix
         identifier: String,
-
-        /// Pipeline ID (defaults to "default")
-        #[arg(short, long, default_value = "default")]
-        pipeline: String,
     },
 
-    /// Normalize pipeline positions (fix gaps, make sequential starting from 1)
-    Normalize {
-        /// Pipeline ID (defaults to "default")
-        #[arg(short, long, default_value = "default")]
-        pipeline: String,
+    /// Manually promote an entry from the backlog to the queue
+    Promote {
+        /// Action UUID prefix or title prefix
+        identifier: String,
+    },
+
+    /// Manually demote an entry from the queue back to the backlog
+    Demote {
+        /// Action UUID prefix or title prefix
+        identifier: String,
     },
 }
 
 pub fn handle_pipeline_command(command: &PipelineCommand, conn: &Connection) -> Result<()> {
     match command {
-        PipelineCommand::List { scored, pipeline } => list_pipeline(conn, pipeline, *scored),
-        PipelineCommand::Suggest { count } => suggest_tasks(conn, *count),
-        PipelineCommand::Refresh { pipeline } => refresh_pipeline(conn, pipeline),
-        PipelineCommand::Explain {
-            identifier,
-            pipeline,
-        } => explain_pipeline_item(conn, pipeline, identifier),
-        PipelineCommand::Add {
-            action,
-            position,
-            pipeline,
-        } => add_to_pipeline(conn, pipeline, action, *position),
-        PipelineCommand::Move {
-            identifier,
-            position,
-            pipeline,
-        } => move_pipeline_item(conn, pipeline, identifier, *position),
-        PipelineCommand::Remove {
-            identifier,
-            pipeline,
-        } => remove_from_pipeline(conn, pipeline, identifier),
-        PipelineCommand::Normalize { pipeline } => normalize_pipeline(conn, pipeline),
+        PipelineCommand::Show {
+            scores,
+            mental_state,
+        } => show_pipeline(conn, *scores, mental_state.as_deref()),
+        PipelineCommand::Refresh {
+            mental_state,
+            spoons,
+        } => refresh_pipeline(conn, mental_state.as_deref(), *spoons),
+        PipelineCommand::Add { identifier } => add_to_pipeline(conn, identifier),
+        PipelineCommand::Remove { identifier } => remove_from_pipeline(conn, identifier),
+        PipelineCommand::Promote { identifier } => promote_entry(conn, identifier),
+        PipelineCommand::Demote { identifier } => demote_entry(conn, identifier),
     }
 }
 
-fn list_pipeline(conn: &Connection, pipeline_id: &str, scored: bool) -> Result<()> {
-    let items = database::fetch_pipeline_items(conn, pipeline_id)?;
-    let instances = database::fetch_instances(conn)?;
+fn show_pipeline(
+    conn: &Connection,
+    show_scores: bool,
+    mental_state_identifier: Option<&str>,
+) -> Result<()> {
+    let pipeline = database::load_pipeline(conn)?;
 
-    if items.is_empty() {
-        println!("Pipeline '{}' is empty.", pipeline_id);
-        println!("\nTry:");
-        println!("  subroutine-cli pipeline suggest     # Get smart recommendations");
-        println!("  subroutine-cli pipeline add <action> # Add an action manually");
+    let context = if show_scores || mental_state_identifier.is_some() {
+        Some(build_context(
+            conn,
+            mental_state_identifier,
+            app_core::MAX_SPOONS,
+        )?)
+    } else {
+        None
+    };
+
+    let completed_ids: HashSet<Uuid> = HashSet::new();
+
+    let queue = pipeline.queue();
+    let backlog = pipeline.backlog();
+
+    if queue.is_empty() && backlog.is_empty() {
+        println!("The pipeline is empty.");
+        println!("Use 'pipeline add <action>' to add an action.");
         return Ok(());
     }
 
-    println!("Pipeline: {}", pipeline_id);
+    if !queue.is_empty() {
+        println!("Queue ({}):", queue.len());
+        for (position, entry) in queue.iter().enumerate() {
+            if entry.is_transition() {
+                continue;
+            }
+            let score_str =
+                if let (Some(ctx), Some(actionable)) = (context.as_ref(), entry.as_actionable()) {
+                    let _ = actionable;
+                    let breakdown = app_core::score(entry, ctx, &completed_ids);
+                    format!("  [score: {:.2}]", breakdown.total)
+                } else {
+                    String::new()
+                };
+            println!(
+                "  {}. {} ({}){}",
+                position + 1,
+                entry.title(),
+                &entry.id().to_string()[..8],
+                score_str
+            );
+        }
+    } else {
+        println!("Queue: (empty)");
+    }
+
     println!();
 
-    if scored {
-        // Fetch scores for all items
-        let scored_items = database::score_pipeline_items(conn, pipeline_id)?;
-        let score_map: std::collections::HashMap<_, _> = scored_items
-            .into_iter()
-            .map(|(item, score)| (item.id.clone(), score))
-            .collect();
-
-        for item in &items {
-            let position = item.position.unwrap_or(0);
-            let id_prefix = &item.id[..8.min(item.id.len())];
-            let title = item.action_title.as_deref().unwrap_or("(no title)");
-            let status = if let Some(instance_id) = &item.instance_id {
-                if let Some(instance) = instances.iter().find(|i| &i.id == instance_id) {
-                    instance.status.as_str()
+    if !backlog.is_empty() {
+        println!("Backlog ({}):", backlog.len());
+        for entry in backlog {
+            let score_str =
+                if let (Some(ctx), Some(_actionable)) = (context.as_ref(), entry.as_actionable()) {
+                    let breakdown = app_core::score(entry, ctx, &completed_ids);
+                    format!("  [score: {:.2}]", breakdown.total)
                 } else {
-                    "unknown"
-                }
-            } else {
-                "no instance"
-            };
-
-            let score = score_map.get(&item.id).copied().unwrap_or(0.0);
-
+                    String::new()
+                };
             println!(
-                "{}. [{}] {} ({}) [Score: {:.2}]",
-                position, id_prefix, title, status, score
+                "  - {} ({}){}",
+                entry.title(),
+                &entry.id().to_string()[..8],
+                score_str
             );
         }
     } else {
-        for item in &items {
-            let position = item.position.unwrap_or(0);
-            let id_prefix = &item.id[..8.min(item.id.len())];
-            let title = item.action_title.as_deref().unwrap_or("(no title)");
-            let status = if let Some(instance_id) = &item.instance_id {
-                if let Some(instance) = instances.iter().find(|i| &i.id == instance_id) {
-                    instance.status.as_str()
-                } else {
-                    "unknown"
-                }
-            } else {
-                "no instance"
-            };
-
-            println!("{}. [{}] {} ({})", position, id_prefix, title, status);
-        }
+        println!("Backlog: (empty)");
     }
 
     Ok(())
 }
 
-fn suggest_tasks(conn: &Connection, count: usize) -> Result<()> {
-    println!("🎯 Smart Task Suggestions\n");
+fn refresh_pipeline(
+    conn: &Connection,
+    mental_state_identifier: Option<&str>,
+    spoons: u32,
+) -> Result<()> {
+    let mut pipeline = database::load_pipeline(conn)?;
+    let context = build_context(conn, mental_state_identifier, spoons)?;
+    let completed_ids: HashSet<Uuid> = HashSet::new();
 
-    // Check if there's current context
-    let context_info = if let Some(snapshot) = database::fetch_current_context(conn)? {
-        let mut info = Vec::new();
+    let queue_before = pipeline.queue().len();
+    let backlog_before = pipeline.backlog().len();
 
-        if let Some(metadata_str) = &snapshot.metadata {
-            if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(metadata_str) {
-                if let Some(energy) = metadata.get("energy").and_then(|v| v.as_f64()) {
-                    info.push(format!("Energy: {:.0}%", energy * 100.0));
-                }
-                if let Some(attention) = metadata.get("attention").and_then(|v| v.as_f64()) {
-                    info.push(format!("Attention: {:.0}%", attention * 100.0));
-                }
-            }
+    pipeline.refresh(&context, &completed_ids);
+
+    let queue_after = pipeline.queue().len();
+    let backlog_after = pipeline.backlog().len();
+
+    database::save_pipeline(conn, &pipeline)?;
+
+    let promoted = queue_after.saturating_sub(queue_before);
+    let demoted = backlog_after.saturating_sub(backlog_before);
+
+    println!(
+        "Pipeline refreshed: {} promoted to queue, {} demoted to backlog.",
+        promoted, demoted
+    );
+    println!(
+        "Queue: {} entries | Backlog: {} entries",
+        queue_after, backlog_after
+    );
+
+    Ok(())
+}
+
+fn add_to_pipeline(conn: &Connection, identifier: &str) -> Result<()> {
+    let saved = resolve_saved_action(conn, identifier)?;
+    let title = saved.title.clone();
+
+    // Instantiate a new concrete action from the saved template.
+    let action = saved.instantiate();
+    let id = action.id;
+
+    database::insert_action(conn, &action)?;
+
+    let mut pipeline = database::load_pipeline(conn)?;
+    pipeline.push(PipelineEntry::Action(action))?;
+    database::save_pipeline(conn, &pipeline)?;
+
+    println!(
+        "Instantiated '{}' ({}) and added to the pipeline backlog.",
+        title,
+        &id.to_string()[..8]
+    );
+    Ok(())
+}
+
+fn remove_from_pipeline(conn: &Connection, identifier: &str) -> Result<()> {
+    let action = resolve_action(conn, identifier)?;
+    let title = action.title.clone();
+    let id = action.id;
+
+    let mut pipeline = database::load_pipeline(conn)?;
+
+    // Check queue first, then backlog
+    let in_queue = pipeline.queue().iter().any(|e| e.id() == id);
+    let in_backlog = pipeline.backlog().iter().any(|e| e.id() == id);
+
+    if !in_queue && !in_backlog {
+        bail!("'{}' is not in the pipeline.", title);
+    }
+
+    if in_queue {
+        pipeline.demote(id)?;
+    }
+
+    // Now it's in the backlog — rebuild without it
+    let new_backlog: Vec<PipelineEntry> = pipeline
+        .backlog()
+        .iter()
+        .filter(|e| e.id() != id)
+        .cloned()
+        .collect();
+
+    let queue_entries: Vec<PipelineEntry> = pipeline.queue().to_vec();
+
+    let mut new_pipeline = Pipeline::new().with_promotion_threshold(pipeline.promotion_threshold());
+    for entry in new_backlog {
+        new_pipeline.push(entry)?;
+    }
+    for entry in queue_entries {
+        if !entry.is_transition() {
+            new_pipeline.push(entry.clone())?;
+            new_pipeline.promote(entry.id())?;
         }
+    }
 
-        if !info.is_empty() {
-            format!("Based on current context ({})", info.join(", "))
-        } else {
-            "Based on available tasks".to_string()
+    database::save_pipeline(conn, &new_pipeline)?;
+
+    println!(
+        "Removed '{}' ({}) from the pipeline.",
+        title,
+        &id.to_string()[..8]
+    );
+    Ok(())
+}
+
+fn promote_entry(conn: &Connection, identifier: &str) -> Result<()> {
+    let action = resolve_action(conn, identifier)?;
+    let title = action.title.clone();
+    let id = action.id;
+
+    let mut pipeline = database::load_pipeline(conn)?;
+
+    let in_backlog = pipeline.backlog().iter().any(|e| e.id() == id);
+    if !in_backlog {
+        let in_queue = pipeline.queue().iter().any(|e| e.id() == id);
+        if in_queue {
+            bail!("'{}' is already in the queue.", title);
         }
+        bail!("'{}' is not in the pipeline backlog.", title);
+    }
+
+    pipeline.promote(id)?;
+    database::save_pipeline(conn, &pipeline)?;
+
+    println!(
+        "Promoted '{}' ({}) to the queue.",
+        title,
+        &id.to_string()[..8]
+    );
+    Ok(())
+}
+
+fn demote_entry(conn: &Connection, identifier: &str) -> Result<()> {
+    let action = resolve_action(conn, identifier)?;
+    let title = action.title.clone();
+    let id = action.id;
+
+    let mut pipeline = database::load_pipeline(conn)?;
+
+    let in_queue = pipeline.queue().iter().any(|e| e.id() == id);
+    if !in_queue {
+        let in_backlog = pipeline.backlog().iter().any(|e| e.id() == id);
+        if in_backlog {
+            bail!("'{}' is already in the backlog.", title);
+        }
+        bail!("'{}' is not in the pipeline queue.", title);
+    }
+
+    pipeline.demote(id)?;
+    database::save_pipeline(conn, &pipeline)?;
+
+    println!(
+        "Demoted '{}' ({}) to the backlog.",
+        title,
+        &id.to_string()[..8]
+    );
+    Ok(())
+}
+
+fn build_context(
+    conn: &Connection,
+    mental_state_identifier: Option<&str>,
+    spoons: u32,
+) -> Result<Context> {
+    let mental_state = if let Some(identifier) = mental_state_identifier {
+        let saved = crate::mental_states::resolve_mental_state(conn, identifier)?;
+        MentalState::new(spoons).with_declared(saved)
     } else {
-        "Based on available tasks (no context set)".to_string()
+        MentalState::new(spoons)
     };
 
-    println!("{}\n", context_info);
-
-    let suggestions = database::suggest_best_instances(conn, count)?;
-
-    if suggestions.is_empty() {
-        println!("No suggestions available.");
-        println!("\nTry:");
-        println!("  subroutine-cli instances create <action> # Create some task instances");
-        println!("  subroutine-cli context set-energy <0.0-1.0> # Set your energy level");
-        println!("  subroutine-cli context set-attention <0.0-1.0> # Set your attention capacity");
-        return Ok(());
-    }
-
-    for (i, (instance, action, score)) in suggestions.iter().enumerate() {
-        let id_prefix = &instance.id[..8.min(instance.id.len())];
-        println!("{}. [{}] {}", i + 1, id_prefix, action.title);
-        println!("   Score: {:.2} | Status: {}", score, instance.status);
-
-        // Show a brief hint about why this was suggested
-        if let Some(duration) = action.duration_bucket {
-            println!("   Duration: ~{} min", fibonacci_minutes(duration as i32));
-        }
-        if let Some(energy) = action.energy_rate {
-            let energy_label = match energy {
-                1 => "very low energy",
-                2 => "low energy",
-                3 => "moderate energy",
-                4 => "high energy",
-                5 => "very high energy",
-                _ => "unknown energy",
-            };
-            println!("   Energy: {}", energy_label);
-        }
-
-        println!();
-    }
-
-    println!("To see detailed scoring breakdown:");
-    println!("  subroutine-cli instances score <id>");
-
-    Ok(())
-}
-
-fn refresh_pipeline(conn: &Connection, pipeline_id: &str) -> Result<()> {
-    println!(
-        "🔄 Refreshing pipeline '{}' based on current context...\n",
-        pipeline_id
-    );
-
-    // Score all pipeline items
-    let scored_items = database::score_pipeline_items(conn, pipeline_id)?;
-
-    if scored_items.is_empty() {
-        println!("Pipeline is empty - nothing to refresh.");
-        return Ok(());
-    }
-
-    // Sort by score (highest first)
-    let mut sorted_items = scored_items;
-    sorted_items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-    // Update positions based on score ranking
-    for (new_position, (item, score)) in sorted_items.iter().enumerate() {
-        let new_pos = (new_position + 1) as i64;
-        database::update_pipeline_item_position(conn, &item.id, new_pos)?;
-
-        let title = item.action_title.as_deref().unwrap_or("(no title)");
-        let old_pos = item.position.unwrap_or(0);
-
-        if old_pos != new_pos {
-            println!(
-                "  [{}] {} (score: {:.2}) moved: {} → {}",
-                &item.id[..8],
-                title,
-                score,
-                old_pos,
-                new_pos
-            );
-        } else {
-            println!(
-                "  [{}] {} (score: {:.2}) stayed at position {}",
-                &item.id[..8],
-                title,
-                score,
-                new_pos
-            );
-        }
-    }
-
-    println!("\n✅ Pipeline refreshed and reordered by score!");
-    println!("\nView updated pipeline:");
-    println!("  subroutine-cli pipeline list --scored");
-
-    Ok(())
-}
-
-fn explain_pipeline_item(conn: &Connection, pipeline_id: &str, identifier: &str) -> Result<()> {
-    // Resolve the pipeline item
-    let item = resolve_pipeline_item_in(conn, pipeline_id, identifier)?;
-
-    println!(
-        "Pipeline Item: {}\n",
-        item.action_title.as_deref().unwrap_or("(no title)")
-    );
-
-    // Get the instance ID
-    let instance_id = item
-        .instance_id
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Pipeline item has no associated instance"))?;
-
-    // Use the existing scoring function to get detailed breakdown
-    let scored = database::score_instance_with_context(conn, instance_id)?;
-
-    println!("Total Score: {:.2}\n", scored.total_score);
-    println!("Factor Breakdown:");
-    println!(
-        "{:<20} {:>10} {:>10} {:>15}",
-        "Factor", "Raw", "Weight", "Weighted"
-    );
-    println!("{}", "=".repeat(60));
-
-    for factor in &scored.factor_scores {
-        println!(
-            "{:<20} {:>10.2} {:>10.2} {:>15.2}",
-            factor.factor_name, factor.raw_score, factor.weight, factor.weighted_score
-        );
-    }
-
-    println!("\nExplanations:");
-    for factor in &scored.factor_scores {
-        println!(
-            "  • {}: {}",
-            factor.factor_name,
-            factor.explanation.as_deref().unwrap_or("No explanation")
-        );
-    }
-
-    Ok(())
-}
-
-fn add_to_pipeline(
-    conn: &Connection,
-    pipeline_id: &str,
-    action_identifier: &str,
-    position: Option<i64>,
-) -> Result<()> {
-    // Resolve the action
-    let action = resolve_action(conn, action_identifier)?;
-
-    // Create an instance for this action
-    let instance = database::Instance::new(&action.id);
-    database::insert_instance(conn, &instance)?;
-
-    // Determine position
-    let pos = match position {
-        Some(p) => p,
-        None => database::next_pipeline_position(conn, pipeline_id)?,
-    };
-
-    // Create pipeline item
-    let pipeline_item =
-        database::PipelineItem::new_for_instance(pipeline_id, &instance.id, &action.title, pos);
-
-    database::insert_pipeline_item(conn, &pipeline_item)?;
-
-    println!(
-        "✅ Added '{}' to pipeline at position {}",
-        action.title, pos
-    );
-    println!("   Instance ID: {}", &instance.id[..8]);
-    println!("   Pipeline item ID: {}", &pipeline_item.id[..8]);
-
-    Ok(())
-}
-
-fn move_pipeline_item(
-    conn: &Connection,
-    pipeline_id: &str,
-    identifier: &str,
-    new_position: i64,
-) -> Result<()> {
-    // Resolve the pipeline item
-    let item = resolve_pipeline_item_in(conn, pipeline_id, identifier)?;
-
-    let old_position = item.position.unwrap_or(0);
-    let title = item.action_title.as_deref().unwrap_or("(no title)");
-
-    database::update_pipeline_item_position(conn, &item.id, new_position)?;
-
-    println!(
-        "✅ Moved '{}' from position {} to {}",
-        title, old_position, new_position
-    );
-
-    Ok(())
-}
-
-fn remove_from_pipeline(conn: &Connection, pipeline_id: &str, identifier: &str) -> Result<()> {
-    // Resolve the pipeline item
-    let item = resolve_pipeline_item_in(conn, pipeline_id, identifier)?;
-
-    let title = item.action_title.as_deref().unwrap_or("(no title)");
-
-    database::delete_pipeline_item(conn, &item.id)?;
-
-    println!("✅ Removed '{}' from pipeline", title);
-    println!("   (The underlying instance was not deleted)");
-
-    Ok(())
-}
-
-fn normalize_pipeline(conn: &Connection, pipeline_id: &str) -> Result<()> {
-    database::normalize_pipeline_positions(conn, pipeline_id)?;
-
-    println!("✅ Normalized positions in pipeline '{}'", pipeline_id);
-    println!("   All positions are now sequential starting from 1");
-
-    Ok(())
-}
-
-// Helper function to convert Fibonacci bucket index to approximate minutes
-fn fibonacci_minutes(bucket: i32) -> i32 {
-    match bucket {
-        1 => 1,
-        2 => 2,
-        3 => 3,
-        4 => 5,
-        5 => 8,
-        6 => 13,
-        7 => 21,
-        8 => 34,
-        9 => 55,
-        10 => 89,
-        11 => 144,
-        _ => bucket,
-    }
+    Ok(Context::new(mental_state))
 }
