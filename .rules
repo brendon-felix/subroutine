@@ -11,7 +11,6 @@
   - Use explicit error handling with `match` or `if let Err(...)` when you need custom logic
   - Example: avoid `let _ = client.request(...).await?;` - use `client.request(...).await?;` instead
 * When implementing async operations that may fail, ensure errors propagate to the UI layer so users get meaningful feedback.
-* Never create files with `mod.rs` paths - prefer `src/some_module.rs` instead of `src/some_module/mod.rs`.
 * When creating new crates, prefer specifying the library root path in `Cargo.toml` using `[lib] path = "...rs"` instead of the default `lib.rs`, to maintain consistent and descriptive naming (e.g., `gpui.rs` or `main.rs`).
 * Avoid creative additions unless explicitly requested
 * Use full words for variable names (no abbreviations like "q" for "queue")
@@ -146,14 +145,44 @@ GPUI has had some changes to its APIs. Always write code using the new APIs:
 
 * `spawn` methods now take async closures (`AsyncFn`), and so should be called like `cx.spawn(async move |cx| ...)`.
 * Use `Entity<T>`. This replaces `Model<T>` and `View<T>` which no longer exist and should NEVER be used.
-* Use `App` references. This replaces `AppContext` which no longer exists and should NEVER be used.
+* Use `App` references.
 * Use `Context<T>` references. This replaces `ModelContext<T>` which no longer exists and should NEVER be used.
 * `Window` is now passed around explicitly. The new interface adds a `Window` reference parameter to some methods, and adds some new "*_in" methods for plumbing `Window`. The old types `WindowContext` and `ViewContext<T>` should NEVER be used.
+* `Window::use_keyed_state(key, cx, init)` replaces the old `use_keyed_transition` from `gpui_transitions`. It returns `Entity<S>` where `S` is the state type. `use_state` (no key) also exists and uses the call-site location as the key.
+* `.hover_bg(color)` does not exist. Use `.hover(|style| style.bg(color))` instead.
 
 
 ## General guidelines
 
 - Use `./script/clippy` instead of `cargo clippy`
+
+## gpui_transitions crate
+
+The project uses a local `gpui_transitions` crate (path dependency at `/Users/felixb/Projects/gpui_transitions`) for animated value transitions. This crate depends on `gpui` from crates.io. Since the `desktop` crate depends on `gpui` from the zed git repo, the workspace `Cargo.toml` must include a `[patch.crates-io]` section to unify the two gpui versions — otherwise types like `gpui::Point<gpui::Pixels>` from the two sources are treated as incompatible, and `Lerp` impls and `WindowUseTransition` extension methods will not work:
+
+```toml
+# In workspace Cargo.toml:
+[patch.crates-io]
+gpui = { git = "https://github.com/zed-industries/zed" }
+```
+
+The `gpui_transitions` crate provides:
+- `Lerp` trait — implemented for `f32`, `f64`, `Point<T>`, `Size<T>`, `Pixels`, `Rgba`, and other GPUI geometry types
+- `Transition<T>` — wraps `Entity<TransitionState<T>>` and animates toward a goal value
+- `WindowUseTransition` extension trait on `Window` — provides `use_keyed_transition(key, cx, duration, init)` and `use_transition(cx, duration, init)`
+
+Usage:
+```rust
+use gpui_transitions::WindowUseTransition;
+
+// In a render/prepaint context:
+let hover = window
+    .use_keyed_transition("hover", cx, Duration::from_millis(150), |_, _| 0.0_f32)
+    .with_easing(ease_in_out);
+
+let value = *hover.evaluate(window, cx);  // current interpolated value
+hover.update(cx, |v, cx| { *v = 1.0; cx.notify(); });  // set new goal
+```
 
 # gpui-component
 
@@ -173,11 +202,9 @@ Note: The HTML pages at `/docs/components/button` etc. return 404 for fetch tool
 
 ## Available IconName variants
 
-The following are the ONLY valid `IconName` variants. Do NOT use any others:
+The following are the ONLY valid `IconName` variants. If you use others, we will need to add them to the icons folder and AppIcon enum before they can be used.
 
 ALargeSmall, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Asterisk, Battery, BatteryCharging, BatteryFull, BatteryLow, BatteryMedium, BatteryWarning, Bell, BookOpen, Bot, Building2, Calendar, CaseSensitive, ChartPie, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, ChevronUp, CircleCheck, CircleUser, CircleX, Close, Copy, Cpu, Dash, Delete, Ellipsis, EllipsisVertical, ExternalLink, Eye, EyeOff, File, Folder, FolderClosed, FolderOpen, Frame, GalleryVerticalEnd, GitHub, Globe, HardDrive, Heart, HeartOff, Inbox, Info, Inspector, LayoutDashboard, Loader, LoaderCircle, Map, Maximize, MemoryStick, Menu, Minimize, Minus, Moon, Network, Palette, PanelBottom, PanelBottomOpen, PanelLeft, PanelLeftClose, PanelLeftOpen, PanelRight, PanelRightClose, PanelRightOpen, Pause, Play, Plus, Redo, Redo2, Replace, ResizeCorner, Search, Settings, Settings2, SortAscending, SortDescending, SquareTerminal, Star, StarFill, StarOff, Sun, ThumbsDown, ThumbsUp, TriangleAlert, Undo, Undo2, User, WindowClose, WindowMaximize, WindowMinimize, WindowRestore
-
-Common icons that do NOT exist (use alternatives): CheckSquare (use Check), Activity (use Play), Repeat (use Redo), Circle (use Dash), Sunrise/Sunset (use Sun/Moon), Trash/Trash2 (use Delete).
 
 ## Key API patterns and gotchas
 
@@ -190,7 +217,7 @@ use gpui_component::Sizable;     // needed for .small(), .xsmall()
 Button::new("id")           // takes only an ElementId, NOT (id, label)
     .label("Click me")      // label is a separate method
     .icon(IconName::Check)
-    .primary()               // or .ghost(), .outline(), .danger() — from ButtonVariants trait
+    .primary()               // or .ghost(), .primary(), .outline(), .danger() — from ButtonVariants trait
     .small()                 // from Sizable trait
     .disabled(true)          // from Disableable trait
     .tooltip("Hint text")   // takes impl Into<SharedString>, NOT a closure
@@ -290,8 +317,19 @@ div().id("scrollable").overflow_y_scroll()  // works
 div().overflow_y_scroll()                    // COMPILE ERROR
 ```
 
+### `.id()` on elements
+`.id()` is defined on the `InteractiveElement` trait (NOT `StatefulInteractiveElement`). If `.id()` is not found, import `gpui::InteractiveElement`.
+
+### `.hover()` for conditional hover styling
+Use `.hover(|style| style.bg(color))` — NOT `.hover_bg(color)`. The `hover_bg` method does not exist:
+```rust
+div().hover(|s| s.bg(theme.list_hover))   // correct
+div().hover_bg(theme.list_hover)           // COMPILE ERROR — method does not exist
+```
+
 ### Traits that must be imported for certain methods
 - `gpui::AppContext as _` — needed for `cx.new()` to create entities from `Context<T>`
+- `gpui::InteractiveElement` — needed for `.id()`, `.on_click()`, `.on_drop()`, `.on_action()`, `.on_hover()`, and most other event handlers on elements. This is the most commonly forgotten import.
 - `gpui::StatefulInteractiveElement` — needed for `.overflow_y_scroll()`, `.on_drag()`, etc.
 - `gpui_component::Sizable` — needed for `.small()`, `.xsmall()`, `.large()` on Button, Tag, Switch, etc.
 - `gpui_component::Disableable` — needed for `.disabled()` on Button, Switch, etc.
@@ -299,6 +337,8 @@ div().overflow_y_scroll()                    // COMPILE ERROR
 - `gpui::prelude::FluentBuilder` — needed for `.when()`, `.when_some()`, `.map()` on elements
 - `gpui_component::ActiveTheme` — needed for `cx.theme()` to access theme colors
 - `gpui_component::WindowExt` — needed for `window.push_notification()`, `window.open_dialog()`, `window.close_dialog()`. This is from `gpui_component`, NOT from `gpui`.
+
+The compiler error for missing trait imports typically reads: `no method named X found for struct Y in the current scope` with a note that the method IS available — this always means the providing trait is not imported. Rust will not automatically suggest the correct trait name for GPUI method errors.
 
 ### IconName does not implement Copy
 `IconName` is Clone but not Copy. When iterating over `&[IconName]`, use `.clone()` not `*`:
@@ -617,6 +657,67 @@ div().min_w_0()                                    // allow flex shrink below co
 
 ## Common patterns
 
+### Polymorphic element types (AnyElement)
+When you need to return different element types from a `match` or `if`, use `AnyElement` with `.into_any_element()`. `Box<dyn IntoElement>` does NOT work — `IntoElement` is not dyn-compatible:
+```rust
+use gpui::AnyElement;
+
+// CORRECT
+let content: AnyElement = match self.page {
+    Page::A => self.render_a(cx).into_any_element(),
+    Page::B => self.render_b(cx).into_any_element(),
+};
+div().child(content)
+
+// COMPILE ERROR — IntoElement is not dyn compatible (requires Self: Sized)
+let content: Box<dyn IntoElement> = match self.page { ... };
+```
+
+### Rust 2024 borrow checker and `impl IntoElement` in render loops
+In Rust 2024, `impl Trait` in return position captures **all** input lifetimes by default. This means a helper method like `fn render_item(&self, cx: &mut Context<Self>) -> impl IntoElement` captures the lifetime of `cx`. Calling it in a loop while pushing results to a `Vec` causes a "cannot borrow `*cx` as mutable more than once" error across loop iterations.
+
+**Fix:** Remove `cx` from the helper's parameters. Instead of `cx.listener(...)`, obtain an `Entity<Self>` handle before the loop and use `entity.update(cx, ...)` inside closures:
+```rust
+// In render():
+let entity = cx.entity();   // obtain once before the loop
+let mut cards = Vec::new();
+for (ix, item) in self.items.iter().enumerate() {
+    cards.push(self.render_card(entity.clone(), ix, item, cx));
+}
+
+// Helper signature — takes &App instead of &mut Context<Self>:
+fn render_card(
+    &self,
+    entity: Entity<Self>,
+    ix: usize,
+    item: &Item,
+    cx: &App,
+) -> impl IntoElement {
+    div()
+        .on_click(move |_, _, cx| {
+            entity.update(cx, |this, cx| {
+                this.selected = ix;
+                cx.notify();
+            });
+        })
+        // ...
+}
+```
+
+`cx.entity()` is available on `Context<T>` and returns `Entity<T>` — a cloneable handle that does not borrow `cx`.
+
+### Rust 2024 borrow checker and `&str` in `impl IntoElement` helpers
+If a helper takes `label: &str` and returns `impl IntoElement`, Rust 2024 infers the returned element captures the lifetime of `label`, causing "borrowed data escapes outside of associated function" errors.
+
+**Fix:** Accept `label: impl Into<SharedString>` and convert immediately:
+```rust
+fn render_row(label: impl Into<gpui::SharedString>, cx: &App) -> impl IntoElement {
+    let label: gpui::SharedString = label.into();
+    // use label freely — no borrowed lifetime escaping
+    div().child(Label::new(label))
+}
+```
+
 ### Conditional rendering
 ```rust
 div()
@@ -726,6 +827,134 @@ v_flex()
 ```
 
 
+# Subroutine Crate Architecture
+
+## Crate Overview
+
+The project is split into three crates that have a strict dependency direction:
+
+```
+desktop  →  app-core  (domain types, scoring, pipeline logic)
+desktop  →  database  (persistence)
+database →  app-core  (converts to/from app-core types)
+app-core has NO knowledge of persistence or UI
+```
+
+Never reach across this boundary — e.g. `app-core` must not import `database`, and `database` must not import `desktop`.
+
+## `app-core` key types
+
+| Type | Purpose |
+|---|---|
+| `SavedAction` | A reusable action template (stored in DB, shown in action list) |
+| `Action` | A concrete, instantiated action in the pipeline |
+| `PipelineEntry` | Enum: `Action`, `Event`, `Routine`, `Subroutine`, `Transition` |
+| `Pipeline` | Holds `backlog: Vec<PipelineEntry>` and `queue: Vec<PipelineEntry>` |
+| `SavedMentalState` | A named mental-state profile (stored in DB) |
+| `MentalState` | Live runtime state (declared state + derived spoon level) |
+| `Routine` / `SavedStep` | A saved sequence of `SavedAction` or `SavedEvent` references |
+
+`Uuid` is from the `uuid` crate — use `uuid::Uuid`, NOT `app_core::Uuid` (which is private). Import `uuid` directly.
+
+## `database` CRUD functions
+
+The `database` crate exposes free functions (not a struct/trait). Import them directly:
+```rust
+use database::{
+    connect_and_migrate,
+    fetch_saved_actions, insert_saved_action, delete_saved_action,
+    fetch_routines, insert_routine, delete_routine,
+    fetch_saved_mental_states, insert_saved_mental_state, delete_saved_mental_state,
+    load_pipeline, save_pipeline,
+    insert_action, delete_action,
+};
+```
+
+## `DatabaseStore` — the desktop's central store
+
+`DatabaseStore` (in `crates/desktop/src/stores/database_store.rs`) is an `Entity<DatabaseStore>` that owns the in-memory cache and exposes the high-level API used by all views. It emits GPUI events when data changes.
+
+### Events emitted
+
+| Event | Meaning |
+|---|---|
+| `PipelineChanged` | Queue/backlog changed — views should re-render pipeline |
+| `SavedActionsLoaded` | `saved_actions` cache refreshed — action list views should update |
+| `RoutinesLoaded` | `routines` cache refreshed |
+| `SavedMentalStatesLoaded` | `saved_mental_states` cache refreshed |
+| `MentalStateChanged` | Live `MentalState` changed — sidebar/focus view should update |
+| `DatabaseError { message }` | A background DB task failed |
+
+### Key methods
+
+```rust
+// Read cached data (no cx needed beyond &App):
+store.get_saved_actions() -> &Vec<SavedAction>
+store.get_saved_action(id: Uuid) -> Option<&SavedAction>
+store.get_pipeline() -> &Pipeline
+store.get_mental_state() -> &MentalState
+store.get_saved_mental_states() -> &Vec<SavedMentalState>
+store.get_routines() -> &Vec<Routine>
+
+// Actions:
+store.upsert_saved_action(saved: SavedAction, cx)  // save template, reloads list
+store.delete_saved_action(id: Uuid, cx)
+store.create_action(title: String, cx)             // creates SavedAction + Action, pushes to pipeline
+store.create_ephemeral_action(title: String, cx)   // no SavedAction, just concrete Action
+
+// Pipeline:
+store.promote(id: Uuid, cx)                        // backlog → queue
+store.demote(id: Uuid, cx)                         // queue → backlog
+store.remove_from_pipeline(id: Uuid, cx)
+store.complete_action(id: Uuid, cx)                // mark done, remove from pipeline
+store.refresh_pipeline(cx)                         // re-score and re-order queue
+store.score_entry(entry: &PipelineEntry) -> f32    // 0.0–1.0 fit score
+
+// Mental state:
+store.declare_mental_state(id: Uuid, cx)           // set active SavedMentalState by ID
+store.clear_declared_state(cx)                     // revert to neutral
+
+// Routines:
+store.upsert_routine(routine: Routine, cx)
+store.delete_routine(id: Uuid, cx)
+```
+
+### Starter mental state IDs
+
+The eight built-in `SavedMentalState` records have stable hardcoded UUIDs defined in `app_core::mental_state::starter_states`:
+
+```rust
+use app_core::mental_state::starter_states;
+
+starter_states::COASTING_ID    // balanced / neutral
+starter_states::ENERGIZED_ID
+starter_states::FOCUSED_ID     // hyperfocused
+starter_states::SCATTERED_ID   // analysis paralysis
+starter_states::TIRED_ID
+starter_states::FOGGY_ID
+starter_states::OVERWHELMED_ID // overstimulated
+starter_states::FRIED_ID       // fully depleted / intense emotion
+```
+
+Use these with `store.declare_mental_state(starter_states::SCATTERED_ID, cx)` etc.
+
+## `StartActionEditor` / `StartRoutineEditor` event types
+
+These are GPUI events used to open the editor overlays:
+
+```rust
+// Defined in root_view.rs:
+pub struct StartActionEditor { pub action_id: Option<Uuid> }  // None = new action
+
+// Defined in routines_view.rs:
+pub struct StartRoutineEditor { pub routine_id: Option<Uuid> }  // None = new routine
+```
+
+Both use `Uuid` directly — do NOT store the ID as `String` in these events. Emit:
+```rust
+cx.emit(StartActionEditor { action_id: Some(saved_action.id) });
+```
+
 # Subroutine Application Design
 
 ## Core Philosophy
@@ -739,118 +968,151 @@ Subroutine is an **executive function prosthetic**, not a traditional task manag
 3. **Flexible structure over rigid schedules** — Use time windows, not deadlines; provide semi-flexible routines, not hard commitments
 4. **Cohesive system** — Features integrate deeply rather than existing as separate tools
 5. **Calm but rich** — Prioritize focus and emotional safety while maintaining depth and capability
+6. **Adapt to the user** — The system learns and personalizes; users are never forced into rigid categories or workflows
 
 ### Core Concept: Context-Aware Recommendations
 
 The app revolves around five primitives:
-- **Actions** — Things the user might do (tasks, activities, habits, events)
+- **Actions** — Things the user might do
 - **Context** — User's current environment, energy, attention capacity, mental state
 - **States** — Mental/emotional states that affect capability and needs
 - **Events** — User behavior history for learning and adaptation
-- **Structures** — Ways to group actions (routines, pipelines, vibe lists)
+- **Structures** — Ways to group actions (routines, subroutines, vibe lists)
+
+---
+
 ## Data Model: Actions
 
-Actions are the fundamental unit. All "things the user might do" share a common schema with executive function–aware attributes.
+Everything the user might do is an `Action`. There is no mandatory type or category field — forcing users to classify their actions adds friction and doesn't align with the system's adaptive philosophy. If the recommendation engine eventually needs to distinguish kinds of actions, that distinction should be optional or inferred, never required at creation time.
 
-### Action Types
-
-- **Task** — Goal-oriented, discrete, completable. Examples: hygiene, chores, work assignments, errands
-- **Activity** — Open-ended, done for enjoyment/fulfillment. Examples: leisure, exercise, socializing, hobbies
-- **Event** — Scheduled occurrence at specific time/place. Examples: meetings, appointments, gatherings
-- **Habit** — Repeated behavior, may become automatic. Examples: morning coffee, evening walk
-- **Routine** — Sequential group of tasks/activities/habits. Examples: morning routine, bedtime routine
-- **Subroutine** — Dynamic sequence auto-selected by context and mental state. Acts as modular routine component or mental state handler
+An action that involves multiple steps is better represented as a `Routine` or `Subroutine`, not a special action variant.
 
 ### Action Attributes (Executive Function–Aware)
 
-All actions should capture these attributes for accurate recommendation:
+All actions may optionally capture these attributes for better recommendations:
 
-**Universal attributes:**
 - **Duration** — Fibonacci-scaled minutes: 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144
-- **Energy rate** — How draining/energizing per unit time (multiply by duration for total cost)
-- **Attention level** — Required focus intensity (1-5 scale)
-- **Transition difficulty** — How hard to start/stop (1-5 scale)
-- **Enjoyment after start** — Motivation once begun (1-5 scale)
-- **Importance** — Priority level (1-5 scale)
+- **Energy rate** — How draining/energizing per unit time
+- **Attention level** — Required focus intensity (1–5)
+- **Transition difficulty** — How hard to start/stop (1–5)
+- **Enjoyment after start** — Motivation once begun (1–5)
+- **Importance** — Priority level (1–5)
 - **Urgency growth** — Does this become more important over time?
-- **Environment requirements** — Predefined categories: quiet, social, outdoors, etc. (with accessibility scores)
-- **Location requirements** — Predefined categories: home, work, store, etc. (with accessibility scores)
-- **Preferred time of day** — Morning, afternoon, evening, night
-
-**Recurring-specific attributes:**
-- **Frequency** — Fibonacci-scaled: 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144 days/weeks/months
+- **Environment requirements** — Predefined categories: quiet, social, outdoors, etc.
+- **Location requirements** — Predefined categories: home, work, store, etc.
+- **Preferred time of day** — Expressed as `TimesOfDay` bitflags
 
 ### Action Creation Questions
 
-These questions help populate action attributes:
+These questions help populate action attributes without overwhelming the user:
 
 **Breakdown & scope:**
 - "Are there parts that could be done separately?"
-- "Are there parts that must be done together?"
 - "About how long will this take?" → duration
 
 **Transition difficulty:**
 - "How hard is this to begin?" → transition_difficulty
-- "Is there a clear way to start?"
-- "Is there a clean way to stop?"
+- "Is there a clear way to start and stop?"
 
 **Energy & motivation:**
 - "How draining or energizing is this?" → energy_rate
-- "What makes it draining/energizing?"
-- "Could accommodations make it less draining?"
 - "How enjoyable once started?" → enjoyment_after_start
 
 **Priority:**
 - "How important is this?" → importance
-- "What are consequences of not doing it?"
-- "What are benefits of doing it?"
 - "Does it get more important over time?" → urgency_growth
 
 **Context:**
-- "Which environments suit this task?" → environment_requirements
-- "Which environments are accessible to you?" → accessibility_score
+- "Which environments suit this?" → environment_requirements
 - "What time of day do you prefer this?" → preferred_time_of_day
 
-**Comparative:**
-- "Is this easier, harder, or same as [reference task]?"
-- "Is this part of your routine?"
+---
 
-## Mental State Navigation
+## Mental State
+
+Mental state drives which actions are surfaced, in what order, and what interventions are triggered. The system minimizes how often it asks the user to quantify their state.
+
+### Derived Spoon Tracking
+
+Spoons (executive function capacity) are tracked automatically as a side effect of normal usage. Each completed action deducts from the running spoon count based on its energy cost and duration. Spoons recover over time at a configurable rate. The user never has to answer "how many spoons do you have?"
+
+### Saved Mental States
+
+Users create reusable mental state profiles — named snapshots of how they're feeling. When the user declares a state ("I'm feeling overwhelmed"), the system applies that profile's values to the current mental state. This replaces multi-field numeric input with a single tap.
+
+Four bipolar axes capture the dimensions most relevant to recommendations, each on a scale of −2 to +2 with 0 as neutral:
+
+- **Attention mode** — scattered (−2) to hyperfocused (+2)
+- **Sensory tolerance** — understimulated (−2) to overstimulated (+2)
+- **Emotional regulation** — dysregulated (−2) to regulated (+2)
+- **Social battery** — drained (−2) to charged (+2)
+
+These axes were chosen because they each have distinct implications for which actions are appropriate. Spoons alone cannot distinguish "tired and scattered" from "tired but hyperfocused."
+
+A starter set of eight named states is provided (Coasting, Energized, Focused, Scattered, Tired, Foggy, Overwhelmed, Fried) with hardcoded UUIDs so they remain identifiable across sessions. Users can modify or delete any of them and create their own.
+
+The live `MentalState` struct combines derived spoon tracking with the currently declared `SavedMentalState` (if any). It is passed as an argument to pipeline operations rather than stored on the `Pipeline` itself, so it is always up to date.
+
+### Mental State Navigation
 
 Users can navigate by declaring "I'm feeling..." which triggers appropriate interventions:
 
-- **"Analysis paralysis"** → Brain Interrupt + Idea Generator (pick from category) + Decision Maker
-- **"Overstimulated"** → Stimulation check + Self-accommodation reminders + Environment suggestions
-- **"Overwhelmed"** → Brain Interrupt + Structured mindfulness + Emotion Decoder + Special interest suggestions
-- **"Hyperfocused"** → Transition Primer (gradual attention shift) + Brain Interrupt when needed
-- **"Intense emotion"** → Emotion Decoder (label emotion) + Stack Trace (trace emotional history)
+- **Scattered / Analysis paralysis** → Brain Interrupt + Decision Maker
+- **Overstimulated** → Stimulation check + Environment suggestions + Wisdom Nuggets
+- **Overwhelmed** → Brain Interrupt + Emotion Decoder + Special interest suggestions
+- **Hyperfocused** → Transition Primer (gradual attention shift)
+- **Dysregulated / Intense emotion** → Emotion Decoder + Stack Trace
+
+---
+
+## The Pipeline
+
+The Pipeline is the central system through which all actions flow. It acts as both a backlog manager and a recommendation engine. Everything the user might do passes through it.
+
+### Two Lists
+
+**Backlog** — a semi-ordered pool of actions that should eventually get done. Things are added here when the user captures them. The system draws from the backlog to populate the queue.
+
+**Queue** — the active, fully ordered list of items the user can act on now. These are the items surfaced in Focus Mode and the main pipeline view. The queue is ordered by score and includes auto-generated transitions between items.
+
+### Score-Based Promotion and Demotion
+
+Items move between the backlog and queue automatically based on a score. Each item receives a score derived from how well it fits the current context and mental state. Items above a configurable promotion threshold are moved into the queue; items that fall below it are demoted back to the backlog.
+
+The threshold is user-configurable and defaults to a sensible value. The user can also manually promote or demote any item regardless of score.
+
+### PipelineEntry
+
+Pipeline entries use a concrete enum rather than trait objects. The set of entry types is defined by the app, making the closed-world assumption of an enum correct. This also enables cloning, pattern matching, and serialization.
+
+Variants:
+- **Action** — a single thing to do
+- **Event** — a scheduled occurrence at a specific time and place
+- **Routine** — a user-defined, ordered group of actions
+- **Subroutine** — a small, dynamic group of actions auto-selected by context and mental state
+- **Transition** — buffer time between items; does not implement `Actionable`
+
+### Transitions
+
+Transitions are ephemeral — computed and inserted automatically rather than stored as first-class entries. Their content is derived from the adjacent entries (e.g. "wrap up X, prepare for Y"). They appear within multi-action entries (Routines, Subroutines) as well as between top-level entries in the queue.
+
+Transitions can be manually adjusted or created as one-off overrides. These overrides are recorded as events and will eventually inform automatic transition generation.
+
+---
+
 ## Core Features
-
-### The Pipeline (Primary Queue System)
-
-General-purpose queue used by all modules. Acts as both task scheduler and recommendation engine.
-
-**Purpose:** "Write tasks down and let the system tell you when to do them. We can't all be multithreaded."
-
-**Capabilities:**
-- Auto-breakdown of large tasks using LLM
-- Auto-prioritization based on context and attributes
-- Task suggestions based on current capability
-- Routine suggestions
-- Automatic transition time accounting
-- Feeds Focus Mode, Agenda View, and all other features
 
 ### Focus Mode
 
-Minimal interface showing 1-3 tasks at a time with scroll wheel–style selection.
+Minimal interface showing 1–3 actions at a time.
 
-**Purpose:** Reduce overwhelm and decision paralysis by limiting choices
+**Purpose:** Reduce overwhelm and decision paralysis by limiting visible choices.
 
 **Features:**
-- Shows only immediately doable tasks
-- Smooth animations for satisfying interactions
+- Shows only immediately doable actions
+- Smooth, satisfying animations
 - No clutter, maximum calm
-- Fed by Pipeline recommendations
+- Fed by the Pipeline queue
 
 ### Routines and Subroutines
 
@@ -859,12 +1121,12 @@ Modular, reusable sequences of actions.
 **Purpose:** "Modularize your routines"
 
 **Capabilities:**
-- Group related tasks done together/sequentially
+- Group related actions done together/sequentially
 - Sequential or randomized execution
-- Can be added to Pipeline as single unit
-- Time auto-proportioning: specify start/end time, system decides what fits and allocates time
+- Can be added to Pipeline as a single unit
+- Time auto-proportioning: specify start/end time, system allocates time across steps
 - Hierarchical nesting for complex workflows
-- Inspired by Tiimo's routine timer with "Add 1 minute" feature (reschedules all subsequent steps)
+- Inspired by RoutineFlow's "Add 1 minute" feature — reschedules all subsequent steps
 
 ### Decision Maker
 
@@ -873,27 +1135,20 @@ Eliminates choice paralysis by making decisions for the user.
 **Purpose:** "Reduce decision fatigue by making the decision for you"
 
 **How it works:**
-- User provides category and list of choices
-- Optional: provide additional context
-- LLM picks from list or generates new option if appropriate
+- User provides a category and list of choices
+- Optional additional context
+- LLM picks from the list or generates a new option if appropriate
 - Used by Brain Interrupt, Vibe Lists, and other features
-
-**Example use cases:**
-- "What should I eat?" from meal list
-- "What should I do to decompress?" from activity list
-- "Which task should I do next?" from Pipeline
 
 ### Vibe Lists
 
-Category-based quick pickers for specific, predefined choices. Reduces "what should I..." paralysis.
+Category-based quick pickers for predefined choices. Reduces "what should I..." paralysis.
 
 **Example categories:**
-- **Meals:** School lunch (turkey sandwich), Mac n' cheese, pasta, chicken parmesan, Wendy's, Cheba Hut
-- **Recenter:** Mindfulness (Playne app), flow state (project work), creative (drawing), music (guitar, Ableton)
-- **Escape:** Cannabis, cocktails, TV shows, movies, video games
-- **Hygiene:** Shower, brush teeth, trim facial hair, tidy office, wash dishes, dust
-- **Occupation:** Review bugs, clean email, organize files
-- **Exercise:** Longboarding, skatepark, dancing, bodyweight exercises
+- **Meals:** Mac n' cheese, pasta, chicken parmesan, Wendy's
+- **Recenter:** Mindfulness, flow state work, drawing, guitar
+- **Hygiene:** Shower, brush teeth, tidy office, wash dishes
+- **Exercise:** Longboarding, skatepark, dancing, bodyweight
 
 ### Idea Generator
 
@@ -902,9 +1157,8 @@ LLM-powered brainstorming and breakdown tool.
 **Purpose:** "Come up with ideas and find names for concepts"
 
 **Use cases:**
-- Break task into smaller pieces (like Goblin Tools "Magic ToDo")
+- Break an action into smaller pieces (like Goblin Tools "Magic ToDo")
 - Generate routine suggestions
-- Summarize concepts
 - Name things
 - Overcome creative blocks
 
@@ -917,18 +1171,17 @@ Interrupt thought loops, analysis paralysis, and catastrophic thinking.
 **How it works:**
 - Suggests immediate environment change
 - Uses Decision Maker for change-of-environment choices
-- Optionally launches external app (Spotify, YouTube)
+- Optionally launches an external app (Spotify, YouTube)
 - Breaks rumination cycles with physical interruption
 
 ### Wisdom Nuggets
 
 Context-aware reminders of helpful principles and accommodations.
 
-**Purpose:** "Sometimes you need to be reminded how to handle life. A little wisdom goes a long way."
+**Purpose:** "Sometimes you need to be reminded how to handle life."
 
 **Example nuggets:**
 - "Your needs are value-neutral and deserve proper accommodations"
-- "Self-accommodation is valid even if others wouldn't need it"
 - "Difficulty starting ≠ not wanting to do it"
 - "Taking breaks is productive, not lazy"
 
@@ -936,12 +1189,12 @@ Triggered by mental state, time of day, or user request.
 
 ### Transition Primer
 
-Countdown-style system for preparing brain for upcoming transitions.
+Countdown-style system for preparing the brain for upcoming transitions.
 
-**Purpose:** "Transitions are hard for monotropic minds. Make them smoother and easier."
+**Purpose:** "Transitions are hard for monotropic minds. Make them smoother."
 
 **How it works:**
-- Provides advance notice of upcoming transition
+- Provides advance notice of an upcoming transition
 - Gradual attention shift rather than sudden switch
 - Relaxing countdown with calming visual/audio cues
 - Helps disengage from hyperfocus safely
@@ -950,12 +1203,12 @@ Countdown-style system for preparing brain for upcoming transitions.
 
 Helps identify and label emotions.
 
-**Purpose:** "The first step to understanding an emotion is putting a name to it. Emotions are like weather — they come and go."
+**Purpose:** "The first step to understanding an emotion is putting a name to it."
 
 **How it works:**
 - Asks guided questions to gauge mental state
-- Suggests possible emotions user might be feeling
-- Provides relevant Wisdom Nugget
+- Suggests possible emotions the user might be feeling
+- Provides a relevant Wisdom Nugget
 - Can feed into Stack Trace for deeper analysis
 
 ### Stack Trace
@@ -970,8 +1223,7 @@ Traces emotional history to understand current state.
 - Rewinds through mental state sequence
 - Helps identify triggers and patterns
 
-
-
+---
 
 ## User Needs Being Addressed
 
@@ -990,14 +1242,12 @@ Primary goal: **Reduce decision fatigue at every level**
 
 **Cleaning & hygiene:**
 - Transition Primer before starting
-- Task breakdown for overwhelming chores
-- Environment-based task suggestions
-- Overstimulation monitoring
+- Action breakdown for overwhelming chores
+- Environment-based action suggestions
 
 **Analysis paralysis:**
 - Brain Interrupt to break loops
 - Decision Maker to eliminate choice
-- Reframe suggestions
 - "Just pick one" random selection
 
 **Overwhelm reduction:**
@@ -1009,25 +1259,23 @@ Primary goal: **Reduce decision fatigue at every level**
 **Anxiety & stress:**
 - Wisdom Nuggets with grounding reminders
 - Special interest suggestions
-- Structured mindfulness options
 - Context-aware activity recommendations
 
 **Transition management:**
 - Transition Primer for all context switches
 - Gradual attention shifting
-- Clear start/stop signals
-- Automatic buffer time between tasks
+- Automatic buffer time between actions
 
+---
 
 ## Inspirations from Other Apps
 
 **Tiimo:**
-- ✅ Reusable routines as tasks with subtasks
+- ✅ Reusable routines as actions with sub-steps
 - ✅ Day sections (Morning/Day/Evening)
-- ✅ Separate "Anytime" TO-DO list (sidebar inbox with priority sections, drag-and-drop)
-- ✅ Playlist-style timer (small window, play/pause, tracks routines and tasks)
-- ✅ LLM "Suggest Breakdown" for subtasks
-- ✅ Agenda view with time-of-day sections
+- ✅ Separate "Anytime" backlog (sidebar inbox with priority sections, drag-and-drop)
+- ✅ Playlist-style timer (small window, play/pause, tracks routines and actions)
+- ✅ LLM "Suggest Breakdown" for sub-steps
 
 **RoutineFlow:**
 - ✅ Excellent onboarding questions
@@ -1038,49 +1286,49 @@ Primary goal: **Reduce decision fatigue at every level**
 - ✅ Timer UI improvements:
   - **"Add 1 min" button** — reschedules all subsequent routine steps (CRITICAL FEATURE)
   - Reschedule, Reset, "Do later" buttons
-  - "Next Step" preview below current task
+  - "Next Step" preview below current action
   - Big green checkmark button
   - Routine finished ETA display
 - ✅ Post-completion screen suggesting duration adjustments based on actual time taken
 - ✅ Well-presented insights/stats
-- ✅ "Steps" terminology for tasks
 - ✅ Native banner showing step progress
 - ⚠️ Optional: Chill lo-fi music, voice reminders
 
 **Thruday:**
-- ✅ Explicit task vs activity separation
 - ⚠️ Mood tracking (consider privacy implications)
+
+---
 
 ## Implementation Roadmap
 
 ### V1 (MVP)
 - Basic action CRUD (create, read, update, delete, complete)
-- Pipeline queue with manual ordering
-- Focus Mode (show 1-3 tasks)
+- Pipeline with backlog and queue, manual promotion/demotion
+- Focus Mode (show 1–3 actions)
 - Simple routines (sequential, no subroutines)
-- Batch Mode (quick multi-task creation with auto-incrementing time)
-- Rescheduler (maintain relative order/intervals when rescheduling)
-- Task attributes: duration, energy, attention, importance
-- New action popup for quick entry
-- Satisfying animations (exploding tasks on completion)
+- Batch Mode (quick multi-action creation)
+- Action attributes: duration, energy, attention, importance
+- SavedMentalState with starter set; manual state declaration
+- Derived spoon tracking
+- Satisfying animations (exploding actions on completion)
 
 ### V2 (Context-Aware)
 - Action attributes: environment, location, transition difficulty, time-of-day preference
 - Context snapshots (time, location, environment detection)
-- Mental state tracking (manual declaration)
-- Pipeline auto-ranking based on context match
+- Pipeline score-based auto-promotion and demotion
+- Configurable promotion threshold
 - "What should I do next?" suggestions
-- Agenda view with visual timeline and drag-and-drop rescheduling
-- Auto time-blocking
+- Timeline view with drag-and-drop reordering
+- Auto-generated transitions between queue items
 
 ### V3 (Intelligence)
-- Idea Generator (LLM task breakdown)
+- Idea Generator (LLM action breakdown)
 - Decision Maker (LLM choice picker)
-- Auto-prioritization
 - Subroutines (dynamic action grouping)
 - Event tracking for learning
 - Adaptive notifications based on user behavior
 - Brain Interrupt with environment suggestions
+- Transition override event recording for future learning
 
 ### V4 (Mental State Support)
 - Emotion Decoder
@@ -1089,7 +1337,7 @@ Primary goal: **Reduce decision fatigue at every level**
 - Transition Primer
 - Navigate by mental state
 - Vibe Lists
-- Mental state handlers (subroutines triggered by state)
+- Mental state handlers (subroutines triggered by declared state)
 
 ### V5 (Polish & Extension)
 - Sound effects library
@@ -1099,317 +1347,3 @@ Primary goal: **Reduce decision fatigue at every level**
 - Insights and statistics dashboard
 - Native mobile apps with banner notifications
 - Post-routine completion feedback and duration adjustment suggestions
-
-
-## Database Schema Design
-
-The schema is designed around **events and learning**, not dates and checkboxes. It directly maps to the app's core philosophies.
-
-### Design Goals
-1. Define core primitives (what fundamentally exists)
-2. Support learning and flexibility
-3. Explicitly map philosophies to schema decisions
-4. Leave room for ML without forcing it
-5. Start simple, grow intelligently
-
-### Core Entities
-
-These are the *irreducible nouns* of the system:
-
-**Action** — A thing the user might do. Tasks, habits, activities, and routine steps are specializations (same table, different `type` values), not separate tables. This allows ML to learn cross-type patterns.
-
-**Instance** — A specific opportunity to do an action *now or soon*. This is what appears in Pipeline, Focus Mode, and Agenda view. Links action templates to specific contexts and times.
-
-**Structure** — Ways actions are grouped or sequenced: routines, subroutines, vibe lists, pipelines. Provides organizational flexibility.
-
-**Context Snapshot** — Captured state of user and environment at a moment in time. Enables context-aware recommendations and learning.
-
-**Event** — Something that happened (or didn't). Where learning lives. Tracks suggestions, acceptances, completions, skips, snoozes, abandonments.
-
-### Schema Tables
-
-The following schema works in both Postgres and SQLite:
-
-#### `actions` table
-
-Represents **what** the user might do, independent of *when*.
-
-```sql
-actions (
-  id UUID PRIMARY KEY,
-  type TEXT CHECK (type IN ('task', 'activity', 'habit', 'event')),
-  
-  title TEXT NOT NULL,
-  description TEXT,
-
-  -- Executive function–aware attributes
-  duration_bucket INTEGER,        -- Fibonacci index (e.g. 1–12)
-  energy_rate INTEGER,             -- per unit time
-  attention_level INTEGER,         -- 1–5
-  transition_difficulty INTEGER,   -- 1–5
-  enjoyment_after_start INTEGER,   -- 1–5
-
-  importance INTEGER,              -- 1–5
-  urgency_growth BOOLEAN,          -- gets more important over time?
-
-  preferred_time_of_day TEXT[],    -- ['morning', 'evening']
-  
-  created_at TIMESTAMP NOT NULL,
-  archived_at TIMESTAMP
-)
-```
-
-📌 **Why this works**
-
-* Tasks vs habits is a *behavioral difference*, not a data one
-* Lets ML learn cross-type patterns
-* Avoids schema explosion
-
----
-
-#### `action_requirements` table
-
-Separate table for environment and location requirements. These are multi-valued and evolve over time.
-
-```sql
-action_requirements (
-  id UUID PRIMARY KEY,
-  action_id UUID REFERENCES actions(id),
-
-  requirement_type TEXT CHECK (
-    requirement_type IN ('environment', 'location')
-  ),
-  value TEXT,          -- 'quiet', 'home', 'outdoors'
-  accessibility_score INTEGER -- how easy this is for the user
-)
-```
-
-This directly supports:
-
-* “Which environments are most accessible to you?”
-* Brain Interrupt suggestions
-* Context mismatch penalties
-
----
-
-#### `routines` table
-
-```sql
-routines (
-  id UUID PRIMARY KEY,
-  name TEXT,
-  description TEXT,
-
-  is_sequential BOOLEAN,
-  allow_randomization BOOLEAN,
-
-  default_start_time TIME,
-  default_end_time TIME
-)
-```
-
-#### `routine_steps` table
-
-```sql
-routine_steps (
-  id UUID PRIMARY KEY,
-  routine_id UUID REFERENCES routines(id),
-  action_id UUID REFERENCES actions(id),
-
-  step_order INTEGER,
-  min_duration_bucket INTEGER,
-  max_duration_bucket INTEGER
-)
-```
-
-📌 This supports:
-
-* Tiimo-style routines
-* “Add 1 minute” rescheduling
-* Subroutines
-* Auto-proportioning time
-
----
-
-#### `instances` table
-
-**Most important table for UX.** Links actions to specific times and contexts.
-
-```sql
-instances (
-  id UUID PRIMARY KEY,
-  action_id UUID REFERENCES actions(id),
-
-  source TEXT CHECK (
-    source IN ('manual', 'routine', 'suggested', 'generated')
-  ),
-
-  scheduled_for TIMESTAMP,
-  earliest_start TIMESTAMP,
-  latest_end TIMESTAMP,
-
-  status TEXT CHECK (
-    status IN ('pending', 'active', 'completed', 'skipped', 'snoozed')
-  ),
-
-  created_at TIMESTAMP
-)
-```
-
-📌 This enables:
-
-* Flexible scheduling
-* Semi-structured days
-* Agenda view
-* Focus Mode
-
----
-
-#### `pipelines` table
-
-General-purpose queue abstraction.
-
-```sql
-pipelines (
-  id UUID PRIMARY KEY,
-  name TEXT,
-  description TEXT
-)
-```
-
-#### `pipeline_items` table
-
-```sql
-pipeline_items (
-  id UUID PRIMARY KEY,
-  pipeline_id UUID REFERENCES pipelines(id),
-  instance_id UUID REFERENCES instances(id),
-
-  position INTEGER,
-  added_at TIMESTAMP
-)
-```
-
-📌 Everything funnels through this:
-
-* Focus Mode
-* “What should I do next?”
-* Batch Mode
-* Rescheduler
-
----
-
-#### `mental_states` table
-
-User-declared or inferred mental/emotional states.
-
-```sql
-mental_states (
-  id UUID PRIMARY KEY,
-  name TEXT,           -- 'overwhelmed', 'hyperfocused'
-  description TEXT
-)
-```
-
-#### `mental_state_events` table
-
-```sql
-mental_state_events (
-  id UUID PRIMARY KEY,
-  mental_state_id UUID REFERENCES mental_states(id),
-  intensity INTEGER,   -- 1–5
-  recorded_at TIMESTAMP
-)
-```
-
-This powers:
-
-* Navigate by mental state
-* Emotion Decoder
-* Wisdom Nuggets
-* Brain Interrupt logic
-
----
-
-#### `context_snapshots` table
-
-Auto-captured when anything interesting happens.
-
-```sql
-context_snapshots (
-  id UUID PRIMARY KEY,
-
-  recorded_at TIMESTAMP,
-  time_of_day TEXT,
-  day_type TEXT,        -- weekday/weekend
-
-  environment TEXT[],
-  location TEXT[],
-  device TEXT,
-
-  active_mental_state UUID
-)
-```
-
----
-
-#### `events` table (learning engine)
-
-All user behavior feeds into this table for learning and adaptation.
-
-```sql
-events (
-  id UUID PRIMARY KEY,
-
-  event_type TEXT CHECK (
-    event_type IN (
-      'suggested',
-      'accepted',
-      'completed',
-      'skipped',
-      'snoozed',
-      'abandoned'
-    )
-  ),
-
-  instance_id UUID REFERENCES instances(id),
-  action_id UUID REFERENCES actions(id),
-  context_snapshot_id UUID REFERENCES context_snapshots(id),
-
-  occurred_at TIMESTAMP
-)
-```
-
-📌 This is what trains:
-
-* Heuristics
-* ML models
-* Adaptation over time
-
----
-
-### How Schema Supports Core Philosophies
-
-### ✅ Reduce decision fatigue
-
-* Pipeline auto-ranking
-* Single-instance Focus Mode
-* No hard schedules required
-
-### ✅ Executive function–aware
-
-* Transition difficulty
-* Energy modeling
-* Environment compatibility
-* Emotional state integration
-
-### ✅ Flexible structure
-
-* Time windows instead of deadlines
-* Routine templates → instances
-* Auto-adjust durations
-
-### ✅ Calm but rich
-
-* Schema enables explanation
-* “Why this task?” is always answerable
