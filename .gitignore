@@ -1,1 +1,6 @@
 /target
+/crates/.archive
+*.db
+*.db-shm
+*.db-wal
+database.env
