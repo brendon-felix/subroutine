@@ -4,30 +4,12 @@
 
 ---
 
-# Subroutine
-
-A task management application designed to accommodate executive function challenges through thoughtful UX and integrated features that work together as a cohesive system.
-
-## Philosophy
-
-- **Executive function first**: Features designed around reducing decision fatigue and supporting neurodivergent workflows
-- **Flexible structure**: Semi-flexible frameworks instead of rigid schedules and time limits
-- **Integrated system**: Cohesive tools that work together rather than disparate features
-- **Focus and calm**: Prioritize mental clarity while maintaining richness
-
-## Current Status
-
-⚠️ **Pre-alpha** - This project is in very early development
-
-## Planned Features
-
-- **Focus Mode**: Minimal interface showing only 1-3 tasks with satisfying interactions
-- **The Pipeline**: Universal queue system for tasks with auto-prioritization and breakdown
-- **Subroutines**: Modular routine templates for grouping related tasks
-- **Mental State Navigation**: "I'm feeling..." interface for context-aware suggestions
-- **Batch Mode**: Quick task creation with auto-incrementing due times
-- **Agenda View**: Visual timeline with drag-and-drop rescheduling
+*"Externalize your executive function. We can't all be multithreaded."*
 
 ---
 
-*"Externalize your executive function. We can't all be multithreaded."*
+Subroutine is a context-aware action recommender and executive function prosthetic built for monotropic minds and those who struggle with task initiation, transitions, or executive dysfunction in general. Rather than a traditional task manager, it adapts to your current mental state and context — surfacing the right actions at the right time, minimizing decision fatigue, and smoothing over the rough edges of planning and transitions. It's designed to be a trusted partner in your daily life, helping you get things done without the overhead of constant decision-making.
+
+---
+
+> ⚠️ This project is in early development. Nothing is stable, and large parts of the design are still being built.
