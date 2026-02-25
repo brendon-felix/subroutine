@@ -1,3 +1,0 @@
-[submodule "crates/ticks"]
-	path = crates/ticks
-	url = https://github.com/brendon-felix/ticks.git
