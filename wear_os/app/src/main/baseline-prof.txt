@@ -1,0 +1,132 @@
+# Baseline profile for Subroutine Wear OS app.
+#
+# ART uses this file to pre-verify and AOT-compile these classes and methods
+# before the app is first run, eliminating the VerifyClass pauses on the main
+# thread that cause scroll jank on Wear OS hardware.
+#
+# Format:
+#   L<class>;                          — pre-verify the class
+#   PLm<class>;-><method>(<sig>)<ret>  — pre-compile (interpret-only profile)
+#   HSPLm<class>;-><method>(<sig>)<ret> — hot + startup + post-startup compile
+#
+# We cover:
+#   1. Our own presentation layer
+#   2. Wear Compose Material3 scroll/transformation hot path
+#   3. Wear Compose Foundation lazy layout engine
+#   4. Compose UI core (measure/layout/draw)
+#   5. Compose runtime (recomposer, slot table, snapshot)
+#   6. Kotlin coroutines (StateFlow, collect)
+
+# ---------------------------------------------------------------------------
+# 1. App presentation layer
+# ---------------------------------------------------------------------------
+HSPLcom/example/subroutine/presentation/MainActivityKt;->WearApp(Landroidx/lifecycle/viewmodel/compose/CreationExtras;Landroidx/compose/runtime/Composer;I)V
+HSPLcom/example/subroutine/presentation/MainActivityKt;->PipelineEntryCard(Landroidx/wear/compose/foundation/lazy/TransformingLazyColumnItemScope;Lcom/example/subroutine/data/PipelineEntry;Lcom/example/subroutine/presentation/PipelineItemCallbacks;Landroidx/wear/compose/material3/lazy/TransformationSpec;Landroidx/compose/runtime/Composer;I)V
+HSPLcom/example/subroutine/presentation/PipelineViewModel;->getUiState()Lkotlinx/coroutines/flow/StateFlow;
+Lcom/example/subroutine/presentation/PipelineViewModel;
+Lcom/example/subroutine/presentation/PipelineUiState;
+Lcom/example/subroutine/presentation/PipelineUiState$Success;
+Lcom/example/subroutine/presentation/PipelineUiState$Loading;
+Lcom/example/subroutine/presentation/PipelineUiState$NoPhone;
+Lcom/example/subroutine/presentation/PipelineUiState$Error;
+Lcom/example/subroutine/presentation/PipelineItemCallbacks;
+Lcom/example/subroutine/data/PipelineEntry;
+Lcom/example/subroutine/data/PipelinePayload;
+Lcom/example/subroutine/data/ActionPayload;
+
+# ---------------------------------------------------------------------------
+# 2. Wear Compose Material3 — scroll transformation hot path
+# ---------------------------------------------------------------------------
+HSPLandroidx/wear/compose/material3/lazy/TransformationSpecKt;->rememberTransformationSpec(Landroidx/compose/runtime/Composer;I)Landroidx/wear/compose/material3/lazy/TransformationSpec;
+HSPLandroidx/wear/compose/material3/lazy/TransformedHeightKt;->transformedHeight(Landroidx/compose/ui/Modifier;Landroidx/wear/compose/foundation/lazy/TransformingLazyColumnItemScope;Landroidx/wear/compose/material3/lazy/TransformationSpec;)Landroidx/compose/ui/Modifier;
+HSPLandroidx/wear/compose/material3/SurfaceTransformationKt;->SurfaceTransformation(Landroidx/wear/compose/foundation/lazy/TransformingLazyColumnItemScope;Landroidx/wear/compose/material3/lazy/TransformationSpec;)Landroidx/wear/compose/material3/SurfaceTransformation;
+Landroidx/wear/compose/material3/lazy/TransformationSpec;
+Landroidx/wear/compose/material3/SurfaceTransformation;
+Landroidx/wear/compose/material3/SurfaceTransformationKt;
+HSPLandroidx/wear/compose/material3/CardKt;->Card(Landroidx/compose/ui/Modifier;Lkotlin/jvm/functions/Function0;Landroidx/wear/compose/material3/SurfaceTransformation;Landroidx/compose/foundation/shape/CornerBasedShape;Landroidx/compose/ui/graphics/Color;Landroidx/compose/ui/graphics/Color;Landroidx/compose/ui/graphics/Color;Landroidx/compose/foundation/BorderStroke;Lkotlin/jvm/functions/Function1;Landroidx/compose/runtime/Composer;II)V
+HSPLandroidx/wear/compose/material3/ButtonKt;->Button(Lkotlin/jvm/functions/Function0;Landroidx/compose/ui/Modifier;ZLandroidx/wear/compose/material3/SurfaceTransformation;Landroidx/wear/compose/material3/ButtonColors;Landroidx/compose/foundation/interaction/MutableInteractionSource;Lkotlin/jvm/functions/Function1;Landroidx/compose/runtime/Composer;II)V
+HSPLandroidx/wear/compose/material3/ListHeaderKt;->ListHeader(Landroidx/compose/ui/Modifier;Landroidx/wear/compose/material3/SurfaceTransformation;Landroidx/compose/ui/graphics/Color;Lkotlin/jvm/functions/Function1;Landroidx/compose/runtime/Composer;II)V
+Landroidx/wear/compose/material3/CardKt;
+Landroidx/wear/compose/material3/ButtonKt;
+Landroidx/wear/compose/material3/ListHeaderKt;
+Landroidx/wear/compose/material3/TextKt;
+Landroidx/wear/compose/material3/MaterialTheme;
+Landroidx/wear/compose/material3/AppScaffoldKt;
+Landroidx/wear/compose/material3/ScreenScaffoldKt;
+Landroidx/wear/compose/material3/TimeTextKt;
+Landroidx/wear/compose/material3/ButtonDefaults;
+
+# ---------------------------------------------------------------------------
+# 3. Wear Compose Foundation — TransformingLazyColumn layout engine
+# ---------------------------------------------------------------------------
+HSPLandroidx/wear/compose/foundation/lazy/TransformingLazyColumnKt;->TransformingLazyColumn(Landroidx/compose/ui/Modifier;Landroidx/wear/compose/foundation/lazy/TransformingLazyColumnState;Landroidx/compose/foundation/layout/PaddingValues;ZLandroidx/compose/foundation/layout/Arrangement$Vertical;Lkotlin/jvm/functions/Function1;Landroidx/compose/runtime/Composer;II)V
+HSPLandroidx/wear/compose/foundation/lazy/TransformingLazyColumnStateKt;->rememberTransformingLazyColumnState(Landroidx/compose/runtime/Composer;I)Landroidx/wear/compose/foundation/lazy/TransformingLazyColumnState;
+HSPLandroidx/wear/compose/foundation/lazy/TransformingLazyColumnMeasurePolicy;->measure-3p2s80s(Landroidx/compose/ui/layout/MeasureScope;Ljava/util/List;J)Landroidx/compose/ui/layout/MeasureResult;
+Landroidx/wear/compose/foundation/lazy/TransformingLazyColumnKt;
+Landroidx/wear/compose/foundation/lazy/TransformingLazyColumnState;
+Landroidx/wear/compose/foundation/lazy/TransformingLazyColumnStateKt;
+Landroidx/wear/compose/foundation/lazy/TransformingLazyColumnMeasurePolicy;
+Landroidx/wear/compose/foundation/lazy/TransformingLazyColumnItemScope;
+Landroidx/wear/compose/foundation/lazy/TransformingLazyColumnItemScopeImpl;
+Landroidx/wear/compose/foundation/lazy/layout/TransformingLazyLayoutItemProvider;
+Landroidx/wear/compose/foundation/lazy/layout/LazyLayoutItemAnimator;
+
+# ---------------------------------------------------------------------------
+# 4. Compose UI — measure/layout/draw core
+# ---------------------------------------------------------------------------
+HSPLandroidx/compose/ui/layout/LayoutNodeSubcompositionsState;->subcompose(Ljava/lang/Object;Lkotlin/jvm/functions/Function2;)Ljava/util/List;
+HSPLandroidx/compose/ui/layout/LayoutNode;->measure-BRTryo0(J)Landroidx/compose/ui/layout/Placeable;
+HSPLandroidx/compose/ui/layout/LayoutNode;->layout(IILkotlin/jvm/functions/Function1;)Landroidx/compose/ui/layout/MeasureResult;
+Landroidx/compose/ui/layout/LayoutNode;
+Landroidx/compose/ui/layout/LayoutNodeSubcompositionsState;
+Landroidx/compose/ui/layout/LayoutNodeSubcompositionsState$Scope;
+Landroidx/compose/ui/layout/LayoutNodeSubcompositionsState$NodeState;
+Landroidx/compose/ui/layout/Placeable;
+Landroidx/compose/ui/layout/MeasureScope;
+Landroidx/compose/ui/layout/MeasureResult;
+Landroidx/compose/ui/layout/SubcomposeLayoutState;
+Landroidx/compose/ui/layout/SubcomposeLayout;
+Landroidx/compose/ui/graphics/BlockGraphicsLayerModifier;
+Landroidx/compose/ui/draw/DrawCacheModifier;
+Landroidx/compose/foundation/layout/FillNode;
+Landroidx/compose/foundation/layout/PaddingNode;
+Landroidx/compose/foundation/layout/ColumnMeasurePolicy;
+Landroidx/compose/foundation/layout/RowMeasurePolicy;
+Landroidx/compose/foundation/layout/BoxMeasurePolicy;
+Landroidx/compose/foundation/lazy/layout/TraversablePrefetchStateNode;
+Landroidx/compose/ui/platform/AndroidComposeView;
+Landroidx/compose/ui/platform/ComposeView;
+
+# ---------------------------------------------------------------------------
+# 5. Compose runtime — recomposer, slot table, snapshot system
+# ---------------------------------------------------------------------------
+HSPLandroidx/compose/runtime/Composer;->recompose()Z
+HSPLandroidx/compose/runtime/RecomposerKt;->runRecomposeAndApplyChanges(Landroidx/compose/runtime/Recomposer;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+HSPLandroidx/compose/runtime/SlotTable;->read(Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
+HSPLandroidx/compose/runtime/SlotTable;->write(Lkotlin/jvm/functions/Function1;)Ljava/lang/Object;
+HSPLandroidx/compose/runtime/snapshots/SnapshotStateObserver;->observeReads(Ljava/lang/Object;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function0;)V
+Landroidx/compose/runtime/Composer;
+Landroidx/compose/runtime/ComposerImpl;
+Landroidx/compose/runtime/Recomposer;
+Landroidx/compose/runtime/SlotTable;
+Landroidx/compose/runtime/SlotReader;
+Landroidx/compose/runtime/SlotWriter;
+Landroidx/compose/runtime/snapshots/SnapshotStateObserver;
+Landroidx/compose/runtime/snapshots/MutableSnapshot;
+Landroidx/compose/runtime/snapshots/GlobalSnapshot;
+Landroidx/compose/runtime/RecomposeScopeImpl;
+Landroidx/compose/runtime/CompositionImpl;
+Landroidx/compose/runtime/ComposableSingletons;
+
+# ---------------------------------------------------------------------------
+# 6. Kotlin coroutines — StateFlow collection on main thread
+# ---------------------------------------------------------------------------
+HSPLkotlinx/coroutines/flow/StateFlowImpl;->collect(Lkotlinx/coroutines/flow/FlowCollector;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+HSPLkotlinx/coroutines/flow/StateFlowImpl;->getValue()Ljava/lang/Object;
+Lkotlinx/coroutines/flow/StateFlowImpl;
+Lkotlinx/coroutines/flow/MutableStateFlow;
+Lkotlinx/coroutines/flow/FlowCollector;
+Lkotlinx/coroutines/flow/ChannelAsFlow;
+Lkotlin/jvm/internal/MutablePropertyReference1Impl;
+Lkotlin/jvm/internal/MutablePropertyReference1;
+Lkotlin/jvm/internal/MutablePropertyReference;
