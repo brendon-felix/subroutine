@@ -1,0 +1,731 @@
+{
+  "actions": [
+    {
+      "id": "019cdaef-0e82-76d0-81c2-2b2ce81d55de",
+      "lineage_id": "019cdaef-0e82-76d0-81c2-2b3037a825ed",
+      "origin_routine_id": null,
+      "title": "Back up computer",
+      "content": "Run Time Machine and verify offsite backup is current",
+      "target": null,
+      "target_static": false,
+      "duration": null,
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-04ff-7062-8238-5a5206e227e0",
+      "lineage_id": "019cdaef-04ff-7062-8238-5a6c073b6a44",
+      "origin_routine_id": null,
+      "title": "Call doctor",
+      "content": "Schedule annual checkup and any pending referrals",
+      "target": null,
+      "target_static": false,
+      "duration": null,
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-0a2f-7fa1-8257-7b7c7aa4feba",
+      "lineage_id": "019cdaef-0a2f-7fa1-8257-7b8c24fab844",
+      "origin_routine_id": null,
+      "title": "Clean bathroom",
+      "content": "Scrub toilet, sink, and shower, mop floor",
+      "target": null,
+      "target_static": false,
+      "duration": null,
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-0b9f-72a0-8a18-a2345674f02e",
+      "lineage_id": "019cdaef-0b9f-72a0-8a18-a24c3ed367f3",
+      "origin_routine_id": null,
+      "title": "Do laundry",
+      "content": "Wash, dry, and fold clothes",
+      "target": null,
+      "target_static": false,
+      "duration": null,
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-301f-7c13-9f53-d43e1fd312ae",
+      "lineage_id": "019cdaef-301f-7c13-9f53-d4411f1794db",
+      "origin_routine_id": "019cdaef-1d2a-73f0-bfa6-310f657ce0d9",
+      "title": "Drink a glass of water",
+      "content": null,
+      "target": "2026-03-10T13:05:00Z",
+      "target_static": true,
+      "duration": [
+        300,
+        0
+      ],
+      "recurrence": null,
+      "ephemeral": true
+    },
+    {
+      "id": "019cdaef-301f-7c13-9f53-d496b99b75ac",
+      "lineage_id": "019cdaef-301f-7c13-9f53-d4a7c8fc54f1",
+      "origin_routine_id": "019cdaef-1d2a-73f0-bfa6-310f657ce0d9",
+      "title": "Eat breakfast",
+      "content": null,
+      "target": "2026-03-10T13:40:00Z",
+      "target_static": true,
+      "duration": [
+        900,
+        0
+      ],
+      "recurrence": null,
+      "ephemeral": true
+    },
+    {
+      "id": "019cdaef-0748-7713-9956-60b754364ab6",
+      "lineage_id": "019cdaef-0748-7713-9956-60c640ae6d24",
+      "origin_routine_id": null,
+      "title": "Exercise",
+      "content": "30 minutes of cardio or strength training",
+      "target": null,
+      "target_static": false,
+      "duration": null,
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-038d-72b3-b27b-0e7657afed75",
+      "lineage_id": "019cdaef-038d-72b3-b27b-0e894bf5f5dd",
+      "origin_routine_id": null,
+      "title": "Grocery shopping",
+      "content": "Buy food and household supplies for the week",
+      "target": null,
+      "target_static": false,
+      "duration": null,
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-0d14-7733-becd-f257f247a63b",
+      "lineage_id": "019cdaef-0d14-7733-becd-f269054e7ae5",
+      "origin_routine_id": null,
+      "title": "Meal prep",
+      "content": "Cook and portion meals for the next few days",
+      "target": "2026-03-10T22:00:00Z",
+      "target_static": true,
+      "duration": null,
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-021a-7c93-ac73-5ca5c5e7e2e2",
+      "lineage_id": "019cdaef-021a-7c93-ac73-5cbf516edde9",
+      "origin_routine_id": null,
+      "title": "Pay bills",
+      "content": "Check and pay any outstanding bills or subscriptions",
+      "target": null,
+      "target_static": false,
+      "duration": null,
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-08be-7721-b918-5768d670caef",
+      "lineage_id": "019cdaef-08be-7721-b918-5776a29c7665",
+      "origin_routine_id": null,
+      "title": "Read",
+      "content": "Read for at least 20 minutes",
+      "target": null,
+      "target_static": false,
+      "duration": null,
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-1163-7870-ae41-a945a696d16b",
+      "lineage_id": "019cdaef-1163-7870-ae41-a955f5ba156d",
+      "origin_routine_id": null,
+      "title": "Reply to messages",
+      "content": "Respond to any pending texts, emails, or voicemails",
+      "target": null,
+      "target_static": false,
+      "duration": null,
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-00a7-7910-9a3e-2ee64f8682b2",
+      "lineage_id": "019cdaef-00a7-7910-9a3e-2ef3e75fb827",
+      "origin_routine_id": null,
+      "title": "Review inbox",
+      "content": "Process all items in email and task inbox to zero",
+      "target": "2026-03-10T17:00:00Z",
+      "target_static": true,
+      "duration": null,
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-301f-7c13-9f53-d4bf1e7b7a96",
+      "lineage_id": "019cdaef-301f-7c13-9f53-d4c13389fc65",
+      "origin_routine_id": "019cdaef-1d2a-73f0-bfa6-310f657ce0d9",
+      "title": "Review today's plan",
+      "content": null,
+      "target": "2026-03-10T13:55:00Z",
+      "target_static": true,
+      "duration": [
+        600,
+        0
+      ],
+      "recurrence": null,
+      "ephemeral": true
+    },
+    {
+      "id": "019cdaef-301f-7c13-9f53-d47a6f0d5cf4",
+      "lineage_id": "019cdaef-301f-7c13-9f53-d4885d42e642",
+      "origin_routine_id": "019cdaef-1d2a-73f0-bfa6-310f657ce0d9",
+      "title": "Shower and get dressed",
+      "content": null,
+      "target": "2026-03-10T13:20:00Z",
+      "target_static": true,
+      "duration": [
+        1200,
+        0
+      ],
+      "recurrence": null,
+      "ephemeral": true
+    },
+    {
+      "id": "019cdaef-301f-7c13-9f53-d45fe31051fc",
+      "lineage_id": "019cdaef-301f-7c13-9f53-d46f83f81040",
+      "origin_routine_id": "019cdaef-1d2a-73f0-bfa6-310f657ce0d9",
+      "title": "Stretch",
+      "content": null,
+      "target": "2026-03-10T13:10:00Z",
+      "target_static": true,
+      "duration": [
+        600,
+        0
+      ],
+      "recurrence": null,
+      "ephemeral": true
+    },
+    {
+      "id": "019cdaef-301e-7812-8c33-4775f8c14c87",
+      "lineage_id": "019cdaef-301e-7812-8c33-478f5daeba54",
+      "origin_routine_id": "019cdaef-1d2a-73f0-bfa6-310f657ce0d9",
+      "title": "Wake up and don't check phone",
+      "content": null,
+      "target": "2026-03-10T13:00:00Z",
+      "target_static": true,
+      "duration": [
+        300,
+        0
+      ],
+      "recurrence": null,
+      "ephemeral": true
+    },
+    {
+      "id": "019cdaef-0ff3-7be1-a552-e1c1fc7e3245",
+      "lineage_id": "019cdaef-0ff3-7be1-a552-e1d6e9031228",
+      "origin_routine_id": null,
+      "title": "Water plants",
+      "content": "Water all indoor plants and check for pests",
+      "target": null,
+      "target_static": false,
+      "duration": null,
+      "recurrence": null,
+      "ephemeral": false
+    }
+  ],
+  "events": [
+    {
+      "id": "019cdaef-1a44-7c33-872d-5cd8c4acdd73",
+      "lineage_id": "019cdaef-1a44-7c33-872d-5ce62b0a502d",
+      "title": "Gym class",
+      "content": "Spin class at the local gym",
+      "time": "2026-03-10T13:00:00Z",
+      "duration": [
+        2700,
+        0
+      ],
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-12f8-74d3-adc6-c8fc048e2f3f",
+      "lineage_id": "019cdaef-12f8-74d3-adc6-c9079fb6ff3d",
+      "title": "Team standup",
+      "content": "Daily sync with the team",
+      "time": "2026-03-10T15:00:00Z",
+      "duration": [
+        900,
+        0
+      ],
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-15df-7c90-8b43-518ea96b4351",
+      "lineage_id": "019cdaef-15df-7c90-8b43-519de079dc63",
+      "title": "Dentist appointment",
+      "content": "6-month cleaning and checkup",
+      "time": "2026-03-10T16:30:00Z",
+      "duration": [
+        3600,
+        0
+      ],
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-146d-7d62-aa1c-c2353fa839f2",
+      "lineage_id": "019cdaef-146d-7d62-aa1c-c249e1b93e67",
+      "title": "Therapy appointment",
+      "content": "Weekly therapy session",
+      "time": "2026-03-10T20:00:00Z",
+      "duration": [
+        3000,
+        0
+      ],
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-18cf-76b0-9e6b-5ca9981aa75a",
+      "lineage_id": "019cdaef-18cf-76b0-9e6b-5cb4bebad457",
+      "title": "Weekly review",
+      "content": "Review the week, plan the next one, clear inbox",
+      "time": "2026-03-10T23:00:00Z",
+      "duration": [
+        2700,
+        0
+      ],
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-1758-7c83-ba17-0f63d8ccbe80",
+      "lineage_id": "019cdaef-1758-7c83-ba17-0f7cc7cc09b4",
+      "title": "Dinner with family",
+      "content": "Weekly family dinner",
+      "time": "2026-03-11T00:30:00Z",
+      "duration": [
+        5400,
+        0
+      ],
+      "recurrence": null,
+      "ephemeral": false
+    },
+    {
+      "id": "019cdaef-1bb7-7761-993d-52ad66ffa1de",
+      "lineage_id": "019cdaef-1bb7-7761-993d-52b1c544a8a8",
+      "title": "Book club",
+      "content": "Monthly book club meeting at the library",
+      "time": "2026-03-11T01:00:00Z",
+      "duration": [
+        7200,
+        0
+      ],
+      "recurrence": null,
+      "ephemeral": false
+    }
+  ],
+  "routines": [
+    {
+      "id": "019cdaef-218e-72b3-a934-e92174e713d4",
+      "title": "Deep work session",
+      "content": "Focused uninterrupted work block",
+      "target": null,
+      "steps": [
+        {
+          "title": "Close all notifications and social media",
+          "duration": [
+            300,
+            0
+          ]
+        },
+        {
+          "title": "Write down the single goal for this session",
+          "duration": [
+            300,
+            0
+          ]
+        },
+        {
+          "title": "Work block",
+          "duration": [
+            1500,
+            0
+          ]
+        },
+        {
+          "title": "Take a break",
+          "duration": [
+            300,
+            0
+          ]
+        },
+        {
+          "title": "Work block",
+          "duration": [
+            1500,
+            0
+          ]
+        },
+        {
+          "title": "Take a break",
+          "duration": [
+            300,
+            0
+          ]
+        },
+        {
+          "title": "Work block",
+          "duration": [
+            1500,
+            0
+          ]
+        },
+        {
+          "title": "Log what was accomplished",
+          "duration": [
+            300,
+            0
+          ]
+        }
+      ],
+      "recurrence": null
+    },
+    {
+      "id": "019cdaef-1ea9-7d71-9587-a1f65c6be799",
+      "title": "Evening wind-down",
+      "content": "Decompress and prepare for sleep",
+      "target": null,
+      "steps": [
+        {
+          "title": "Stop screens",
+          "duration": [
+            300,
+            0
+          ]
+        },
+        {
+          "title": "Tidy the kitchen and living room",
+          "duration": [
+            900,
+            0
+          ]
+        },
+        {
+          "title": "Lay out clothes for tomorrow",
+          "duration": [
+            300,
+            0
+          ]
+        },
+        {
+          "title": "Write 3 things you're grateful for",
+          "duration": [
+            300,
+            0
+          ]
+        },
+        {
+          "title": "Read for 20 minutes",
+          "duration": [
+            1200,
+            0
+          ]
+        }
+      ],
+      "recurrence": null
+    },
+    {
+      "id": "019cdaef-22fc-7632-95c8-439efae15da3",
+      "title": "Grocery run",
+      "content": "Efficient weekly grocery trip",
+      "target": null,
+      "steps": [
+        {
+          "title": "Check pantry and fridge for what is low",
+          "duration": [
+            600,
+            0
+          ]
+        },
+        {
+          "title": "Write shopping list organized by store section",
+          "duration": [
+            600,
+            0
+          ]
+        },
+        {
+          "title": "Check for coupons or sales",
+          "duration": [
+            300,
+            0
+          ]
+        },
+        {
+          "title": "Shop",
+          "duration": [
+            1800,
+            0
+          ]
+        },
+        {
+          "title": "Put groceries away immediately",
+          "duration": [
+            900,
+            0
+          ]
+        }
+      ],
+      "recurrence": null
+    },
+    {
+      "id": "019cdaef-1d2a-73f0-bfa6-310f657ce0d9",
+      "title": "Morning routine",
+      "content": "Get the day started on the right foot",
+      "target": null,
+      "steps": [
+        {
+          "title": "Wake up and don't check phone",
+          "duration": [
+            300,
+            0
+          ]
+        },
+        {
+          "title": "Drink a glass of water",
+          "duration": [
+            300,
+            0
+          ]
+        },
+        {
+          "title": "Stretch",
+          "duration": [
+            600,
+            0
+          ]
+        },
+        {
+          "title": "Shower and get dressed",
+          "duration": [
+            1200,
+            0
+          ]
+        },
+        {
+          "title": "Eat breakfast",
+          "duration": [
+            900,
+            0
+          ]
+        },
+        {
+          "title": "Review today's plan",
+          "duration": [
+            600,
+            0
+          ]
+        }
+      ],
+      "recurrence": null
+    },
+    {
+      "id": "019cdaef-201c-7071-a9d0-aed47ff01858",
+      "title": "Weekly reset",
+      "content": "Clear the decks and set up the coming week",
+      "target": null,
+      "steps": [
+        {
+          "title": "Review last week's tasks and close open loops",
+          "duration": [
+            1200,
+            0
+          ]
+        },
+        {
+          "title": "Process all inbox items to zero",
+          "duration": [
+            1200,
+            0
+          ]
+        },
+        {
+          "title": "Review calendar for the coming week",
+          "duration": [
+            600,
+            0
+          ]
+        },
+        {
+          "title": "Plan top 3 priorities for the week",
+          "duration": [
+            600,
+            0
+          ]
+        },
+        {
+          "title": "Tidy desk and workspace",
+          "duration": [
+            600,
+            0
+          ]
+        },
+        {
+          "title": "Do a quick home walkthrough",
+          "duration": [
+            600,
+            0
+          ]
+        }
+      ],
+      "recurrence": null
+    }
+  ],
+  "pipeline_entries": [
+    {
+      "id": "019cdaef-3bf8-71a1-aecc-1f20ab34914f",
+      "entry_type": "action",
+      "entry_id": "019cdaef-021a-7c93-ac73-5ca5c5e7e2e2",
+      "list": "backlog",
+      "position": 0
+    },
+    {
+      "id": "019cdaef-3bf8-71a1-aecc-1f3cd7d1174f",
+      "entry_type": "action",
+      "entry_id": "019cdaef-038d-72b3-b27b-0e7657afed75",
+      "list": "backlog",
+      "position": 1
+    },
+    {
+      "id": "019cdaef-3bf8-71a1-aecc-1f4a1bcce4a8",
+      "entry_type": "action",
+      "entry_id": "019cdaef-04ff-7062-8238-5a5206e227e0",
+      "list": "backlog",
+      "position": 2
+    },
+    {
+      "id": "019cdaef-3bf8-71a1-aecc-1f5f4450352b",
+      "entry_type": "action",
+      "entry_id": "019cdaef-0b9f-72a0-8a18-a2345674f02e",
+      "list": "backlog",
+      "position": 3
+    },
+    {
+      "id": "019cdaef-3bf8-71a1-aecc-1f6e22537de5",
+      "entry_type": "action",
+      "entry_id": "019cdaef-0e82-76d0-81c2-2b2ce81d55de",
+      "list": "backlog",
+      "position": 4
+    },
+    {
+      "id": "019cdaef-3bf8-71a1-aecc-1f786e7b0855",
+      "entry_type": "action",
+      "entry_id": "019cdaef-0ff3-7be1-a552-e1c1fc7e3245",
+      "list": "backlog",
+      "position": 5
+    },
+    {
+      "id": "019cdaef-3bf8-71a1-aecc-1f819cb86daa",
+      "entry_type": "action",
+      "entry_id": "019cdaef-0a2f-7fa1-8257-7b7c7aa4feba",
+      "list": "backlog",
+      "position": 6
+    },
+    {
+      "id": "019cdaef-3bf8-71a1-aecc-1f94275efd9a",
+      "entry_type": "action",
+      "entry_id": "019cdaef-0d14-7733-becd-f257f247a63b",
+      "list": "backlog",
+      "position": 7
+    },
+    {
+      "id": "019cdaef-3bf8-71a1-aecc-1fa31c507dee",
+      "entry_type": "action",
+      "entry_id": "019cdaef-301e-7812-8c33-4775f8c14c87",
+      "list": "queue",
+      "position": 0
+    },
+    {
+      "id": "019cdaef-3bf8-71a1-aecc-1fb820bc58bc",
+      "entry_type": "event",
+      "entry_id": "019cdaef-1a44-7c33-872d-5cd8c4acdd73",
+      "list": "queue",
+      "position": 1
+    },
+    {
+      "id": "019cdaef-3bf9-7780-9a53-8b0c74781d4b",
+      "entry_type": "action",
+      "entry_id": "019cdaef-301f-7c13-9f53-d43e1fd312ae",
+      "list": "queue",
+      "position": 2
+    },
+    {
+      "id": "019cdaef-3bf9-7780-9a53-8b1756d6f530",
+      "entry_type": "action",
+      "entry_id": "019cdaef-301f-7c13-9f53-d45fe31051fc",
+      "list": "queue",
+      "position": 3
+    },
+    {
+      "id": "019cdaef-3bf9-7780-9a53-8b262f07d237",
+      "entry_type": "action",
+      "entry_id": "019cdaef-301f-7c13-9f53-d47a6f0d5cf4",
+      "list": "queue",
+      "position": 4
+    },
+    {
+      "id": "019cdaef-3bf9-7780-9a53-8b3c6e0b85ac",
+      "entry_type": "action",
+      "entry_id": "019cdaef-301f-7c13-9f53-d496b99b75ac",
+      "list": "queue",
+      "position": 5
+    },
+    {
+      "id": "019cdaef-3bf9-7780-9a53-8b4ae06150db",
+      "entry_type": "action",
+      "entry_id": "019cdaef-301f-7c13-9f53-d4bf1e7b7a96",
+      "list": "queue",
+      "position": 6
+    },
+    {
+      "id": "019cdaef-3bf9-7780-9a53-8b52ae8b2ef6",
+      "entry_type": "event",
+      "entry_id": "019cdaef-12f8-74d3-adc6-c8fc048e2f3f",
+      "list": "queue",
+      "position": 7
+    },
+    {
+      "id": "019cdaef-3bf9-7780-9a53-8b62767edb59",
+      "entry_type": "action",
+      "entry_id": "019cdaef-00a7-7910-9a3e-2ee64f8682b2",
+      "list": "queue",
+      "position": 8
+    },
+    {
+      "id": "019cdaef-3bf9-7780-9a53-8b7ea2d50406",
+      "entry_type": "action",
+      "entry_id": "019cdaef-0d14-7733-becd-f257f247a63b",
+      "list": "queue",
+      "position": 9
+    },
+    {
+      "id": "019cdaef-3bf9-7780-9a53-8b8b5ac17ba1",
+      "entry_type": "event",
+      "entry_id": "019cdaef-18cf-76b0-9e6b-5ca9981aa75a",
+      "list": "queue",
+      "position": 10
+    },
+    {
+      "id": "019cdaef-3bf9-7780-9a53-8b929a12b40f",
+      "entry_type": "event",
+      "entry_id": "019cdaef-1758-7c83-ba17-0f63d8ccbe80",
+      "list": "queue",
+      "position": 11
+    }
+  ],
+  "completions": []
+}
