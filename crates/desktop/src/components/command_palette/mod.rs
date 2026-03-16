@@ -84,7 +84,7 @@ impl Focusable for CommandPaletteState {
 impl CommandPaletteState {
     pub fn new(commands: Vec<Command>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input_state = cx.new(|cx| {
-            let state = InputState::new(window, cx).placeholder("Type a command or search...");
+            let state = InputState::new(window, cx).placeholder("Search or type a command...");
             state.focus(window, cx);
             state
         });
@@ -388,8 +388,8 @@ impl Render for CommandPaletteState {
                             .child(Label::new("No commands found")),
                     )
                 },
-            )
-            .child(self.render_help_bar(cx));
+            );
+        // .child(self.render_help_bar(cx));
 
         // Use a div wrapper so we can attach action handlers (InteractiveElement) while
         // reusing the overlay shell for visual chrome and backdrop behaviour.

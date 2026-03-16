@@ -61,7 +61,7 @@ pub fn init(cx: &mut App) {
 
     let mut titlebar_options = TitlebarOptions::default();
     titlebar_options.appears_transparent = true;
-    titlebar_options.traffic_light_position = Some(point(px(16.), px(16.)));
+    titlebar_options.traffic_light_position = Some(point(px(10.), px(10.)));
 
     let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
     let window_options = WindowOptions {

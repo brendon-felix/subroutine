@@ -13,7 +13,7 @@ use gpui_component::{
     v_flex,
 };
 
-use app_core::PipelineEntry;
+use simple_core::QueueItem;
 
 use crate::stores::DatabaseStore;
 use crate::stores::database_store::PipelineChanged;
@@ -25,7 +25,7 @@ pub struct NavigateFromFocus {
 
 pub struct FocusView {
     database_store: Entity<DatabaseStore>,
-    entries: Vec<PipelineEntry>,
+    entries: Vec<QueueItem>,
     selected_index: usize,
     focus_handle: FocusHandle,
 }
@@ -49,10 +49,9 @@ impl FocusView {
 
         let entries = database_store
             .read(cx)
-            .get_pipeline()
-            .queue()
+            .pipeline
+            .queue
             .iter()
-            .filter(|e| !e.is_transition())
             .take(3)
             .cloned()
             .collect();
@@ -62,10 +61,9 @@ impl FocusView {
             |this, store, _event: &PipelineChanged, cx| {
                 this.entries = store
                     .read(cx)
-                    .get_pipeline()
-                    .queue()
+                    .pipeline
+                    .queue
                     .iter()
-                    .filter(|e| !e.is_transition())
                     .take(3)
                     .cloned()
                     .collect();
@@ -83,12 +81,8 @@ impl FocusView {
         }
     }
 
-    fn visible_entries(&self) -> &[PipelineEntry] {
-        &self.entries
-    }
-
     fn select_next(&mut self, cx: &mut Context<Self>) {
-        let count = self.visible_entries().len();
+        let count = self.entries.len();
         if count == 0 {
             return;
         }
@@ -97,7 +91,7 @@ impl FocusView {
     }
 
     fn select_previous(&mut self, cx: &mut Context<Self>) {
-        let count = self.visible_entries().len();
+        let count = self.entries.len();
         if count == 0 {
             return;
         }
@@ -107,12 +101,6 @@ impl FocusView {
             self.selected_index -= 1;
         }
         cx.notify();
-    }
-
-    pub fn refresh_entries(&mut self, cx: &mut Context<Self>) {
-        self.database_store.update(cx, |store, cx| {
-            store.refresh_pipeline(cx);
-        });
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -136,21 +124,10 @@ impl FocusView {
                     .text_2xl()
                     .font(gpui::font("Georgia")),
             )
-            .child(
-                h_flex().gap_2().child(
-                    Button::new("focus-refresh")
-                        .icon(IconName::Redo)
-                        .ghost()
-                        .small()
-                        .tooltip("Re-score pipeline")
-                        .on_click(cx.listener(|this, _event, _window, cx| {
-                            this.refresh_entries(cx);
-                        })),
-                ),
-            )
+            .child(div().w_8())
     }
 
-    fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_empty_state(&self, cx: &Context<Self>) -> impl IntoElement {
         v_flex()
             .items_center()
             .justify_center()
@@ -162,27 +139,17 @@ impl FocusView {
                     .text_sm()
                     .text_color(cx.theme().muted_foreground),
             )
-            .child(
-                Button::new("focus-empty-refresh")
-                    .label("Re-score")
-                    .outline()
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.refresh_entries(cx);
-                    })),
-            )
     }
 
     fn render_entry_card(
         &self,
         entity: gpui::Entity<Self>,
         ix: usize,
-        entry: &PipelineEntry,
-        score: f32,
+        entry: &QueueItem,
         cx: &App,
     ) -> impl IntoElement {
         let is_selected = ix == self.selected_index;
         let title = entry.title().to_string();
-        let score_display = format!("{:.0}%", (score.clamp(0.0, 1.0) * 100.0));
         let theme = cx.theme().clone();
 
         div()
@@ -209,13 +176,7 @@ impl FocusView {
                     cx.notify();
                 });
             })
-            .child(
-                v_flex().gap_1().child(Label::new(title).text_base()).child(
-                    Label::new(format!("Priority: {}", score_display))
-                        .text_xs()
-                        .text_color(theme.muted_foreground),
-                ),
-            )
+            .child(v_flex().gap_1().child(Label::new(title).text_base()))
     }
 }
 
@@ -223,7 +184,7 @@ impl Render for FocusView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
 
-        let content = if self.visible_entries().is_empty() {
+        let content = if self.entries.is_empty() {
             v_flex()
                 .flex_1()
                 .min_w_0()
@@ -231,24 +192,15 @@ impl Render for FocusView {
                 .justify_center()
                 .gap_4()
                 .child(self.render_empty_state(cx))
+                .into_any_element()
         } else {
-            let scores: Vec<f32> = self
-                .entries
-                .iter()
-                .map(|entry| self.database_store.read(cx).score_entry(entry))
-                .collect();
-
             let entity = cx.entity();
             let mut cards = Vec::new();
             for (ix, entry) in self.entries.iter().enumerate() {
-                let score = scores.get(ix).copied().unwrap_or(0.0);
-                cards.push(self.render_entry_card(entity.clone(), ix, entry, score, cx));
+                cards.push(self.render_entry_card(entity.clone(), ix, entry, cx));
             }
 
-            let selected_entry_id = self
-                .visible_entries()
-                .get(self.selected_index)
-                .map(|e| e.id());
+            let selected_entry = self.entries.get(self.selected_index).cloned();
 
             let navigation_controls = h_flex()
                 .gap_2()
@@ -278,28 +230,33 @@ impl Render for FocusView {
                 h_flex()
                     .gap_2()
                     .items_center()
-                    .when_some(selected_entry_id, |row, entry_id| {
-                        row.child(
-                            Button::new("focus-complete")
-                                .label("Complete")
-                                .primary()
-                                .on_click(cx.listener(move |this, _event, _window, cx| {
-                                    this.database_store.update(cx, |store, cx| {
-                                        store.complete_action(entry_id, cx);
-                                    });
-                                })),
-                        )
-                        .child(
-                            Button::new("focus-demote")
-                                .label("Later")
-                                .ghost()
-                                .tooltip("Move back to backlog")
-                                .on_click(cx.listener(move |this, _event, _window, cx| {
-                                    this.database_store.update(cx, |store, cx| {
-                                        store.demote(entry_id, cx);
-                                    });
-                                })),
-                        )
+                    .when_some(selected_entry, |row, entry| {
+                        let entry_id = entry.id();
+                        let is_action = matches!(entry, QueueItem::Action(_));
+
+                        row.when(is_action, |row| {
+                            row.child(
+                                Button::new("focus-complete")
+                                    .label("Complete")
+                                    .primary()
+                                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                                        this.database_store.update(cx, |store, cx| {
+                                            store.complete_action(entry_id, cx);
+                                        });
+                                    })),
+                            )
+                            .child(
+                                Button::new("focus-demote")
+                                    .label("Later")
+                                    .ghost()
+                                    .tooltip("Move back to backlog")
+                                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                                        this.database_store.update(cx, |store, cx| {
+                                            store.demote_action(entry_id, cx);
+                                        });
+                                    })),
+                            )
+                        })
                         .child(
                             Button::new("focus-remove")
                                 .label("Remove")
@@ -322,6 +279,7 @@ impl Render for FocusView {
                 .child(v_flex().w(px(520.0)).gap_3().children(cards))
                 .child(navigation_controls)
                 .child(actions)
+                .into_any_element()
         };
 
         v_flex()

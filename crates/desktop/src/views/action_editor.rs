@@ -1,128 +1,53 @@
-use app_core::{ActionContext, SavedAction, TimesOfDay};
-use chrono::NaiveTime;
+use chrono::{DateTime, Utc};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window,
+    App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window,
     div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
-    ActiveTheme, Disableable, IconName, Sizable,
+    ActiveTheme, Sizable, WindowExt,
     button::{Button, ButtonVariants},
+    clipboard::Clipboard,
     h_flex,
     input::{Input, InputState},
     label::Label,
-    progress::Progress,
-    switch::Switch,
+    notification::NotificationType,
     v_flex,
 };
+use simple_core::Action;
 use uuid::Uuid;
 
-use crate::{components::popover::popover, stores::DatabaseStore};
+use crate::{
+    components::popover::popover,
+    stores::DatabaseStore,
+    utils::{format_datetime_local, format_duration, parse_datetime_local, parse_duration},
+};
 
-const FIBONACCI_DURATIONS: &[u32] = &[1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144];
-
-fn energy_label(value: i8) -> &'static str {
-    match value {
-        -2 => "Very draining",
-        -1 => "Draining",
-        0 => "Neutral",
-        1 => "Energizing",
-        2 => "Very energizing",
-        _ => "Unknown",
-    }
-}
-
-fn attention_label(value: u8) -> &'static str {
-    match value {
-        1 => "Autopilot",
-        2 => "Low focus",
-        3 => "Moderate focus",
-        4 => "High focus",
-        5 => "Deep focus",
-        _ => "Unknown",
-    }
-}
-
-fn transition_label(value: u8) -> &'static str {
-    match value {
-        1 => "Just do it",
-        2 => "Easy start",
-        3 => "Some effort",
-        4 => "Needs setup",
-        5 => "Hard to begin",
-        _ => "Unknown",
-    }
-}
-
-fn importance_label(value: u8) -> &'static str {
-    match value {
-        1 => "Nice to do",
-        2 => "Somewhat important",
-        3 => "Important",
-        4 => "Very important",
-        5 => "Critical",
-        _ => "Unknown",
-    }
-}
-
-fn duration_display(minutes: u32) -> String {
-    if minutes < 60 {
-        format!("{}m", minutes)
-    } else {
-        let hours = minutes / 60;
-        let remaining = minutes % 60;
-        if remaining == 0 {
-            format!("{}h", hours)
-        } else {
-            format!("{}h{}m", hours, remaining)
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum ActionEditorPage {
-    General,
-    Metadata,
-    Preferences,
-}
-
-impl ActionEditorPage {
-    fn title(&self) -> &'static str {
-        match self {
-            ActionEditorPage::General => "Basics",
-            ActionEditorPage::Metadata => "Characteristics",
-            ActionEditorPage::Preferences => "Preferences",
-        }
-    }
-
-    fn progress(&self) -> f32 {
-        match self {
-            ActionEditorPage::General => 5.,
-            ActionEditorPage::Metadata => 50.,
-            ActionEditorPage::Preferences => 100.,
-        }
-    }
+pub struct StartActionEditor {
+    pub action_id: Option<Uuid>,
 }
 
 pub struct ActionEditor {
     pub focus_handle: FocusHandle,
     database_store: Entity<DatabaseStore>,
-    current_page: ActionEditorPage,
 
-    action_id: Option<Uuid>,
+    /// The action being edited, if any.
+    action: Option<Action>,
+
     title_input: Entity<InputState>,
     content_input: Entity<InputState>,
+    duration_input: Entity<InputState>,
+    target_time_input: Entity<InputState>,
+    recurrence_input: Entity<InputState>,
+
+    /// Deferred values applied on the first render (requires &mut Window).
     pending_title: Option<String>,
     pending_content: Option<String>,
+    pending_duration: Option<String>,
+    pending_target_time: Option<String>,
+    pending_recurrence: Option<String>,
 
-    // ActionContext fields
-    energy_rate: Option<i8>,
-    attention_level: Option<u8>,
-    transition_difficulty: Option<u8>,
-    importance: Option<u8>,
-
-    // Preferred time of day
-    preferred_times: TimesOfDay,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Focusable for ActionEditor {
@@ -143,49 +68,52 @@ impl ActionEditor {
         let title_input = cx.new(|cx| InputState::new(window, cx).placeholder("What needs doing?"));
         let content_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Any details? (optional)"));
+        let duration_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("e.g. 30m, 1h, 2h"));
+        let target_time_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("e.g. 3pm, 2026-03-01 14:00 (leave blank for backlog)")
+        });
+        let recurrence_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("e.g. 1d, 7d, 4h (leave blank for none)")
+        });
 
         Self {
             focus_handle,
             database_store,
-            current_page: ActionEditorPage::General,
-
-            action_id: None,
+            action: None,
             title_input,
             content_input,
+            duration_input,
+            target_time_input,
+            recurrence_input,
             pending_title: None,
             pending_content: None,
-
-            energy_rate: None,
-            attention_level: None,
-            transition_difficulty: None,
-            importance: None,
-
-            preferred_times: TimesOfDay::empty(),
+            pending_duration: None,
+            pending_target_time: None,
+            pending_recurrence: None,
+            _subscriptions: Vec::new(),
         }
     }
 
+    /// Load a saved action into the editor by ID.
     pub fn load_action(&mut self, action_id: Uuid, cx: &mut Context<Self>) {
-        let action = {
-            let db_store = self.database_store.read(cx);
-            db_store.get_saved_action(action_id).cloned()
-        };
+        let store = self.database_store.read(cx);
+        // Look in the saved-actions table first, then fall back to the live
+        // queue and backlog for actions that were never persisted separately.
+        let action = store
+            .get_action(action_id)
+            .or_else(|| store.get_queue_action(action_id))
+            .or_else(|| store.get_backlog_action(action_id))
+            .cloned();
 
         if let Some(action) = action {
-            self.action_id = Some(action.id);
             self.pending_title = Some(action.title.clone());
             self.pending_content = action.content.clone();
-
-            self.energy_rate = action.context.energy_rate;
-            self.attention_level = action.context.attention_level;
-            self.transition_difficulty = action.context.transition_difficulty;
-            self.importance = action.context.importance;
-
-            if let Some(naive_time) = action.target_time {
-                self.preferred_times = TimesOfDay::from(naive_time);
-            } else {
-                self.preferred_times = TimesOfDay::empty();
-            }
-
+            self.pending_duration = action.duration.map(format_duration);
+            self.pending_target_time = action.target.map(format_datetime_local);
+            self.pending_recurrence = action.recurrence.map(format_duration);
+            self.action = Some(action);
             cx.notify();
         }
     }
@@ -201,431 +129,228 @@ impl ActionEditor {
                 input.set_value(content, window, cx);
             });
         }
-    }
-
-    fn build_action(&self, cx: &App) -> SavedAction {
-        let title = self.title_input.read(cx).value().to_string();
-        let content = {
-            let value = self.content_input.read(cx).value().to_string();
-            if value.is_empty() { None } else { Some(value) }
-        };
-
-        // Resolve preferred_times to a single NaiveTime (the start of the first set period).
-        let target_time = times_of_day_to_naive_time(self.preferred_times);
-
-        let context = ActionContext {
-            energy_rate: self.energy_rate,
-            attention_level: self.attention_level,
-            transition_difficulty: self.transition_difficulty,
-            importance: self.importance,
-        };
-
-        let mut action = SavedAction::new(title);
-        action.id = self.action_id.unwrap_or(action.id);
-        action.content = content;
-        action.target_time = target_time;
-        action.context = context;
-        action
-    }
-
-    fn save_action(&mut self, cx: &mut Context<Self>) {
-        let action = self.build_action(cx);
-        if action.title.trim().is_empty() {
-            return;
+        if let Some(duration) = self.pending_duration.take() {
+            self.duration_input.update(cx, |input, cx| {
+                input.set_value(duration, window, cx);
+            });
         }
-        self.database_store.update(cx, |store, cx| {
-            store.upsert_saved_action(action, cx);
-        });
-    }
-
-    fn delete_action(&mut self, cx: &mut Context<Self>) {
-        if let Some(action_id) = self.action_id {
-            self.database_store.update(cx, |store, cx| {
-                store.delete_saved_action(action_id, cx);
+        if let Some(target_time) = self.pending_target_time.take() {
+            self.target_time_input.update(cx, |input, cx| {
+                input.set_value(target_time, window, cx);
+            });
+        }
+        if let Some(recurrence) = self.pending_recurrence.take() {
+            self.recurrence_input.update(cx, |input, cx| {
+                input.set_value(recurrence, window, cx);
             });
         }
     }
 
-    fn toggle_time_of_day(&mut self, flag: TimesOfDay) {
-        self.preferred_times.toggle(flag);
+    fn read_target_time(&self, cx: &App) -> Option<Result<DateTime<Utc>, String>> {
+        let text = self.target_time_input.read(cx).value().to_string();
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            return None;
+        }
+        Some(parse_datetime_local(&text).map_err(|e| e.to_string()))
     }
 
-    fn render_general_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w_full().gap_6().child(
-            v_flex()
-                .gap_2()
-                .child(Label::new("Notes").text_color(cx.theme().muted_foreground))
-                .child(Input::new(&self.content_input).w_full().h(px(80.0))),
-        )
+    fn build_action(&self, cx: &App) -> Action {
+        let title = self.title_input.read(cx).value().to_string();
+        let content = {
+            let value = self.content_input.read(cx).value().to_string();
+            if value.trim().is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        };
+        let duration = {
+            let text = self.duration_input.read(cx).value().to_string();
+            if text.trim().is_empty() {
+                None
+            } else {
+                parse_duration(text.trim()).ok()
+            }
+        };
+        let target = self.read_target_time(cx).and_then(|r| r.ok());
+        // A manually entered target time is always treated as static so the
+        // scheduler does not move it automatically.
+        let target_static = target.is_some();
+        let recurrence = {
+            let text = self.recurrence_input.read(cx).value().to_string();
+            if text.trim().is_empty() {
+                None
+            } else {
+                parse_duration(text.trim()).ok()
+            }
+        };
+
+        let base = match &self.action {
+            Some(existing) => existing.clone(),
+            None => Action::new_saved(title.clone()),
+        };
+
+        Action {
+            title,
+            content,
+            duration,
+            target,
+            target_static,
+            recurrence,
+            ..base
+        }
     }
 
-    fn render_metadata_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .w_full()
-            .gap_5()
-            .child(self.render_energy_selector(cx))
-            .child(self.render_attention_selector(cx))
-            .child(self.render_transition_selector(cx))
-            .child(self.render_importance_selector(cx))
-    }
+    fn save_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let action = self.build_action(cx);
+        if action.title.trim().is_empty() {
+            return;
+        }
 
-    fn render_preferences_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .w_full()
-            .gap_6()
-            .child(self.render_time_of_day_selector(cx))
-    }
+        let action_id = action.id;
+        let is_in_queue = self
+            .database_store
+            .read(cx)
+            .get_queue_action(action_id)
+            .is_some();
 
-    fn render_energy_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let current_label = self
-            .energy_rate
-            .map(|v| energy_label(v).to_string())
-            .unwrap_or_else(|| "not set".to_string());
+        let warnings = if is_in_queue {
+            self.database_store
+                .update(cx, |store, cx| store.update_queue_action(action, cx))
+        } else {
+            // Not in the queue — just persist the saved-action record.
+            // The pipeline will pick it up on the next refresh if needed.
+            self.database_store.update(cx, |store, cx| {
+                store.upsert_action(action, cx);
+            });
+            Vec::new()
+        };
 
-        v_flex()
-            .gap_3()
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        Label::new("How draining is this?").text_color(cx.theme().muted_foreground),
-                    )
-                    .child(
-                        Label::new(SharedString::from(current_label))
-                            .text_color(cx.theme().foreground),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .flex_wrap()
-                    .children((-2i8..=2i8).map(|value| {
-                        let is_selected = self.energy_rate == Some(value);
-                        let display: SharedString = format!("{:+}", value).into();
-                        let id: SharedString = format!("energy-{}", value).into();
-
-                        Button::new(id)
-                            .label(display)
-                            .small()
-                            .rounded_full()
-                            .map(|button| {
-                                if is_selected {
-                                    button.primary()
-                                } else {
-                                    button.ghost()
-                                }
-                            })
-                            .tooltip(SharedString::from(energy_label(value).to_string()))
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                if this.energy_rate == Some(value) {
-                                    this.energy_rate = None;
-                                } else {
-                                    this.energy_rate = Some(value);
-                                }
-                                cx.notify();
-                            }))
-                    })),
-            )
-    }
-
-    fn render_attention_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let current_label = self
-            .attention_level
-            .map(|v| attention_label(v).to_string())
-            .unwrap_or_else(|| "not set".to_string());
-
-        v_flex()
-            .gap_3()
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        Label::new("How much focus does this need?")
-                            .text_color(cx.theme().muted_foreground),
-                    )
-                    .child(
-                        Label::new(SharedString::from(current_label))
-                            .text_color(cx.theme().foreground),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .flex_wrap()
-                    .children((1u8..=5u8).map(|value| {
-                        let is_selected = self.attention_level == Some(value);
-                        let display: SharedString = format!("{}", value).into();
-                        let id: SharedString = format!("attention-{}", value).into();
-
-                        Button::new(id)
-                            .label(display)
-                            .small()
-                            .rounded_full()
-                            .map(|button| {
-                                if is_selected {
-                                    button.primary()
-                                } else {
-                                    button.ghost()
-                                }
-                            })
-                            .tooltip(SharedString::from(attention_label(value).to_string()))
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                if this.attention_level == Some(value) {
-                                    this.attention_level = None;
-                                } else {
-                                    this.attention_level = Some(value);
-                                }
-                                cx.notify();
-                            }))
-                    })),
-            )
-    }
-
-    fn render_transition_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let current_label = self
-            .transition_difficulty
-            .map(|v| transition_label(v).to_string())
-            .unwrap_or_else(|| "not set".to_string());
-
-        v_flex()
-            .gap_3()
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        Label::new("How hard is it to start?")
-                            .text_color(cx.theme().muted_foreground),
-                    )
-                    .child(
-                        Label::new(SharedString::from(current_label))
-                            .text_color(cx.theme().foreground),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .flex_wrap()
-                    .children((1u8..=5u8).map(|value| {
-                        let is_selected = self.transition_difficulty == Some(value);
-                        let display: SharedString = format!("{}", value).into();
-                        let id: SharedString = format!("transition-{}", value).into();
-
-                        Button::new(id)
-                            .label(display)
-                            .small()
-                            .rounded_full()
-                            .map(|button| {
-                                if is_selected {
-                                    button.primary()
-                                } else {
-                                    button.ghost()
-                                }
-                            })
-                            .tooltip(SharedString::from(transition_label(value).to_string()))
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                if this.transition_difficulty == Some(value) {
-                                    this.transition_difficulty = None;
-                                } else {
-                                    this.transition_difficulty = Some(value);
-                                }
-                                cx.notify();
-                            }))
-                    })),
-            )
-    }
-
-    fn render_importance_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let current_label = self
-            .importance
-            .map(|v| importance_label(v).to_string())
-            .unwrap_or_else(|| "not set".to_string());
-
-        v_flex()
-            .gap_3()
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        Label::new("How important is this?")
-                            .text_color(cx.theme().muted_foreground),
-                    )
-                    .child(
-                        Label::new(SharedString::from(current_label))
-                            .text_color(cx.theme().foreground),
-                    ),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .flex_wrap()
-                    .children((1u8..=5u8).map(|value| {
-                        let is_selected = self.importance == Some(value);
-                        let display: SharedString = format!("{}", value).into();
-                        let id: SharedString = format!("importance-{}", value).into();
-
-                        Button::new(id)
-                            .label(display)
-                            .small()
-                            .rounded_full()
-                            .map(|button| {
-                                if is_selected {
-                                    button.primary()
-                                } else {
-                                    button.ghost()
-                                }
-                            })
-                            .tooltip(SharedString::from(importance_label(value).to_string()))
-                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                if this.importance == Some(value) {
-                                    this.importance = None;
-                                } else {
-                                    this.importance = Some(value);
-                                }
-                                cx.notify();
-                            }))
-                    })),
-            )
-    }
-
-    fn render_time_of_day_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let time_flags: &[(TimesOfDay, &str, IconName)] = &[
-            (TimesOfDay::EARLY_MORNING, "Early morning", IconName::Sun),
-            (TimesOfDay::MORNING, "Morning", IconName::Sun),
-            (TimesOfDay::MIDDAY, "Midday", IconName::Sun),
-            (TimesOfDay::AFTERNOON, "Afternoon", IconName::Sun),
-            (TimesOfDay::EVENING, "Evening", IconName::Moon),
-            (TimesOfDay::NIGHT, "Night", IconName::Moon),
-            (TimesOfDay::LATE_NIGHT, "Late night", IconName::Moon),
-        ];
-
-        v_flex()
-            .gap_3()
-            .child(
-                Label::new("When do you prefer to do this?")
-                    .text_color(cx.theme().muted_foreground),
-            )
-            .child(
-                Label::new("Select all that apply")
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground),
-            )
-            .child(
-                h_flex().gap_2().flex_wrap().children(
-                    time_flags
-                        .iter()
-                        .map(|(flag, label, icon)| {
-                            let flag = *flag;
-                            let is_selected = self.preferred_times.contains(flag);
-                            let label: SharedString = (*label).into();
-                            let icon = icon.clone();
-                            let id: SharedString = format!("time-{:?}", flag).into();
-
-                            Button::new(id)
-                                .icon(icon)
-                                .label(label)
-                                .map(|button| {
-                                    if is_selected {
-                                        button.primary()
-                                    } else {
-                                        button.ghost()
-                                    }
-                                })
-                                .on_click(cx.listener(move |this, _event, _window, cx| {
-                                    this.toggle_time_of_day(flag);
-                                    cx.notify();
-                                }))
-                        })
-                        .collect::<Vec<_>>(),
+        for warning in warnings {
+            window.push_notification(
+                (
+                    NotificationType::Warning,
+                    SharedString::from(format!(
+                        "\"{}\" overlaps with \"{}\"",
+                        warning.inserted_title, warning.conflicting_title
+                    )),
                 ),
-            )
+                cx,
+            );
+        }
     }
 
-    fn render_nav_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let on_first_page = self.current_page == ActionEditorPage::General;
-        let on_last_page = self.current_page == ActionEditorPage::Preferences;
-        let has_action_id = self.action_id.is_some();
+    fn delete_action(&mut self, cx: &mut Context<Self>) {
+        if let Some(action) = &self.action {
+            let id = action.id;
+            self.database_store.update(cx, |store, cx| {
+                store.delete_action(id, cx);
+            });
+        }
+    }
 
-        h_flex()
+    fn render_debug_box(&self, cx: &App) -> impl IntoElement + use<> {
+        let theme = cx.theme();
+
+        let rows: Vec<(&'static str, String)> = match &self.action {
+            Some(action) => vec![
+                ("ID", action.id.to_string()),
+                ("Lineage ID", action.lineage_id.to_string()),
+                (
+                    "Origin Routine",
+                    action
+                        .origin_routine_id
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "—".to_string()),
+                ),
+                ("Ephemeral", action.ephemeral.to_string()),
+                ("Target static", action.target_static.to_string()),
+                (
+                    "Target",
+                    action
+                        .target
+                        .map(format_datetime_local)
+                        .unwrap_or_else(|| "—".to_string()),
+                ),
+                (
+                    "Duration",
+                    action
+                        .duration
+                        .map(format_duration)
+                        .unwrap_or_else(|| "—".to_string()),
+                ),
+                (
+                    "Recurrence",
+                    action
+                        .recurrence
+                        .map(format_duration)
+                        .unwrap_or_else(|| "—".to_string()),
+                ),
+            ],
+            None => vec![],
+        };
+
+        v_flex()
             .w_full()
-            .items_center()
-            .justify_between()
-            .child(h_flex().gap_2().when(has_action_id, |this| {
+            .gap_1()
+            .p_3()
+            .rounded_md()
+            .bg(theme.secondary)
+            .border_1()
+            .border_color(theme.border)
+            .child(
+                Label::new("Debug info")
+                    .text_xs()
+                    .text_color(theme.muted_foreground),
+            )
+            .children(rows.into_iter().enumerate().map(|(ix, (key, value))| {
+                let copy_value = SharedString::from(value.clone());
+                h_flex()
+                    .gap_2()
+                    .w_full()
+                    .items_center()
+                    .child(
+                        Label::new(key)
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .w(px(160.0)),
+                    )
+                    .child(
+                        Label::new(SharedString::from(value))
+                            .text_xs()
+                            .text_color(theme.foreground)
+                            .truncate()
+                            .flex_1(),
+                    )
+                    .child(
+                        Clipboard::new(SharedString::from(format!("debug-copy-{}", ix)))
+                            .value(copy_value),
+                    )
+            }))
+    }
+
+    fn render_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .gap_2()
+            .child(
+                Button::new("save")
+                    .label("Save")
+                    .primary()
+                    .on_click(cx.listener(|this, _event, window, cx| {
+                        this.save_action(window, cx);
+                    })),
+            )
+            .when(self.action.is_some(), |this| {
                 this.child(
                     Button::new("delete")
-                        .icon(IconName::Delete)
                         .label("Delete")
                         .danger()
-                        .ghost()
-                        .on_click(cx.listener(|this, _event, window, cx| {
+                        .on_click(cx.listener(|this, _event, _window, cx| {
                             this.delete_action(cx);
-                            window.dispatch_action(
-                                Box::new(crate::components::popover::CloseOverlay),
-                                cx,
-                            );
                         })),
                 )
-            }))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        Button::new("prev")
-                            .icon(IconName::ArrowLeft)
-                            .ghost()
-                            .disabled(on_first_page)
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                match this.current_page {
-                                    ActionEditorPage::General => {}
-                                    ActionEditorPage::Metadata => {
-                                        this.current_page = ActionEditorPage::General;
-                                    }
-                                    ActionEditorPage::Preferences => {
-                                        this.current_page = ActionEditorPage::Metadata;
-                                    }
-                                }
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Progress::new("editor-progress")
-                            .w(px(120.0))
-                            .value(self.current_page.progress()),
-                    )
-                    .child(if on_last_page {
-                        Button::new("save")
-                            .icon(IconName::Check)
-                            .label("Save")
-                            .primary()
-                            .on_click(cx.listener(|this, _event, window, cx| {
-                                this.save_action(cx);
-                                window.dispatch_action(
-                                    Box::new(crate::components::popover::CloseOverlay),
-                                    cx,
-                                );
-                            }))
-                    } else {
-                        Button::new("next")
-                            .icon(IconName::ArrowRight)
-                            .ghost()
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                match this.current_page {
-                                    ActionEditorPage::General => {
-                                        this.current_page = ActionEditorPage::Metadata;
-                                    }
-                                    ActionEditorPage::Metadata => {
-                                        this.current_page = ActionEditorPage::Preferences;
-                                    }
-                                    ActionEditorPage::Preferences => {}
-                                }
-                                cx.notify();
-                            }))
-                    }),
-            )
+            })
     }
 }
 
@@ -634,29 +359,68 @@ impl Render for ActionEditor {
         self.apply_pending_values(window, cx);
 
         let theme = cx.theme().clone();
-        let page_content: AnyElement = match self.current_page {
-            ActionEditorPage::General => self.render_general_page(cx).into_any_element(),
-            ActionEditorPage::Metadata => self.render_metadata_page(cx).into_any_element(),
-            ActionEditorPage::Preferences => self.render_preferences_page(cx).into_any_element(),
+        let is_new = self.action.is_none();
+
+        let parse_error_target = match self.read_target_time(cx) {
+            Some(Err(ref e)) => Some(e.clone()),
+            _ => None,
         };
 
-        v_flex()
-            .size_full()
+        let inner = v_flex()
+            .w(px(480.0))
+            .flex_initial()
+            .bg(theme.group_box)
+            .text_color(theme.group_box_foreground)
+            .border_1()
+            .border_color(theme.border)
+            .rounded_lg()
+            .shadow_xl()
+            .track_focus(&self.focus_handle)
+            .on_any_mouse_down(|_event, _window, cx| {
+                cx.stop_propagation();
+            })
             .p_4()
             .gap_4()
             .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        Label::new("Action Editor")
+                            .text_sm()
+                            .text_color(theme.muted_foreground),
+                    )
+                    .child(
+                        div()
+                            .px_2()
+                            .py(px(2.0))
+                            .rounded_full()
+                            .bg(theme.info.alpha(0.15))
+                            .border_1()
+                            .border_color(theme.info.alpha(0.4))
+                            .child(
+                                Label::new(if is_new { "New Action" } else { "Saved Action" })
+                                    .text_xs()
+                                    .text_color(theme.info),
+                            ),
+                    ),
+            )
+            .child(
                 v_flex()
-                    .gap_1()
+                    .gap_2()
                     .child(
                         Input::new(&self.title_input)
                             .w_full()
-                            .text_2xl()
+                            .large()
+                            .focus_bordered(true)
                             .appearance(false),
                     )
                     .child(
-                        Label::new(SharedString::from(self.current_page.title().to_string()))
-                            .text_sm()
-                            .text_color(theme.muted_foreground),
+                        Input::new(&self.content_input)
+                            .w_full()
+                            .focus_bordered(true)
+                            .appearance(false),
                     ),
             )
             .child(
@@ -664,38 +428,75 @@ impl Render for ActionEditor {
                     .flex_1()
                     .id("action-editor-scroll")
                     .overflow_y_scroll()
-                    .child(page_content),
-            )
-            .child(self.render_nav_footer(cx))
+                    .child(
+                        v_flex()
+                            .gap_4()
+                            .w_full()
+                            .child(
+                                v_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .child(
+                                        Label::new("Scheduling")
+                                            .text_xs()
+                                            .text_color(theme.muted_foreground),
+                                    )
+                                    .child(render_field_row(
+                                        "Duration",
+                                        Input::new(&self.duration_input).small(),
+                                        &theme,
+                                    ))
+                                    .child(
+                                        v_flex()
+                                            .w_full()
+                                            .gap_1()
+                                            .child(render_field_row(
+                                                "Target time",
+                                                Input::new(&self.target_time_input).small(),
+                                                &theme,
+                                            ))
+                                            .when_some(parse_error_target, |this, error| {
+                                                this.child(
+                                                    h_flex().pl(px(163.0)).child(
+                                                        Label::new(format!(
+                                                            "Invalid time: {}",
+                                                            error
+                                                        ))
+                                                        .text_xs()
+                                                        .text_color(theme.danger),
+                                                    ),
+                                                )
+                                            }),
+                                    )
+                                    .child(render_field_row(
+                                        "Recurrence",
+                                        Input::new(&self.recurrence_input).small(),
+                                        &theme,
+                                    )),
+                            )
+                            .child(self.render_debug_box(cx))
+                            .child(self.render_actions(cx)),
+                    ),
+            );
+
+        popover(inner, cx)
     }
 }
 
-fn capitalize(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first) => first.to_uppercase().to_string() + chars.as_str(),
-    }
-}
-
-/// Converts a `TimesOfDay` bitflag set to a representative `NaiveTime` (the start of
-/// the earliest period that is set). Returns `None` if no flags are set.
-fn times_of_day_to_naive_time(times: TimesOfDay) -> Option<NaiveTime> {
-    if times.contains(TimesOfDay::EARLY_MORNING) {
-        NaiveTime::from_hms_opt(4, 0, 0)
-    } else if times.contains(TimesOfDay::MORNING) {
-        NaiveTime::from_hms_opt(7, 0, 0)
-    } else if times.contains(TimesOfDay::MIDDAY) {
-        NaiveTime::from_hms_opt(11, 0, 0)
-    } else if times.contains(TimesOfDay::AFTERNOON) {
-        NaiveTime::from_hms_opt(13, 0, 0)
-    } else if times.contains(TimesOfDay::EVENING) {
-        NaiveTime::from_hms_opt(16, 0, 0)
-    } else if times.contains(TimesOfDay::NIGHT) {
-        NaiveTime::from_hms_opt(20, 0, 0)
-    } else if times.contains(TimesOfDay::LATE_NIGHT) {
-        NaiveTime::from_hms_opt(0, 0, 0)
-    } else {
-        None
-    }
+fn render_field_row(
+    label: impl Into<gpui::SharedString>,
+    input: Input,
+    theme: &gpui_component::theme::Theme,
+) -> impl IntoElement {
+    h_flex()
+        .w_full()
+        .gap_3()
+        .items_center()
+        .child(
+            Label::new(label)
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .w(px(120.0)),
+        )
+        .child(input.w_full())
 }

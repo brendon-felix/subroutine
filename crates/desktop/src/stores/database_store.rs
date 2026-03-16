@@ -1,16 +1,12 @@
-use std::collections::HashMap;
-
-use app_core::{
-    Action, Context, MAX_SPOONS, MentalState, Pipeline, PipelineEntry, Routine, SavedAction,
-    SavedMentalState, SavedStep, score, starter_states,
+use chrono::{DateTime, Utc};
+use gpui::{Context, EventEmitter, Task};
+use simple_core::{Action, ActionCompletion, Event, OverlapWarning, Pipeline, QueueItem, Routine};
+use simple_db::{
+    DatabaseConnection, connect_and_migrate, delete_action, delete_action_completion, delete_event,
+    delete_routine, fetch_actions, fetch_all_completions, fetch_events, fetch_routines,
+    insert_action_completion, load_pipeline, refresh_pipeline, save_pipeline, upsert_action,
+    upsert_event, upsert_routine,
 };
-use database::{
-    DatabaseConnection, connect_and_migrate, delete_action, delete_routine, delete_saved_action,
-    delete_saved_mental_state, fetch_routines, fetch_saved_actions, fetch_saved_mental_states,
-    insert_action, insert_routine, insert_saved_action, insert_saved_mental_state, load_pipeline,
-    save_pipeline,
-};
-use gpui::{App, Context as GpuiContext, EventEmitter, Task};
 use uuid::Uuid;
 
 macro_rules! lock_db {
@@ -27,38 +23,28 @@ pub struct DatabaseError {
 }
 
 pub struct PipelineChanged;
-
-pub struct SavedActionsLoaded;
-
+pub struct ActionsLoaded;
+pub struct EventsLoaded;
 pub struct RoutinesLoaded;
-
-pub struct SavedMentalStatesLoaded;
-
-pub struct MentalStateChanged;
+pub struct CompletionsLoaded;
 
 pub struct DatabaseStore {
     conn: Option<DatabaseConnection>,
-
-    pipeline: Pipeline,
-    saved_actions: Vec<SavedAction>,
-    routines: Vec<Routine>,
-    saved_mental_states: Vec<SavedMentalState>,
-    mental_state: MentalState,
-
+    pub pipeline: Pipeline,
+    pub actions: Vec<Action>,
+    pub events: Vec<Event>,
+    pub routines: Vec<Routine>,
+    pub completions: Vec<ActionCompletion>,
     initialize_task: Option<Task<()>>,
     save_pipeline_task: Option<Task<()>>,
 }
 
 /// Runs a blocking database operation on GPUI's background executor, then updates
 /// the entity on the foreground thread.
-///
-/// `db_work` receives a reference to the locked Connection and returns `Result<T>`.
-/// `on_success` receives the successful value and runs on the foreground inside an
-/// entity update, where it can mutate state and emit events.
 macro_rules! db_op {
     ($self:expr, $cx:expr, $label:expr, $db_work:expr, $on_success:expr) => {{
         let Some(conn) = $self.conn() else {
-            return;
+            return Default::default();
         };
         $cx.spawn(async move |this, cx| {
             let result = cx
@@ -94,14 +80,17 @@ macro_rules! db_op {
 }
 
 impl DatabaseStore {
-    pub fn new(_cx: &mut GpuiContext<Self>) -> Self {
+    pub fn new(_cx: &mut Context<Self>) -> Self {
         Self {
             conn: None,
-            pipeline: Pipeline::new(),
-            saved_actions: Vec::new(),
+            pipeline: Pipeline {
+                backlog: Vec::new(),
+                queue: Vec::new(),
+            },
+            actions: Vec::new(),
+            events: Vec::new(),
             routines: Vec::new(),
-            saved_mental_states: Vec::new(),
-            mental_state: MentalState::new(MAX_SPOONS),
+            completions: Vec::new(),
             initialize_task: None,
             save_pipeline_task: None,
         }
@@ -111,13 +100,40 @@ impl DatabaseStore {
         self.conn.clone()
     }
 
-    fn emit_error(cx: &mut GpuiContext<Self>, message: String) {
+    fn emit_error(cx: &mut Context<Self>, message: String) {
         cx.emit(DatabaseError { message });
     }
 
-    /// Connects to (and migrates) the database, then loads all persistent state.
-    /// Stores the background task to prevent cancellation.
-    pub fn initialize(&mut self, cx: &mut GpuiContext<Self>) {
+    pub fn load_completions(&mut self, cx: &mut Context<Self>) {
+        db_op!(
+            self,
+            cx,
+            "load_completions",
+            |conn| fetch_all_completions(conn),
+            |this: &mut Self, cx: &mut Context<Self>, completions: Vec<ActionCompletion>| {
+                this.completions = completions;
+                cx.emit(CompletionsLoaded);
+            }
+        );
+    }
+
+    pub fn get_completions(&self) -> &Vec<ActionCompletion> {
+        &self.completions
+    }
+
+    pub fn delete_completion(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        db_op!(
+            self,
+            cx,
+            "delete_completion",
+            move |conn| delete_action_completion(conn, id),
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
+                this.load_completions(cx);
+            }
+        );
+    }
+
+    pub fn initialize(&mut self, cx: &mut Context<Self>) {
         let task = cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
@@ -129,9 +145,10 @@ impl DatabaseStore {
                     if let Err(error) = this.update(cx, |this, cx| {
                         this.conn = Some(conn);
                         this.load_saved_actions(cx);
-                        this.load_pipeline(cx);
+                        this.load_events(cx);
+                        this.refresh_pipeline(cx);
                         this.load_routines(cx);
-                        this.load_saved_mental_states(cx);
+                        this.load_completions(cx);
                     }) {
                         eprintln!("Failed to set connection after initialize: {error}");
                     }
@@ -150,92 +167,336 @@ impl DatabaseStore {
 
     // ─── Saved Actions ──────────────────────────────────────────────────────────
 
-    pub fn load_saved_actions(&mut self, cx: &mut GpuiContext<Self>) {
+    pub fn load_saved_actions(&mut self, cx: &mut Context<Self>) {
         db_op!(
             self,
             cx,
             "load_saved_actions",
-            |conn| fetch_saved_actions(conn),
-            |this: &mut Self, cx: &mut GpuiContext<Self>, saved_actions: Vec<SavedAction>| {
-                this.saved_actions = saved_actions;
-                cx.emit(SavedActionsLoaded);
+            |conn| fetch_actions(conn),
+            |this: &mut Self, cx: &mut Context<Self>, actions: Vec<Action>| {
+                this.actions = actions;
+                cx.emit(ActionsLoaded);
             }
         );
     }
 
-    pub fn get_saved_actions(&self) -> &Vec<SavedAction> {
-        &self.saved_actions
+    pub fn get_action(&self, id: Uuid) -> Option<&Action> {
+        self.actions.iter().find(|a| a.id == id)
     }
 
-    pub fn get_saved_action(&self, id: Uuid) -> Option<&SavedAction> {
-        self.saved_actions.iter().find(|saved| saved.id == id)
-    }
-
-    pub fn upsert_saved_action(&mut self, saved: SavedAction, cx: &mut GpuiContext<Self>) {
+    pub fn upsert_action(&mut self, action: Action, cx: &mut Context<Self>) {
         db_op!(
             self,
             cx,
             "upsert_saved_action",
-            move |conn| insert_saved_action(conn, &saved),
-            |this: &mut Self, cx: &mut GpuiContext<Self>, _: ()| {
+            move |conn| upsert_action(conn, &action),
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
                 this.load_saved_actions(cx);
             }
         );
     }
 
-    pub fn delete_saved_action(&mut self, id: Uuid, cx: &mut GpuiContext<Self>) {
+    pub fn delete_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
         db_op!(
             self,
             cx,
             "delete_saved_action",
-            move |conn| delete_saved_action(conn, id),
-            |this: &mut Self, cx: &mut GpuiContext<Self>, _: ()| {
+            move |conn| delete_action(conn, id),
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
                 this.load_saved_actions(cx);
+            }
+        );
+    }
+
+    // ─── Saved Events ────────────────────────────────────────────────────────────
+
+    pub fn load_events(&mut self, cx: &mut Context<Self>) {
+        db_op!(
+            self,
+            cx,
+            "load_saved_events",
+            |conn| fetch_events(conn),
+            |this: &mut Self, cx: &mut Context<Self>, events: Vec<Event>| {
+                this.events = events;
+                cx.emit(EventsLoaded);
+            }
+        );
+    }
+
+    pub fn get_event(&self, id: Uuid) -> Option<&Event> {
+        self.events.iter().find(|e| e.id == id)
+    }
+
+    pub fn upsert_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        db_op!(
+            self,
+            cx,
+            "upsert_saved_event",
+            move |conn| upsert_event(conn, &event),
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
+                this.load_events(cx);
+            }
+        );
+    }
+
+    pub fn delete_event(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        db_op!(
+            self,
+            cx,
+            "delete_saved_event",
+            move |conn| delete_event(conn, id),
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
+                this.load_events(cx);
             }
         );
     }
 
     // ─── Pipeline ───────────────────────────────────────────────────────────────
 
-    pub fn load_pipeline(&mut self, cx: &mut GpuiContext<Self>) {
+    pub fn load_pipeline(&mut self, cx: &mut Context<Self>) {
         db_op!(
             self,
             cx,
             "load_pipeline",
             |conn| load_pipeline(conn),
-            |this: &mut Self, cx: &mut GpuiContext<Self>, pipeline: Pipeline| {
+            |this: &mut Self, cx: &mut Context<Self>, pipeline: Pipeline| {
                 this.pipeline = pipeline;
                 cx.emit(PipelineChanged);
             }
         );
     }
 
-    pub fn get_pipeline(&self) -> &Pipeline {
-        &self.pipeline
-    }
-
-    /// Creates a new `SavedAction` and immediately instantiates a concrete `Action`,
-    /// pushing it to the pipeline backlog. Persists both and emits `PipelineChanged`.
-    pub fn create_action(&mut self, title: String, cx: &mut GpuiContext<Self>) {
-        let saved = SavedAction::new(title);
-        let action = saved.instantiate();
-        let action_entry = PipelineEntry::Action(action.clone());
-
-        if let Err(error) = self.pipeline.push(action_entry) {
-            tracing::error!("Failed to push new action to pipeline: {error}");
-            return;
-        }
-
+    pub fn refresh_pipeline(&mut self, cx: &mut Context<Self>) {
         db_op!(
             self,
             cx,
-            "create_action",
+            "refresh_pipeline",
+            |conn| refresh_pipeline(conn),
+            |this: &mut Self, cx: &mut Context<Self>, pipeline: Pipeline| {
+                this.pipeline = pipeline;
+                cx.emit(PipelineChanged);
+            }
+        );
+    }
+
+    /// Updates an existing action in the queue (matched by ID), preserving
+    /// consecutive chains and displacing conflicts. Returns overlap warnings.
+    pub fn update_queue_action(
+        &mut self,
+        action: Action,
+        cx: &mut Context<Self>,
+    ) -> Vec<OverlapWarning> {
+        let warnings = self
+            .pipeline
+            .update_queue_action(action.clone(), Utc::now());
+        let action_for_db = action;
+        db_op!(
+            self,
+            cx,
+            "update_queue_action",
             move |conn| {
-                insert_saved_action(conn, &saved)?;
-                insert_action(conn, &action)?;
+                upsert_action(conn, &action_for_db)?;
                 Ok::<(), anyhow::Error>(())
             },
-            |this: &mut Self, cx: &mut GpuiContext<Self>, _: ()| {
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
+                this.save_pipeline(cx);
+                cx.emit(PipelineChanged);
+            }
+        );
+        warnings
+    }
+
+    /// Updates an existing event in the queue (matched by ID), preserving
+    /// consecutive chains and displacing conflicts. Returns overlap warnings.
+    pub fn update_queue_event(
+        &mut self,
+        event: Event,
+        cx: &mut Context<Self>,
+    ) -> Vec<OverlapWarning> {
+        let warnings = self.pipeline.update_queue_event(event.clone(), Utc::now());
+        let event_for_db = event;
+        db_op!(
+            self,
+            cx,
+            "update_queue_event",
+            move |conn| {
+                upsert_event(conn, &event_for_db)?;
+                Ok::<(), anyhow::Error>(())
+            },
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
+                this.save_pipeline(cx);
+                cx.emit(PipelineChanged);
+            }
+        );
+        warnings
+    }
+
+    pub fn expedite_actions(&mut self, cx: &mut Context<Self>) {
+        self.pipeline.expedite_actions(Utc::now());
+        self.save_pipeline(cx);
+        cx.emit(PipelineChanged);
+    }
+
+    pub fn get_queue_action(&self, id: Uuid) -> Option<&Action> {
+        self.pipeline.queue.iter().find_map(|item| {
+            if let QueueItem::Action(a) = item {
+                if a.id == id { Some(a) } else { None }
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn get_queue_event(&self, id: Uuid) -> Option<&Event> {
+        self.pipeline.queue.iter().find_map(|item| {
+            if let QueueItem::Event(e) = item {
+                if e.id == id { Some(e) } else { None }
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn get_backlog_action(&self, id: Uuid) -> Option<&Action> {
+        self.pipeline.backlog.iter().find(|a| a.id == id)
+    }
+
+    /// Adds an action to the backlog and persists the pipeline.
+    pub fn add_action_to_backlog(&mut self, action: Action, cx: &mut Context<Self>) {
+        let action_for_db = action.clone();
+        self.pipeline.backlog.push(action);
+        db_op!(
+            self,
+            cx,
+            "add_action_to_backlog",
+            move |conn| {
+                upsert_action(conn, &action_for_db)?;
+                Ok::<(), anyhow::Error>(())
+            },
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
+                this.save_pipeline(cx);
+                cx.emit(PipelineChanged);
+            }
+        );
+    }
+
+    /// Adds an action to the queue using smart scheduling:
+    /// - If the action has no target, it is placed in the next available slot
+    ///   after consecutive non-static chains and events.
+    /// - If the action has a target, it is inserted as a static action, any
+    ///   non-static actions that now conflict are displaced, and overlap
+    ///   warnings for immovable items are returned.
+    pub fn add_action_to_queue(
+        &mut self,
+        action: Action,
+        cx: &mut Context<Self>,
+    ) -> Vec<OverlapWarning> {
+        let warnings = if action.target.is_some() {
+            self.pipeline
+                .queue_action_static(action.clone(), Utc::now())
+        } else {
+            self.pipeline.queue_action_auto(action.clone(), Utc::now());
+            Vec::new()
+        };
+
+        let action_for_db = action;
+        db_op!(
+            self,
+            cx,
+            "add_action_to_queue",
+            move |conn| {
+                upsert_action(conn, &action_for_db)?;
+                Ok::<(), anyhow::Error>(())
+            },
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
+                this.save_pipeline(cx);
+                cx.emit(PipelineChanged);
+            }
+        );
+
+        warnings
+    }
+
+    /// Adds an event to the queue, displaces any non-static actions that
+    /// conflict with it, and returns overlap warnings for immovable items.
+    pub fn add_event_to_queue(
+        &mut self,
+        event: Event,
+        cx: &mut Context<Self>,
+    ) -> Vec<OverlapWarning> {
+        let warnings = self.pipeline.queue_event(event.clone(), Utc::now());
+
+        let event_for_db = event;
+        db_op!(
+            self,
+            cx,
+            "add_event_to_queue",
+            move |conn| {
+                upsert_event(conn, &event_for_db)?;
+                Ok::<(), anyhow::Error>(())
+            },
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
+                this.save_pipeline(cx);
+                cx.emit(PipelineChanged);
+            }
+        );
+
+        warnings
+    }
+
+    /// Creates a new ephemeral action and places it in the next available
+    /// slot in the queue.
+    pub fn create_action(&mut self, title: String, cx: &mut Context<Self>) {
+        let action = Action::new(title);
+        self.add_action_to_queue(action, cx);
+    }
+
+    /// Promotes a backlog action to the queue, scheduling it in the next
+    /// available slot after now (respecting consecutive actions and events).
+    pub fn promote_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        if !self.pipeline.promote_action(id, Utc::now()) {
+            tracing::warn!("promote: action {id} not found in backlog");
+            return;
+        }
+        self.save_pipeline(cx);
+        cx.emit(PipelineChanged);
+    }
+
+    /// Demotes a queue action back to the backlog.
+    pub fn demote_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let pos = self.pipeline.queue.iter().position(|item| item.id() == id);
+        let Some(pos) = pos else {
+            tracing::warn!("demote: item {id} not found in queue");
+            return;
+        };
+        let item = self.pipeline.queue.remove(pos);
+        if let QueueItem::Action(mut action) = item {
+            action.target = None;
+            action.target_static = false;
+            self.pipeline.backlog.push(action);
+        }
+        self.save_pipeline(cx);
+        cx.emit(PipelineChanged);
+    }
+
+    /// Removes an item from whichever list it is in without deleting the underlying record.
+    pub fn remove_from_pipeline(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        self.pipeline.queue.retain(|item| item.id() != id);
+        self.pipeline.backlog.retain(|a| a.id != id);
+        self.save_pipeline(cx);
+        cx.emit(PipelineChanged);
+    }
+
+    /// Removes an action from the pipeline and permanently deletes its DB record.
+    pub fn delete_queue_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        self.pipeline.queue.retain(|item| item.id() != id);
+        self.pipeline.backlog.retain(|a| a.id != id);
+        db_op!(
+            self,
+            cx,
+            "delete_queue_action",
+            move |conn| delete_action(conn, id),
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
                 this.save_pipeline(cx);
                 this.load_saved_actions(cx);
                 cx.emit(PipelineChanged);
@@ -243,388 +504,168 @@ impl DatabaseStore {
         );
     }
 
-    /// Creates an ephemeral `Action` (no `SavedAction`) and pushes it to the pipeline backlog.
-    pub fn create_ephemeral_action(&mut self, title: String, cx: &mut GpuiContext<Self>) {
-        let action = Action::new(title).ephemeral(true);
-        let action_entry = PipelineEntry::Action(action.clone());
-
-        if let Err(error) = self.pipeline.push(action_entry) {
-            tracing::error!("Failed to push ephemeral action to pipeline: {error}");
+    /// Completes a queue action: records a completion, removes from pipeline,
+    /// and if the action has recurrence schedules the next instance.
+    pub fn complete_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let pos = self.pipeline.queue.iter().position(|item| item.id() == id);
+        let Some(pos) = pos else {
+            tracing::warn!("complete_action: action {id} not found in queue");
             return;
-        }
+        };
 
-        db_op!(
-            self,
-            cx,
-            "create_ephemeral_action",
-            move |conn| insert_action(conn, &action),
-            |this: &mut Self, cx: &mut GpuiContext<Self>, _: ()| {
-                this.save_pipeline(cx);
-                cx.emit(PipelineChanged);
-            }
-        );
-    }
-
-    pub fn promote(&mut self, id: Uuid, cx: &mut GpuiContext<Self>) {
-        if let Err(error) = self.pipeline.promote(id) {
-            tracing::error!("Failed to promote pipeline entry {id}: {error}");
+        let item = self.pipeline.queue.remove(pos);
+        let QueueItem::Action(action) = item else {
+            tracing::warn!("complete_action: item {id} is not an action");
             return;
+        };
+
+        let completion = ActionCompletion::new(&action);
+        let next = action.next_recurrence();
+
+        if let Some(next_action) = next.clone() {
+            self.pipeline
+                .queue
+                .push(QueueItem::Action(next_action.clone()));
+            self.pipeline
+                .queue
+                .sort_by_key(|item| item.time().unwrap_or(DateTime::<Utc>::MAX_UTC));
         }
-        self.save_pipeline(cx);
-        cx.emit(PipelineChanged);
-    }
-
-    pub fn demote(&mut self, id: Uuid, cx: &mut GpuiContext<Self>) {
-        if let Err(error) = self.pipeline.demote(id) {
-            tracing::error!("Failed to demote pipeline entry {id}: {error}");
-            return;
-        }
-        self.save_pipeline(cx);
-        cx.emit(PipelineChanged);
-    }
-
-    /// Removes an entry from whichever list it is in, persists, and emits `PipelineChanged`.
-    pub fn remove_from_pipeline(&mut self, id: Uuid, cx: &mut GpuiContext<Self>) {
-        // Try demoting from queue to backlog first, then remove from backlog.
-        let _ = self.pipeline.demote(id);
-
-        // Find and remove from backlog by rebuilding with the entry excluded.
-        // Pipeline doesn't currently expose a direct removal method, so we promote
-        // then remove from queue, or use the demote-then-swap pattern. Since Pipeline
-        // only has push/promote/demote/refresh, we reload after a DB delete to stay in sync.
-        self.save_pipeline(cx);
-        cx.emit(PipelineChanged);
-    }
-
-    /// Marks an action as complete: deducts spoons, removes from pipeline, deletes
-    /// the concrete Action row from the DB, and persists.
-    pub fn complete_action(&mut self, id: Uuid, cx: &mut GpuiContext<Self>) {
-        // Find the action in the queue to get its energy_rate for spoon deduction.
-        let action = self
-            .pipeline
-            .queue()
-            .iter()
-            .find(|entry| entry.id() == id)
-            .and_then(|entry| {
-                if let PipelineEntry::Action(a) = entry {
-                    Some(a.clone())
-                } else {
-                    None
-                }
-            });
-
-        if let Some(action) = action {
-            self.mental_state.complete_action(&action);
-            cx.emit(MentalStateChanged);
-        }
-
-        // Remove from pipeline (demote then save will drop it; we persist afterward).
-        let _ = self.pipeline.demote(id);
 
         db_op!(
             self,
             cx,
             "complete_action",
-            move |conn| delete_action(conn, id),
-            |this: &mut Self, cx: &mut GpuiContext<Self>, _: ()| {
+            move |conn| {
+                insert_action_completion(conn, &completion)?;
+                if let Some(next_action) = &next {
+                    upsert_action(conn, next_action)?;
+                }
+                Ok::<(), anyhow::Error>(())
+            },
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
+                this.save_pipeline(cx);
+                this.load_completions(cx);
+                cx.emit(PipelineChanged);
+            }
+        );
+    }
+
+    /// Instantiates all steps of a routine as ephemeral actions and adds them to the queue.
+    pub fn instantiate_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let routine = match self.routines.iter().find(|r| r.id == id) {
+            Some(r) => r.clone(),
+            None => {
+                tracing::warn!("run_routine: no routine found with id {id}");
+                return;
+            }
+        };
+
+        let now = Utc::now();
+        let actions: Vec<Action> = routine
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(i, step)| {
+                let offset = routine
+                    .steps
+                    .iter()
+                    .take(i)
+                    .fold(chrono::Duration::zero(), |acc, s| {
+                        acc + s.duration.unwrap_or(chrono::Duration::zero())
+                    });
+                Action::new(step.title.clone())
+                    .with_target(now + offset, true)
+                    .with_origin_routine(routine.id)
+                    .with_duration(step.duration.unwrap_or(chrono::Duration::minutes(15)))
+            })
+            .collect();
+
+        for action in &actions {
+            self.pipeline.queue.push(QueueItem::Action(action.clone()));
+        }
+        self.pipeline
+            .queue
+            .sort_by_key(|item| item.time().unwrap_or(DateTime::<Utc>::MAX_UTC));
+
+        let actions_for_db = actions.clone();
+        db_op!(
+            self,
+            cx,
+            "run_routine",
+            move |conn| {
+                for action in &actions_for_db {
+                    upsert_action(conn, action)?;
+                }
+                Ok::<(), anyhow::Error>(())
+            },
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
                 this.save_pipeline(cx);
                 cx.emit(PipelineChanged);
             }
         );
     }
 
-    /// Scores all entries against the current context, automatically promoting and
-    /// demoting as needed, then persists.
-    pub fn refresh_pipeline(&mut self, cx: &mut GpuiContext<Self>) {
-        let context = Context::new(self.mental_state.clone());
-        let completed_ids = std::collections::HashSet::new();
-        self.pipeline.refresh(&context, &completed_ids);
-        self.save_pipeline(cx);
-        cx.emit(PipelineChanged);
-    }
-
-    /// Persists the current pipeline state to the database.
-    fn save_pipeline(&mut self, cx: &mut GpuiContext<Self>) {
-        // Clone the pipeline state as two separate vec snapshots for the background task.
-        let backlog: Vec<PipelineEntry> = self.pipeline.backlog().to_vec();
-        let queue: Vec<PipelineEntry> = self
-            .pipeline
-            .queue()
-            .iter()
-            .filter(|e| !e.is_transition())
-            .cloned()
-            .collect();
-
+    fn save_pipeline(&mut self, cx: &mut Context<Self>) {
+        let pipeline = self.pipeline.clone();
         let Some(conn) = self.conn() else {
             return;
         };
-
         let task = cx.background_executor().spawn(async move {
             let connection = lock_db!(conn);
-            // Reconstruct a temporary pipeline for serialization.
-            let mut temp_pipeline = Pipeline::new();
-            for entry in backlog {
-                if let Err(error) = temp_pipeline.push(entry) {
-                    tracing::warn!("Skipping pipeline entry during save: {error}");
-                }
-            }
-            for entry in queue {
-                let id = entry.id();
-                if let Err(error) = temp_pipeline.push(entry) {
-                    tracing::warn!("Skipping queue entry during save: {error}");
-                    continue;
-                }
-                if let Err(error) = temp_pipeline.promote(id) {
-                    tracing::warn!("Skipping queue promotion during save: {error}");
-                }
-            }
-            if let Err(error) = save_pipeline(&connection, &temp_pipeline) {
+            if let Err(error) = save_pipeline(&connection, &pipeline) {
                 tracing::error!("Failed to save pipeline: {error}");
             }
         });
         self.save_pipeline_task = Some(task);
     }
 
-    /// Computes the score for a single pipeline entry against the current context.
-    pub fn score_entry(&self, entry: &PipelineEntry) -> f32 {
-        let context = Context::new(self.mental_state.clone());
-        let completed_ids = std::collections::HashSet::new();
-        score(entry, &context, &completed_ids).total
-    }
-
-    // ─── Mental State ────────────────────────────────────────────────────────────
-
-    pub fn load_saved_mental_states(&mut self, cx: &mut GpuiContext<Self>) {
-        db_op!(
-            self,
-            cx,
-            "load_saved_mental_states",
-            |conn| fetch_saved_mental_states(conn),
-            |this: &mut Self, cx: &mut GpuiContext<Self>, states: Vec<SavedMentalState>| {
-                this.saved_mental_states = states;
-                cx.emit(SavedMentalStatesLoaded);
-            }
-        );
-    }
-
-    pub fn get_saved_mental_states(&self) -> &Vec<SavedMentalState> {
-        &self.saved_mental_states
-    }
-
-    pub fn get_mental_state(&self) -> &MentalState {
-        &self.mental_state
-    }
-
-    /// Declares a saved mental state as the user's current state by ID.
-    /// Emits `MentalStateChanged` and optionally refreshes the pipeline.
-    pub fn declare_mental_state(&mut self, id: Uuid, cx: &mut GpuiContext<Self>) {
-        let state = self
-            .saved_mental_states
-            .iter()
-            .find(|s| s.id == id)
-            .cloned();
-
-        if let Some(state) = state {
-            self.mental_state.declared = Some(state);
-            cx.emit(MentalStateChanged);
-            self.refresh_pipeline(cx);
-        } else {
-            tracing::warn!("declare_mental_state: no saved state found with id {id}");
-        }
-    }
-
-    /// Clears the currently declared mental state.
-    pub fn clear_declared_state(&mut self, cx: &mut GpuiContext<Self>) {
-        self.mental_state.declared = None;
-        cx.emit(MentalStateChanged);
-        self.refresh_pipeline(cx);
-    }
-
-    pub fn upsert_saved_mental_state(
-        &mut self,
-        state: SavedMentalState,
-        cx: &mut GpuiContext<Self>,
-    ) {
-        db_op!(
-            self,
-            cx,
-            "upsert_saved_mental_state",
-            move |conn| insert_saved_mental_state(conn, &state),
-            |this: &mut Self, cx: &mut GpuiContext<Self>, _: ()| {
-                this.load_saved_mental_states(cx);
-            }
-        );
-    }
-
-    pub fn delete_saved_mental_state(&mut self, id: Uuid, cx: &mut GpuiContext<Self>) {
-        // Clear the declared state if the one being deleted is currently active.
-        if self
-            .mental_state
-            .declared
-            .as_ref()
-            .map_or(false, |s| s.id == id)
-        {
-            self.mental_state.declared = None;
-            cx.emit(MentalStateChanged);
-        }
-
-        db_op!(
-            self,
-            cx,
-            "delete_saved_mental_state",
-            move |conn| delete_saved_mental_state(conn, id),
-            |this: &mut Self, cx: &mut GpuiContext<Self>, _: ()| {
-                this.load_saved_mental_states(cx);
-            }
-        );
-    }
-
     // ─── Routines ────────────────────────────────────────────────────────────────
 
-    pub fn load_routines(&mut self, cx: &mut GpuiContext<Self>) {
+    pub fn load_routines(&mut self, cx: &mut Context<Self>) {
         db_op!(
             self,
             cx,
             "load_routines",
             |conn| fetch_routines(conn),
-            |this: &mut Self, cx: &mut GpuiContext<Self>, routines: Vec<Routine>| {
+            |this: &mut Self, cx: &mut Context<Self>, routines: Vec<Routine>| {
                 this.routines = routines;
                 cx.emit(RoutinesLoaded);
             }
         );
     }
 
-    pub fn get_routines(&self) -> &Vec<Routine> {
-        &self.routines
-    }
-
     pub fn get_routine(&self, id: Uuid) -> Option<&Routine> {
         self.routines.iter().find(|r| r.id == id)
     }
 
-    pub fn upsert_routine(&mut self, routine: Routine, cx: &mut GpuiContext<Self>) {
+    pub fn upsert_routine(&mut self, routine: Routine, cx: &mut Context<Self>) {
         db_op!(
             self,
             cx,
             "upsert_routine",
-            move |conn| insert_routine(conn, &routine),
-            |this: &mut Self, cx: &mut GpuiContext<Self>, _: ()| {
+            move |conn| upsert_routine(conn, &routine),
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
                 this.load_routines(cx);
             }
         );
     }
 
-    pub fn delete_routine(&mut self, id: Uuid, cx: &mut GpuiContext<Self>) {
-        // Remove from pipeline if present before deleting from DB.
-        let in_queue = self.pipeline.queue().iter().any(|e| e.id() == id);
-        if in_queue {
-            let _ = self.pipeline.demote(id);
-        }
-
+    pub fn delete_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
         db_op!(
             self,
             cx,
             "delete_routine",
             move |conn| delete_routine(conn, id),
-            |this: &mut Self, cx: &mut GpuiContext<Self>, _: ()| {
+            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
                 this.load_routines(cx);
-                this.save_pipeline(cx);
-                cx.emit(PipelineChanged);
             }
         );
-    }
-
-    /// Instantiates all steps of a routine, adds the resulting concrete entries to
-    /// the pipeline backlog, and persists. The routine placeholder entry is removed
-    /// from the pipeline in the process.
-    pub fn activate_routine(&mut self, id: Uuid, cx: &mut GpuiContext<Self>) {
-        let routine = match self.routines.iter().find(|r| r.id == id) {
-            Some(r) => r.clone(),
-            None => {
-                tracing::warn!("activate_routine: no routine found with id {id}");
-                return;
-            }
-        };
-
-        let saved_actions: HashMap<Uuid, SavedAction> = self
-            .saved_actions
-            .iter()
-            .map(|s| (s.id, s.clone()))
-            .collect();
-
-        // No saved_events supported yet; pass an empty map.
-        let entries = routine.instantiate(&saved_actions, &HashMap::new());
-
-        // Remove the routine placeholder from the pipeline if it is present.
-        let in_queue = self.pipeline.queue().iter().any(|e| e.id() == id);
-        if in_queue {
-            let _ = self.pipeline.demote(id);
-        }
-        // Remove from backlog by reconstructing (Pipeline has no direct remove).
-        // We rely on save_pipeline to write the current in-memory state, so simply
-        // not pushing it back is sufficient — but we need to also remove it from
-        // the in-memory backlog. Since Pipeline doesn't expose a remove method, we
-        // reload from DB after persistence. For now, mark the action entries as
-        // pending by persisting them and then reloading.
-
-        // Persist instantiated actions.
-        let actions_to_insert: Vec<Action> = entries
-            .iter()
-            .filter_map(|entry| {
-                if let PipelineEntry::Action(a) = entry {
-                    Some(a.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Push new entries to the pipeline backlog before persisting.
-        for entry in entries {
-            if let Err(error) = self.pipeline.push(entry) {
-                tracing::warn!("Failed to push routine step to pipeline: {error}");
-            }
-        }
-
-        db_op!(
-            self,
-            cx,
-            "activate_routine",
-            move |conn| {
-                for action in &actions_to_insert {
-                    insert_action(conn, action)?;
-                }
-                Ok::<(), anyhow::Error>(())
-            },
-            |this: &mut Self, cx: &mut GpuiContext<Self>, _: ()| {
-                this.save_pipeline(cx);
-                cx.emit(PipelineChanged);
-            }
-        );
-    }
-
-    // ─── Starter states ──────────────────────────────────────────────────────────
-
-    /// Returns the UUID for the "Scattered" starter state, used by the home screen
-    /// "analysis paralysis" button.
-    pub fn scattered_state_id() -> Uuid {
-        starter_states::SCATTERED_ID
-    }
-
-    /// Returns the UUID for the "Overwhelmed" starter state.
-    pub fn overwhelmed_state_id() -> Uuid {
-        starter_states::OVERWHELMED_ID
-    }
-
-    /// Returns the UUID for the "Focused" starter state.
-    pub fn focused_state_id() -> Uuid {
-        starter_states::FOCUSED_ID
     }
 }
 
 impl EventEmitter<DatabaseError> for DatabaseStore {}
 impl EventEmitter<PipelineChanged> for DatabaseStore {}
-impl EventEmitter<SavedActionsLoaded> for DatabaseStore {}
+impl EventEmitter<ActionsLoaded> for DatabaseStore {}
+impl EventEmitter<EventsLoaded> for DatabaseStore {}
 impl EventEmitter<RoutinesLoaded> for DatabaseStore {}
-impl EventEmitter<SavedMentalStatesLoaded> for DatabaseStore {}
-impl EventEmitter<MentalStateChanged> for DatabaseStore {}
+impl EventEmitter<CompletionsLoaded> for DatabaseStore {}

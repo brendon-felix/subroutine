@@ -1,11 +1,11 @@
-use app_core::{Routine, SavedAction, SavedStep};
+use chrono::Duration;
 use gpui::prelude::*;
 use gpui::{
     App, AppContext as _, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Render, SharedString, Subscription, Window, div, font, px,
+    IntoElement, Render, Subscription, Window, div, font, px,
 };
 use gpui_component::{
-    ActiveTheme, Disableable, IconName, Sizable, WindowExt,
+    ActiveTheme, IconName, Sizable, WindowExt,
     button::{Button, ButtonVariants},
     divider::Divider,
     h_flex,
@@ -14,10 +14,12 @@ use gpui_component::{
     notification::NotificationType,
     v_flex,
 };
+use simple_core::{Routine, RoutineStep};
 use uuid::Uuid;
 
+use crate::components::popover::popover;
 use crate::stores::DatabaseStore;
-use crate::stores::database_store::{DatabaseError, RoutinesLoaded, SavedActionsLoaded};
+use crate::stores::database_store::{DatabaseError, RoutinesLoaded};
 use crate::views::MainViewMode;
 
 pub struct NavigateFromRoutines {
@@ -48,7 +50,7 @@ impl RoutinesView {
         subscriptions.push(cx.subscribe(
             &database_store,
             |this, store, _event: &RoutinesLoaded, cx| {
-                this.routines = store.read(cx).get_routines().clone();
+                this.routines = store.read(cx).routines.clone();
                 cx.notify();
             },
         ));
@@ -56,15 +58,11 @@ impl RoutinesView {
         subscriptions.push(cx.subscribe(
             &database_store,
             |_this, _store, event: &DatabaseError, _cx| {
-                eprintln!("RoutinesView: Database error: {}", event.message);
+                eprintln!("RoutinesView database error: {}", event.message);
             },
         ));
 
-        let routines = database_store.read(cx).get_routines().clone();
-
-        database_store.update(cx, |store, cx| {
-            store.load_routines(cx);
-        });
+        let routines = database_store.read(cx).routines.clone();
 
         Self {
             database_store,
@@ -93,6 +91,7 @@ impl Render for RoutinesView {
                             .items_center()
                             .child(
                                 Button::new("back-to-home")
+                                    .cursor_pointer()
                                     .icon(IconName::ArrowLeft)
                                     .ghost()
                                     .small()
@@ -102,14 +101,11 @@ impl Render for RoutinesView {
                                         });
                                     })),
                             )
-                            .child(
-                                Label::new("Routines")
-                                    .text_2xl()
-                                    .font(font("Georgia")),
-                            ),
+                            .child(Label::new("Routines").text_2xl().font(font("Georgia"))),
                     )
                     .child(
                         Button::new("new-routine")
+                            .cursor_pointer()
                             .icon(IconName::Plus)
                             .label("New Routine")
                             .outline()
@@ -141,165 +137,137 @@ impl Render for RoutinesView {
                                         )
                                         .child(
                                             Label::new(
-                                                "Create a routine to group actions into reusable sequences",
+                                                "Create a routine to group steps into a reusable sequence",
                                             )
                                             .text_sm()
                                             .text_color(theme.muted_foreground),
                                         ),
                                 )
                             })
-                            .children(
-                                self.routines
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, routine)| {
-                                        let routine_id = routine.id;
-                                        let routine_id_activate = routine.id;
-                                        let routine_id_delete = routine.id;
-                                        let routine_id_edit = routine.id;
-                                        let title = routine.title.clone();
-                                        let content = routine.content.clone();
-                                        let step_count = routine.steps.len();
-                                        let theme_inner = theme.clone();
+                            .children(self.routines.iter().enumerate().map(|(i, routine)| {
+                                let routine_id = routine.id;
+                                let title = routine.title.clone();
+                                let content = routine.content.clone();
+                                let step_count = routine.steps.len();
+                                let theme_inner = theme.clone();
 
-                                        div()
-                                            .id(ElementId::NamedInteger(
-                                                "routine-item".into(),
-                                                i as u64,
-                                            ))
+                                div()
+                                    .id(ElementId::NamedInteger("routine-item".into(), i as u64))
+                                    .w_full()
+                                    .p_3()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(theme_inner.border)
+                                    .bg(theme_inner.background)
+                                    .hover(|s| s.bg(theme_inner.list_hover.opacity(0.3)))
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |_this, _event, _window, cx| {
+                                        cx.emit(StartRoutineEditor {
+                                            routine_id: Some(routine_id),
+                                        });
+                                    }))
+                                    .child(
+                                        h_flex()
                                             .w_full()
-                                            .p_3()
-                                            .rounded_md()
-                                            .border_1()
-                                            .border_color(theme_inner.border)
-                                            .bg(theme_inner.background)
-                                            .hover(|s| s.bg(theme_inner.list_hover.opacity(0.3)))
-                                            .cursor_pointer()
-                                            .on_click(cx.listener(
-                                                move |_this, _event, _window, cx| {
-                                                    cx.emit(StartRoutineEditor {
-                                                        routine_id: Some(routine_id_edit),
-                                                    });
-                                                },
-                                            ))
+                                            .items_center()
+                                            .justify_between()
                                             .child(
-                                                h_flex()
-                                                    .w_full()
-                                                    .items_center()
-                                                    .justify_between()
+                                                v_flex()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .gap(px(2.0))
                                                     .child(
-                                                        v_flex()
-                                                            .flex_1()
-                                                            .min_w_0()
-                                                            .gap(px(2.0))
-                                                            .child(
-                                                                Label::new(title)
-                                                                    .text_base()
-                                                                    .truncate(),
-                                                            )
-                                                            .when_some(content, |this, desc| {
-                                                                this.child(
-                                                                    Label::new(desc)
-                                                                        .text_sm()
-                                                                        .text_color(
-                                                                            theme_inner
-                                                                                .muted_foreground,
-                                                                        )
-                                                                        .truncate(),
-                                                                )
-                                                            })
-                                                            .child(
-                                                                Label::new(format!(
-                                                                    "{} step{}",
-                                                                    step_count,
-                                                                    if step_count == 1 { "" } else { "s" }
-                                                                ))
-                                                                .text_xs()
+                                                        Label::new(title)
+                                                            .text_base()
+                                                            .truncate(),
+                                                    )
+                                                    .when_some(content, |this, desc| {
+                                                        this.child(
+                                                            Label::new(desc)
+                                                                .text_sm()
                                                                 .text_color(
                                                                     theme_inner.muted_foreground,
-                                                                ),
-                                                            ),
-                                                    )
-                                                    .child(
-                                                        h_flex()
-                                                            .gap_1()
-                                                            .flex_shrink_0()
-                                                            .child(
-                                                                Button::new(ElementId::Name(
-                                                                    format!(
-                                                                        "activate-routine-{i}"
-                                                                    )
-                                                                    .into(),
-                                                                ))
-                                                                .icon(IconName::Play)
-                                                                .label("Start")
-                                                                .ghost()
-                                                                .small()
-                                                                .tooltip(
-                                                                    "Instantiate into pipeline",
                                                                 )
-                                                                .on_click(cx.listener(
-                                                                    move |this,
-                                                                          _event,
-                                                                          window,
-                                                                          cx| {
-                                                                        this.database_store.update(
-                                                                            cx,
-                                                                            |store, cx| {
-                                                                                store
-                                                                                    .activate_routine(
-                                                                                        routine_id_activate,
-                                                                                        cx,
-                                                                                    );
-                                                                            },
-                                                                        );
-                                                                        window.push_notification(
-                                                                            (
-                                                                                NotificationType::Success,
-                                                                                "Routine added to pipeline",
-                                                                            ),
-                                                                            cx,
-                                                                        );
-                                                                    },
-                                                                )),
-                                                            )
-                                                            .child(
-                                                                Button::new(ElementId::Name(
-                                                                    format!(
-                                                                        "delete-routine-{i}"
-                                                                    )
-                                                                    .into(),
-                                                                ))
-                                                                .icon(IconName::Delete)
-                                                                .ghost()
-                                                                .small()
-                                                                .tooltip("Delete routine")
-                                                                .on_click(cx.listener(
-                                                                    move |this,
-                                                                          _event,
-                                                                          _window,
-                                                                          cx| {
-                                                                        this.database_store.update(
-                                                                            cx,
-                                                                            |store, cx| {
-                                                                                store.delete_routine(
-                                                                                    routine_id_delete,
-                                                                                    cx,
-                                                                                );
-                                                                            },
-                                                                        );
-                                                                    },
-                                                                )),
-                                                            ),
+                                                                .truncate(),
+                                                        )
+                                                    })
+                                                    .child(
+                                                        Label::new(format!(
+                                                            "{} step{}",
+                                                            step_count,
+                                                            if step_count == 1 { "" } else { "s" }
+                                                        ))
+                                                        .text_xs()
+                                                        .text_color(theme_inner.muted_foreground),
                                                     ),
                                             )
-                                    })
-                                    .collect::<Vec<_>>(),
-                            ),
+                                            .child(
+                                                h_flex()
+                                                    .gap_1()
+                                                    .flex_shrink_0()
+                                                    .child(
+                                                        Button::new(ElementId::Name(
+                                                            format!("run-routine-{i}").into(),
+                                                        ))
+                                                        .icon(IconName::Play)
+                                                        .label("Run")
+                                                        .ghost()
+                                                        .small()
+                                                        .tooltip("Instantiate steps into queue")
+                                                        .cursor_pointer()
+                                                        .occlude()
+                                                        .on_click(cx.listener(
+                                                            move |this, _event, window, cx| {
+                                                                this.database_store.update(
+                                                                    cx,
+                                                                    |store, cx| {
+                                                                        store.instantiate_routine(
+                                                                            routine_id,
+                                                                            cx,
+                                                                        );
+                                                                    },
+                                                                );
+                                                                window.push_notification(
+                                                                    (
+                                                                        NotificationType::Success,
+                                                                        "Routine added to queue",
+                                                                    ),
+                                                                    cx,
+                                                                );
+                                                            },
+                                                        )),
+                                                    )
+                                                    .child(
+                                                        Button::new(ElementId::Name(
+                                                            format!("delete-routine-{i}").into(),
+                                                        ))
+                                                        .icon(IconName::Delete)
+                                                        .ghost()
+                                                        .small()
+                                                        .tooltip("Delete routine")
+                                                        .on_click(cx.listener(
+                                                            move |this, _event, _window, cx| {
+                                                                this.database_store.update(
+                                                                    cx,
+                                                                    |store, cx| {
+                                                                        store.delete_routine(
+                                                                            routine_id,
+                                                                            cx,
+                                                                        );
+                                                                    },
+                                                                );
+                                                            },
+                                                        )),
+                                                    ),
+                                            ),
+                                    )
+                            })),
                     ),
             )
     }
 }
+
+// ── RoutineEditor ──────────────────────────────────────────────────────────────
 
 pub struct RoutineEditor {
     pub focus_handle: FocusHandle,
@@ -309,10 +277,9 @@ pub struct RoutineEditor {
     content_input: Entity<InputState>,
     pending_title: Option<String>,
     pending_content: Option<String>,
-    /// Steps as a list of SavedAction IDs (Action variant only for now).
-    steps: Vec<Uuid>,
-    /// Available saved actions for adding as steps.
-    available_actions: Vec<SavedAction>,
+    /// Steps as (title, duration_minutes).
+    steps: Vec<(String, Option<u32>)>,
+    new_step_input: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -335,47 +302,20 @@ impl RoutineEditor {
 
         subscriptions.push(cx.subscribe(
             &database_store,
-            |this, store, _event: &RoutinesLoaded, cx| {
-                if let Some(id) = this.routine_id {
-                    if let Some(routine) = store.read(cx).get_routine(id) {
-                        this.steps = routine
-                            .steps
-                            .iter()
-                            .filter_map(|step| match step {
-                                SavedStep::Action(id) => Some(*id),
-                                SavedStep::Event(_) => None,
-                            })
-                            .collect();
-                    }
-                }
-                cx.notify();
-            },
-        ));
-
-        subscriptions.push(cx.subscribe(
-            &database_store,
-            |this, store, _event: &SavedActionsLoaded, cx| {
-                this.available_actions = store.read(cx).get_saved_actions().clone();
-                cx.notify();
-            },
-        ));
-
-        subscriptions.push(cx.subscribe(
-            &database_store,
             |_this, _store, event: &DatabaseError, _cx| {
-                eprintln!("RoutineEditor: Database error: {}", event.message);
+                eprintln!("RoutineEditor database error: {}", event.message);
             },
         ));
 
         let title_input = cx.new(|cx| InputState::new(window, cx).placeholder("Routine title"));
         let content_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Description (optional)"));
+        let new_step_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("New step title…"));
 
         let mut pending_title = None;
         let mut pending_content = None;
-        let mut steps = Vec::new();
-
-        let available_actions = database_store.read(cx).get_saved_actions().clone();
+        let mut steps: Vec<(String, Option<u32>)> = Vec::new();
 
         if let Some(id) = routine_id {
             if let Some(routine) = database_store.read(cx).get_routine(id) {
@@ -384,9 +324,9 @@ impl RoutineEditor {
                 steps = routine
                     .steps
                     .iter()
-                    .filter_map(|step| match step {
-                        SavedStep::Action(action_id) => Some(*action_id),
-                        SavedStep::Event(_) => None,
+                    .map(|s| {
+                        let mins = s.duration.map(|d| d.num_minutes().max(0) as u32);
+                        (s.title.clone(), mins)
                     })
                     .collect();
             }
@@ -401,7 +341,7 @@ impl RoutineEditor {
             pending_title,
             pending_content,
             steps,
-            available_actions,
+            new_step_input,
             _subscriptions: subscriptions,
         }
     }
@@ -432,20 +372,24 @@ impl RoutineEditor {
             Some(content_text)
         };
 
-        let steps: Vec<SavedStep> = self.steps.iter().map(|id| SavedStep::Action(*id)).collect();
+        let steps: Vec<RoutineStep> = self
+            .steps
+            .iter()
+            .map(|(title, duration_mins)| {
+                let mut step = RoutineStep::new(title.clone());
+                if let Some(mins) = duration_mins {
+                    step = step.with_duration(Duration::minutes(*mins as i64));
+                }
+                step
+            })
+            .collect();
 
-        let mut routine = if let Some(id) = self.routine_id {
-            // Preserve the existing ID when updating.
-            let mut r = Routine::new(title.clone());
-            r.id = id;
-            r
+        let mut routine = Routine::new(title);
+        if let Some(id) = self.routine_id {
+            routine.id = id;
         } else {
-            let mut r = Routine::new(title.clone());
-            // Store the new ID so subsequent saves update rather than duplicate.
-            self.routine_id = Some(r.id);
-            r
-        };
-
+            self.routine_id = Some(routine.id);
+        }
         routine.content = content;
         routine.steps = steps;
 
@@ -454,16 +398,23 @@ impl RoutineEditor {
         });
     }
 
-    fn add_step(&mut self, action_id: Uuid, cx: &mut Context<Self>) {
-        if !self.steps.contains(&action_id) {
-            self.steps.push(action_id);
-            self.build_and_save_routine(cx);
+    fn add_step(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let title = self.new_step_input.read(cx).value().to_string();
+        if title.trim().is_empty() {
+            return;
         }
+        self.steps.push((title, Some(15)));
+        self.new_step_input.update(cx, |input, cx| {
+            input.set_value(String::new(), window, cx);
+        });
+        self.build_and_save_routine(cx);
     }
 
-    fn remove_step(&mut self, action_id: Uuid, cx: &mut Context<Self>) {
-        self.steps.retain(|id| *id != action_id);
-        self.build_and_save_routine(cx);
+    fn remove_step(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if ix < self.steps.len() {
+            self.steps.remove(ix);
+            self.build_and_save_routine(cx);
+        }
     }
 
     fn render_steps_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -486,7 +437,7 @@ impl RoutineEditor {
                         .items_center()
                         .justify_center()
                         .child(
-                            Label::new("No steps yet — add actions below")
+                            Label::new("No steps yet")
                                 .text_sm()
                                 .text_color(theme.muted_foreground),
                         ),
@@ -496,16 +447,11 @@ impl RoutineEditor {
                 self.steps
                     .iter()
                     .enumerate()
-                    .map(|(i, step_id)| {
-                        let step_id = *step_id;
-                        let title = self
-                            .available_actions
-                            .iter()
-                            .find(|a| a.id == step_id)
-                            .map(|a| a.title.clone())
-                            .unwrap_or_else(|| format!("Unknown action ({})", step_id));
-
+                    .map(|(i, (title, duration_mins))| {
                         let theme_inner = theme.clone();
+                        let duration_label = duration_mins
+                            .map(|m| format!("{}min", m))
+                            .unwrap_or_else(|| "—".to_string());
 
                         h_flex()
                             .w_full()
@@ -517,13 +463,24 @@ impl RoutineEditor {
                             .border_1()
                             .border_color(theme_inner.border)
                             .child(
-                                div().w(px(24.0)).flex_shrink_0().child(
+                                div().w(px(20.0)).flex_shrink_0().child(
                                     Label::new(format!("{}", i + 1))
                                         .text_xs()
                                         .text_color(theme_inner.muted_foreground),
                                 ),
                             )
-                            .child(Label::new(title).text_sm().truncate().flex_1().min_w_0())
+                            .child(
+                                Label::new(title.clone())
+                                    .text_sm()
+                                    .truncate()
+                                    .flex_1()
+                                    .min_w_0(),
+                            )
+                            .child(
+                                Label::new(duration_label)
+                                    .text_xs()
+                                    .text_color(theme_inner.muted_foreground),
+                            )
                             .child(
                                 Button::new(ElementId::Name(format!("remove-step-{i}").into()))
                                     .icon(IconName::Close)
@@ -531,68 +488,29 @@ impl RoutineEditor {
                                     .xsmall()
                                     .tooltip("Remove step")
                                     .on_click(cx.listener(move |this, _event, _window, cx| {
-                                        this.remove_step(step_id, cx);
+                                        this.remove_step(i, cx);
                                     })),
                             )
-                    })
-                    .collect::<Vec<_>>(),
+                    }),
             )
     }
 
     fn render_add_step_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
-
-        v_flex()
+        h_flex()
             .w_full()
-            .gap_1()
+            .gap_2()
+            .items_center()
+            .child(Input::new(&self.new_step_input).flex_1())
             .child(
-                Label::new("Add Action as Step")
-                    .text_sm()
-                    .text_color(theme.muted_foreground),
+                Button::new("add-step-btn")
+                    .icon(IconName::Plus)
+                    .label("Add Step")
+                    .outline()
+                    .small()
+                    .on_click(cx.listener(|this, _event, window, cx| {
+                        this.add_step(window, cx);
+                    })),
             )
-            .when(self.available_actions.is_empty(), |this| {
-                this.child(
-                    Label::new("No actions available — create some actions first")
-                        .text_xs()
-                        .text_color(theme.muted_foreground),
-                )
-            })
-            .when(!self.available_actions.is_empty(), |container| {
-                container.child(
-                    div()
-                        .id("add-step-actions-scroll")
-                        .overflow_y_scroll()
-                        .max_h(px(160.0))
-                        .w_full()
-                        .child(
-                            v_flex().w_full().gap_1().children(
-                                self.available_actions
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, action)| {
-                                        let action_id = action.id;
-                                        let title = action.title.clone();
-                                        let already_added = self.steps.contains(&action_id);
-
-                                        Button::new(ElementId::Name(
-                                            format!("add-action-step-{i}").into(),
-                                        ))
-                                        .label(title)
-                                        .ghost()
-                                        .small()
-                                        .w_full()
-                                        .disabled(already_added)
-                                        .on_click(
-                                            cx.listener(move |this, _event, _window, cx| {
-                                                this.add_step(action_id, cx);
-                                            }),
-                                        )
-                                    })
-                                    .collect::<Vec<_>>(),
-                            ),
-                        ),
-                )
-            })
     }
 
     fn render_properties_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -632,13 +550,28 @@ impl Render for RoutineEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.apply_pending_values(window, cx);
 
-        v_flex()
-            .size_full()
+        let theme = cx.theme().clone();
+
+        let inner = v_flex()
+            .w(px(560.0))
+            .max_h(px(680.0))
+            .bg(theme.group_box)
+            .text_color(theme.group_box_foreground)
+            .border_1()
+            .border_color(theme.border)
+            .rounded_lg()
+            .shadow_xl()
+            .track_focus(&self.focus_handle)
+            .on_any_mouse_down(|_event, _window, cx| {
+                cx.stop_propagation();
+            })
             .p_4()
             .gap_4()
             .child(self.render_properties_section(cx))
             .child(self.render_steps_section(cx))
             .child(self.render_add_step_section(cx))
-            .child(self.render_footer(cx))
+            .child(self.render_footer(cx));
+
+        popover(inner, cx)
     }
 }

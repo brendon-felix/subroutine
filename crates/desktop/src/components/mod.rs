@@ -1,13 +1,14 @@
 use gpui::App;
 
+pub mod action_creator;
 pub mod checkbox;
 pub mod command_palette;
 pub mod custom_list;
 pub mod drag_drop;
+pub mod event_creator;
+pub mod panel_group;
 pub mod popover;
 pub mod resizable;
-pub mod slider;
-pub mod task_creator;
 
 pub fn init(cx: &mut App) {
     // picker::init(cx);

@@ -8,6 +8,7 @@ mod stores;
 // mod tasks;
 mod themes;
 mod transitions;
+mod utils;
 mod views;
 
 fn main() -> Result<()> {

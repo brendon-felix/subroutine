@@ -2,6 +2,7 @@
 // pub mod ui_store;
 pub mod database_store;
 pub mod drag_drop_store;
+pub mod test;
 
 // pub use task_store::TaskStore;
 // pub use ui_store::UiStateStore;

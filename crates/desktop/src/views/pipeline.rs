@@ -1,57 +1,49 @@
-use app_core::PipelineEntry;
+use std::time::Duration;
+
+use chrono::{DateTime, Local, Timelike, Utc};
 use gpui::{
-    Context, ElementId, Entity, EventEmitter, IntoElement, Pixels, Point, Render, Window, div,
-    hsla, px,
+    AnchoredPositionMode, App, Context, Div, Entity, EventEmitter, Hsla, InteractiveElement,
+    IntoElement, Pixels, Render, ScrollHandle, Styled, Window, actions, div, px,
 };
-use gpui::{DragMoveEvent, InteractiveElement, prelude::*};
-use gpui_component::button::{Button, ButtonVariants};
+use gpui::{Stateful, prelude::*};
 use gpui_component::label::Label;
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::{ActiveTheme, IconName, Sizable, StyledExt, h_flex, v_flex};
-use uuid::Uuid;
+use gpui_component::menu::{ContextMenu, ContextMenuExt, PopupMenu, PopupMenuItem};
+use gpui_component::scroll::Scrollbar;
+use gpui_component::{ActiveTheme, Icon, IconName, StyledExt, h_flex, v_flex};
+use gpui_transitions::WindowUseTransition;
+use simple_core::{Action, Event, QueueItem};
 
 use crate::components::checkbox::Checkbox;
-use crate::components::drag_drop::{DragData, DropIndicator, DropPosition, DropZone};
 use crate::stores::DatabaseStore;
 use crate::stores::database_store::PipelineChanged;
-use crate::stores::drag_drop_store::{ActionLocation, DragDropStore};
-use crate::views::StartActionEditor;
+use crate::views::action_editor::StartActionEditor;
+use crate::views::event_editor::StartEventEditor;
+
+const ITEM_MIN_HEIGHT: f32 = 60.0;
+
+pub struct StartQueueEventEditor {
+    pub event_id: uuid::Uuid,
+}
+
+actions!(
+    pipeline,
+    [CompleteAction, DemoteAction, RemoveFromPipeline,]
+);
 
 pub struct Pipeline {
     database_store: Entity<DatabaseStore>,
-    entries: Vec<PipelineEntry>,
-    drag_drop_store: Entity<DragDropStore>,
-    drag_active_here: bool,
-    item_height: Pixels,
-    gap: Pixels,
+    entries: Vec<QueueItem>,
+    scroll_handle: ScrollHandle,
 }
 
 impl Pipeline {
-    pub fn new(
-        database_store: Entity<DatabaseStore>,
-        drag_drop_store: Entity<DragDropStore>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let entries = database_store
-            .read(cx)
-            .get_pipeline()
-            .queue()
-            .iter()
-            .filter(|e| !e.is_transition())
-            .cloned()
-            .collect();
+    pub fn new(database_store: Entity<DatabaseStore>, cx: &mut Context<Self>) -> Self {
+        let entries = database_store.read(cx).pipeline.queue.clone();
 
         cx.subscribe(
             &database_store,
             |this, store, _event: &PipelineChanged, cx| {
-                this.entries = store
-                    .read(cx)
-                    .get_pipeline()
-                    .queue()
-                    .iter()
-                    .filter(|e| !e.is_transition())
-                    .cloned()
-                    .collect();
+                this.entries = store.read(cx).pipeline.queue.clone();
                 cx.notify();
             },
         )
@@ -60,295 +52,301 @@ impl Pipeline {
         Self {
             database_store,
             entries,
-            drag_drop_store,
-            drag_active_here: false,
-            item_height: px(80.0),
-            gap: px(12.0),
+            scroll_handle: ScrollHandle::default(),
         }
     }
 
     pub fn update_items(&mut self, cx: &mut Context<Self>) {
-        self.entries = self
-            .database_store
-            .read(cx)
-            .get_pipeline()
-            .queue()
-            .iter()
-            .filter(|e| !e.is_transition())
-            .cloned()
-            .collect();
+        self.entries = self.database_store.read(cx).pipeline.queue.clone();
     }
 
-    fn calculate_drop_index(&self, position: Point<Pixels>, bounds: gpui::Bounds<Pixels>) -> usize {
-        let item_count = self.entries.len();
-        if item_count == 0 {
-            return 0;
+    fn item_base(&self, height: Option<Pixels>, color: Hsla, cx: &Context<Self>) -> Div {
+        let theme = cx.theme().clone();
+        h_flex()
+            .cursor_pointer()
+            .hover(|s| s.bg(theme.list_hover))
+            .w_full()
+            .when_some(height, |div, h| div.h(h))
+            .p_3()
+            .rounded_md()
+            .border_1()
+            .border_color(color.alpha(0.7))
+            .gap_2()
+            .items_center()
+    }
+
+    fn item_content(
+        &self,
+        title: String,
+        target_label: Option<String>,
+        duration: Option<chrono::Duration>,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        v_flex()
+            .w_full()
+            .items_end()
+            .gap_1()
+            .child(Label::new(title).text_sm().truncate())
+            .child(
+                h_flex()
+                    .gap_2()
+                    .when_some(target_label, |this, label| {
+                        this.child(
+                            Label::new(label)
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .truncate(),
+                        )
+                    })
+                    .when_some(duration, |div, duration| {
+                        let duration_label = format_duration(&duration);
+                        div.child(
+                            Label::new(duration_label)
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .truncate(),
+                        )
+                    }),
+            )
+    }
+
+    fn action_context_menu(
+        &self,
+        action_id: uuid::Uuid,
+        cx: &Context<Self>,
+    ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+        let entity = cx.entity();
+        move |menu, _window, _cx| {
+            let entity_complete = entity.clone();
+            let entity_demote = entity.clone();
+            let entity_delete = entity.clone();
+            menu.item(
+                PopupMenuItem::new("Complete")
+                    .icon(IconName::CircleCheck)
+                    .on_click(move |_event, _window, cx: &mut App| {
+                        entity_complete.update(cx, |this, cx| {
+                            this.database_store.update(cx, |store, cx| {
+                                store.complete_action(action_id, cx);
+                            });
+                        });
+                    }),
+            )
+            .item(
+                PopupMenuItem::new("Demote to backlog")
+                    .icon(IconName::ChevronDown)
+                    .on_click(move |_event, _window, cx: &mut App| {
+                        entity_demote.update(cx, |this, cx| {
+                            this.database_store.update(cx, |store, cx| {
+                                store.demote_action(action_id, cx);
+                            });
+                        });
+                    }),
+            )
+            .separator()
+            .item(
+                PopupMenuItem::new("Delete")
+                    .icon(IconName::Delete)
+                    .on_click(move |_event, _window, cx: &mut App| {
+                        entity_delete.update(cx, |this, cx| {
+                            this.database_store.update(cx, |store, cx| {
+                                store.delete_queue_action(action_id, cx);
+                            });
+                        });
+                    }),
+            )
         }
-        let interval = self.item_height + self.gap;
-        let relative_y = (position.y - bounds.origin.y).clamp(px(0.0), bounds.size.height);
-        (relative_y / interval).floor() as usize
     }
 
-    fn handle_drag_move(
-        &mut self,
-        event: &DragMoveEvent<DragData<app_core::SavedAction>>,
+    fn event_context_menu(
+        &self,
+        event_id: uuid::Uuid,
+        cx: &Context<Self>,
+    ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+        let entity = cx.entity();
+        move |menu, _window, _cx| {
+            let entity_delete = entity.clone();
+            menu.item(
+                PopupMenuItem::new("Delete")
+                    .icon(IconName::Delete)
+                    .on_click(move |_event, _window, cx: &mut App| {
+                        entity_delete.update(cx, |this, cx| {
+                            this.database_store.update(cx, |store, cx| {
+                                store.remove_from_pipeline(event_id, cx);
+                            });
+                        });
+                    }),
+            )
+        }
+    }
+
+    fn render_action(
+        &self,
+        action: &Action,
+        ix: usize,
         window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let bounds = event.bounds;
-        let position = event.event.position;
-        let data = event.drag(cx).clone();
-        let action_id = data.data.id.to_string();
+        cx: &Context<Self>,
+    ) -> ContextMenu<Stateful<Div>> {
+        let action_id = action.id;
+        let title = action.title.clone();
+        let target_label = action.target.map(format_target_time);
+        let theme = cx.theme().clone();
 
-        if !self.drag_drop_store.read(cx).is_dragging() {
-            self.drag_drop_store.update(cx, |store, cx| {
-                store.new_drag(action_id.clone(), cx);
-            });
-        }
+        let item_height = if let Some(duration) = action.duration.as_ref() {
+            let mins = duration.num_minutes().max(1);
+            (mins as f32 * 4.).min(320.0).max(ITEM_MIN_HEIGHT)
+        } else {
+            ITEM_MIN_HEIGHT
+        };
 
-        if bounds.contains(&window.mouse_position()) {
-            let drop_index = self.calculate_drop_index(position, bounds);
-            self.drag_drop_store.update(cx, |store, cx| {
-                store.set_drop_target(Some(ActionLocation::Pipeline(drop_index)), cx);
-            });
-            self.drag_active_here = true;
-        } else if self.drag_active_here {
-            self.drag_drop_store.update(cx, |store, cx| {
-                if let Some(ActionLocation::Pipeline(_)) = store.get_drop_target() {
-                    store.clear_drop_target(cx);
-                }
-            });
-            self.drag_active_here = false;
-        }
+        self.item_base(Some(px(item_height)), theme.green, cx)
+            .id(("pipeline-action", ix as u64))
+            .on_click(cx.listener(move |_this, _event, _window, cx| {
+                cx.emit(StartActionEditor {
+                    action_id: Some(action_id),
+                });
+            }))
+            .context_menu(self.action_context_menu(action_id, cx))
+            .child(
+                Checkbox::new(("pipeline-check", ix as u64))
+                    .checked(false)
+                    .occlude()
+                    .on_click(cx.listener(move |this, _checked, _window, cx| {
+
+                        // this.database_store.update(cx, |store, cx| {
+                        //     store.complete_action(action_id, cx);
+                        // });
+                    })),
+            )
+            .child(self.item_content(title, target_label, action.duration, cx))
     }
 
-    fn score_color(score: f32) -> gpui::Hsla {
-        let hue = (score.clamp(0.0, 1.0) * 120.0) as f32;
-        hsla(hue / 360.0, 0.6, 0.45, 1.0)
+    fn render_event(
+        &self,
+        event: &Event,
+        ix: usize,
+        cx: &Context<Self>,
+    ) -> ContextMenu<Stateful<Div>> {
+        let event_id = event.id;
+        let title = event.title.clone();
+        let time_label = format_target_time(event.time);
+        let theme = cx.theme().clone();
+
+        let item_height = if let Some(duration) = event.duration.as_ref() {
+            let mins = duration.num_minutes().max(1);
+            (mins as f32 * 4.).min(320.0).max(ITEM_MIN_HEIGHT)
+        } else {
+            ITEM_MIN_HEIGHT
+        };
+
+        self.item_base(Some(px(item_height)), theme.blue, cx)
+            .id(("pipeline-event", ix as u64))
+            .on_click(cx.listener(move |_this, _event, _window, cx| {
+                cx.emit(StartQueueEventEditor { event_id });
+            }))
+            .context_menu(self.event_context_menu(event_id, cx))
+            .child(Icon::new(IconName::Calendar).opacity(0.5))
+            .child(self.item_content(title, Some(time_label), event.duration, cx))
+    }
+}
+
+fn format_target_time(time: DateTime<Utc>) -> String {
+    let local = time.with_timezone(&Local);
+    let now = Local::now();
+    let is_today = local.date_naive() == now.date_naive();
+    let is_tomorrow = local.date_naive() == (now + chrono::Duration::days(1)).date_naive();
+
+    let time_str = if local.minute() == 0 {
+        format!(
+            "{}{}",
+            if local.hour12().1 == 0 {
+                12
+            } else {
+                local.hour12().1
+            },
+            if local.hour12().0 { "pm" } else { "am" }
+        )
+    } else {
+        format!(
+            "{}:{:02}{}",
+            if local.hour12().1 == 0 {
+                12
+            } else {
+                local.hour12().1
+            },
+            local.minute(),
+            if local.hour12().0 { "pm" } else { "am" }
+        )
+    };
+
+    if is_today {
+        format!("Today {}", time_str)
+    } else if is_tomorrow {
+        format!("Tomorrow {}", time_str)
+    } else {
+        format!("{} {}", local.format("%b %-d"), time_str)
+    }
+}
+
+fn format_duration(duration: &chrono::Duration) -> String {
+    let hours = duration.num_hours();
+    let minutes = duration.num_minutes() % 60;
+
+    if hours > 0 {
+        format!("{}h {}m", hours, minutes)
+    } else {
+        format!("{}m", minutes)
     }
 }
 
 impl EventEmitter<StartActionEditor> for Pipeline {}
+impl EventEmitter<StartEventEditor> for Pipeline {}
+impl EventEmitter<StartQueueEventEditor> for Pipeline {}
 
 impl Render for Pipeline {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let target_index =
-            self.drag_drop_store
-                .read(cx)
-                .get_drop_target()
-                .and_then(|loc| match loc {
-                    ActionLocation::Pipeline(ix) => Some(*ix),
-                    _ => None,
-                });
 
-        // Compute scores for all entries upfront.
-        let scores: Vec<f32> = self
-            .entries
-            .iter()
-            .map(|entry| self.database_store.read(cx).score_entry(entry))
-            .collect();
-
-        div().size_full().overflow_y_scrollbar().child(
-            DropZone::<DragData<app_core::SavedAction>>::new("pipeline-drop-zone")
-                .active(self.drag_active_here)
+        if self.entries.is_empty() {
+            return v_flex()
                 .size_full()
-                .insertion_indicator(target_index.map(|index| DropIndicator {
-                    index,
-                    position: DropPosition::Before,
-                }))
-                .on_drop(cx.listener(
-                    move |this, data: &DragData<app_core::SavedAction>, _window, cx| {
-                        if let Some(_index) = target_index {
-                            // When an action is dragged from the action list onto the pipeline,
-                            // create a concrete action entry in the pipeline from the saved action.
-                            let saved_action = data.data.clone();
-                            this.database_store.update(cx, |store, cx| {
-                                store.create_action(saved_action.title.clone(), cx);
-                            });
-                        }
-                        this.drag_drop_store.update(cx, |store, cx| {
-                            store.clear_drag(cx);
-                        });
-                        this.drag_active_here = false;
-                    },
-                ))
-                .on_drag_move(cx.listener(
-                    move |this,
-                          event: &DragMoveEvent<DragData<app_core::SavedAction>>,
-                          window,
-                          cx| {
-                        this.handle_drag_move(event, window, cx);
-                    },
-                ))
-                .when(!self.entries.is_empty(), |this| {
-                    this.children(
-                        self.entries
-                            .iter()
-                            .enumerate()
-                            .map(|(i, entry)| {
-                                let entry_id = entry.id();
-                                let title = entry.title().to_string();
-                                let entry_id_complete = entry_id;
-                                let entry_id_demote = entry_id;
-                                let entry_id_remove = entry_id;
-                                let score = scores.get(i).copied().unwrap_or(0.0);
-                                let score_display = format!("{:.0}%", score * 100.0);
-                                let score_color = Self::score_color(score);
+                .items_center()
+                .justify_center()
+                .py_8()
+                .gap_2()
+                .child(
+                    Label::new("Queue is empty")
+                        .text_sm()
+                        .text_color(theme.muted_foreground),
+                )
+                .into_any_element();
+        }
 
-                                // Only Action entries support editing a SavedAction.
-                                let saved_action_id = if let PipelineEntry::Action(a) = entry {
-                                    a.saved_action_id
-                                } else {
-                                    None
-                                };
+        let scroll_handle = self.scroll_handle.clone();
 
-                                div()
-                                    .id(ElementId::NamedInteger("pipeline-item".into(), i as u64))
-                                    .h_flex()
-                                    .hover(|s| s.bg(theme.list_hover.opacity(0.3)))
-                                    .w_full()
-                                    .h(self.item_height)
-                                    .p_2()
-                                    .bg(theme.background)
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(theme.border)
-                                    .gap_2()
-                                    .items_center()
-                                    .on_click({
-                                        cx.listener(move |pipeline, _event, _window, cx| {
-                                            if let Some(id) = saved_action_id {
-                                                cx.emit(StartActionEditor {
-                                                    action_id: Some(id),
-                                                });
-                                            }
-                                        })
-                                    })
-                                    .child(
-                                        Checkbox::new(ElementId::Name(
-                                            format!("pipeline-checkbox-{}", entry_id).into(),
-                                        ))
-                                        .large()
-                                        .occlude()
-                                        .on_mouse_up(
-                                            cx.listener(
-                                                move |this, checked: &bool, _window, cx| {
-                                                    if *checked {
-                                                        this.database_store.update(
-                                                            cx,
-                                                            |store, cx| {
-                                                                store.complete_action(
-                                                                    entry_id_complete,
-                                                                    cx,
-                                                                );
-                                                            },
-                                                        );
-                                                    }
-                                                },
-                                            ),
-                                        ),
-                                    )
-                                    .child(
-                                        v_flex()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .gap(px(2.0))
-                                            .child(Label::new(title).text_sm().truncate())
-                                            .child(
-                                                h_flex()
-                                                    .gap_1()
-                                                    .items_center()
-                                                    .child(
-                                                        div()
-                                                            .w(px(32.0))
-                                                            .h(px(3.0))
-                                                            .rounded(px(2.0))
-                                                            .bg(theme.muted_foreground.opacity(0.2))
-                                                            .child(
-                                                                div()
-                                                                    .h_full()
-                                                                    .w(px(32.0 * score))
-                                                                    .rounded(px(2.0))
-                                                                    .bg(score_color),
-                                                            ),
-                                                    )
-                                                    .child(
-                                                        Label::new(score_display)
-                                                            .text_xs()
-                                                            .text_color(theme.muted_foreground),
-                                                    ),
-                                            ),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .gap(px(1.0))
-                                            .flex_shrink_0()
-                                            .opacity(0.4)
-                                            .hover(|s| s.opacity(1.0))
-                                            .child(
-                                                Button::new(ElementId::Name(
-                                                    format!("demote-{}", i).into(),
-                                                ))
-                                                .icon(IconName::ChevronRight)
-                                                .ghost()
-                                                .xsmall()
-                                                .tooltip("Move to backlog")
-                                                .on_click(cx.listener(
-                                                    move |this, _event, _window, cx| {
-                                                        this.database_store.update(
-                                                            cx,
-                                                            |store, cx| {
-                                                                store.demote(entry_id_demote, cx);
-                                                            },
-                                                        );
-                                                    },
-                                                )),
-                                            )
-                                            .child(
-                                                Button::new(ElementId::Name(
-                                                    format!("remove-{}", i).into(),
-                                                ))
-                                                .icon(IconName::Close)
-                                                .ghost()
-                                                .xsmall()
-                                                .tooltip("Remove from pipeline")
-                                                .on_click(cx.listener(
-                                                    move |this, _event, _window, cx| {
-                                                        this.database_store.update(
-                                                            cx,
-                                                            |store, cx| {
-                                                                store.remove_from_pipeline(
-                                                                    entry_id_remove,
-                                                                    cx,
-                                                                );
-                                                            },
-                                                        );
-                                                    },
-                                                )),
-                                            ),
-                                    )
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                })
-                .when(self.entries.is_empty(), |this| {
-                    this.child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .justify_center()
-                            .gap(px(8.0))
-                            .py(px(32.0))
-                            .child(
-                                div()
-                                    .text_size(px(14.0))
-                                    .text_color(theme.muted_foreground)
-                                    .child("Nothing in the queue — add actions and promote them"),
-                            ),
-                    )
-                }),
-        )
+        div()
+            .relative()
+            .w_full()
+            .child(
+                div()
+                    .id("pipeline-items")
+                    .overflow_y_scroll()
+                    .track_scroll(&scroll_handle)
+                    .w_full()
+                    .child(v_flex().w_full().gap_2().p_2().children(
+                        self.entries.iter().enumerate().map(|(ix, entry)| {
+                            match entry {
+                                QueueItem::Action(action) => self
+                                    .render_action(action, ix, window, cx)
+                                    .into_any_element(),
+                                QueueItem::Event(event) => {
+                                    self.render_event(event, ix, cx).into_any_element()
+                                }
+                            }
+                        }),
+                    )),
+            )
+            .child(Scrollbar::vertical(&scroll_handle))
+            .into_any_element()
     }
 }
