@@ -63,8 +63,7 @@ impl Pipeline {
     fn item_base(&self, height: Option<Pixels>, color: Hsla, cx: &Context<Self>) -> Div {
         let theme = cx.theme().clone();
         h_flex()
-            .cursor_pointer()
-            .hover(|s| s.bg(theme.list_hover))
+            .hover(|s| s.bg(colors.hover))
             .w_full()
             .when_some(height, |div, h| div.h(h))
             .p_3()
