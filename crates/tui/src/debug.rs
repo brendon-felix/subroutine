@@ -18,12 +18,12 @@ pub fn init_debug_sender(sender: UnboundedSender<AppAction>) {
 }
 
 fn debug_msg<S: AsRef<str>>(msg: S, n_ticks: u16) {
-    if let Some(sender) = DEBUG_SENDER.get() {
-        let _ = sender.send(AppAction::UIAction(UIAction::DebugMsg(
-            msg.as_ref().to_string(),
-            n_ticks,
-        )));
-    }
+    // if let Some(sender) = DEBUG_SENDER.get() {
+    //     let _ = sender.send(AppAction::UIAction(UIAction::DebugMsg(
+    //         msg.as_ref().to_string(),
+    //         n_ticks,
+    //     )));
+    // }
 }
 
 pub fn debug<S: AsRef<str>>(msg: S) {
