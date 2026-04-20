@@ -306,7 +306,6 @@ div()
     .border_color(color)
     .border_b_1()                  // bottom border only
     .border_r_1()                  // right border only
-    .cursor_pointer()
     .text_ellipsis()               // truncate with ellipsis
 
     // Interactivity (requires .id())
