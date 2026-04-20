@@ -171,9 +171,11 @@ mod tests {
             content: None,
             target: Some(hm(target_hm.0, target_hm.1)),
             target_static: false,
+            naive_date: None,
             duration: Some(Duration::minutes(duration_mins)),
             recurrence: None,
             ephemeral: true,
+            completed_at: None,
         }
     }
 
@@ -343,9 +345,11 @@ mod tests {
             content: None,
             target: None,
             target_static: false,
+            naive_date: None,
             duration: Some(Duration::minutes(5)),
             recurrence: None,
             ephemeral: true,
+            completed_at: None,
         };
 
         pipeline.queue_action_auto(new_action, hm(23, 45));

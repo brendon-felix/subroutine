@@ -35,6 +35,8 @@ uuid = { version = "1.20.0", features = ["v4", "v7", "serde"] }
 
 # CLI
 clap = { version = "4.5.30", features = ["derive"] }
+logos = "0.15"
+chumsky = "0.10"
 
 # Web
 axum = "0.8.6"

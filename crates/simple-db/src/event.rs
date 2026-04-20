@@ -14,6 +14,9 @@ struct EventRow {
     duration_secs: Option<i64>,
     recurrence_secs: Option<i64>,
     ephemeral: i64,
+    updated_at: String,
+    synced_at: Option<String>,
+    deleted: i64,
 }
 
 impl<'a> TryFrom<&'a rusqlite::Row<'a>> for EventRow {
@@ -29,6 +32,9 @@ impl<'a> TryFrom<&'a rusqlite::Row<'a>> for EventRow {
             duration_secs: row.get(5)?,
             recurrence_secs: row.get(6)?,
             ephemeral: row.get(7)?,
+            updated_at: row.get(8)?,
+            synced_at: row.get(9)?,
+            deleted: row.get(10)?,
         })
     }
 }
@@ -71,6 +77,9 @@ impl From<&Event> for EventRow {
             duration_secs: event.duration.map(|d| d.num_seconds()),
             recurrence_secs: event.recurrence.map(|d| d.num_seconds()),
             ephemeral: event.ephemeral as i64,
+            updated_at: Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            synced_at: None,
+            deleted: 0,
         }
     }
 }
@@ -87,9 +96,10 @@ pub fn upsert_event(conn: &Connection, event: &Event) -> Result<()> {
     conn.execute(
         r#"
         INSERT INTO events (
-            id, lineage_id, title, content, time, duration_secs, recurrence_secs, ephemeral
+            id, lineage_id, title, content, time, duration_secs, recurrence_secs, ephemeral,
+            updated_at, synced_at, deleted
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, 0)
         ON CONFLICT(id) DO UPDATE SET
             lineage_id      = excluded.lineage_id,
             title           = excluded.title,
@@ -97,7 +107,9 @@ pub fn upsert_event(conn: &Connection, event: &Event) -> Result<()> {
             time            = excluded.time,
             duration_secs   = excluded.duration_secs,
             recurrence_secs = excluded.recurrence_secs,
-            ephemeral       = excluded.ephemeral
+            ephemeral       = excluded.ephemeral,
+            updated_at      = excluded.updated_at,
+            synced_at       = NULL
         "#,
         rusqlite::params![
             row.id,
@@ -108,6 +120,7 @@ pub fn upsert_event(conn: &Connection, event: &Event) -> Result<()> {
             row.duration_secs,
             row.recurrence_secs,
             row.ephemeral,
+            row.updated_at,
         ],
     )
     .map_err(|e| DatabaseError::sqlite("Failed to insert or update event", e))?;
@@ -118,8 +131,10 @@ pub fn fetch_events(conn: &Connection) -> Result<Vec<Event>> {
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, lineage_id, title, content, time, duration_secs, recurrence_secs, ephemeral
+            SELECT id, lineage_id, title, content, time, duration_secs, recurrence_secs, ephemeral,
+                   updated_at, synced_at, deleted
             FROM events
+            WHERE deleted = 0
             ORDER BY time ASC
             "#,
         )
@@ -138,9 +153,10 @@ pub fn fetch_event_by_id(conn: &Connection, id: Uuid) -> Result<Option<Event>> {
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, lineage_id, title, content, time, duration_secs, recurrence_secs, ephemeral
+            SELECT id, lineage_id, title, content, time, duration_secs, recurrence_secs, ephemeral,
+                   updated_at, synced_at, deleted
             FROM events
-            WHERE id = ?1
+            WHERE id = ?1 AND deleted = 0
             "#,
         )
         .map_err(|e| DatabaseError::sqlite("Failed to prepare event fetch by id query", e))?;
@@ -151,7 +167,11 @@ pub fn fetch_event_by_id(conn: &Connection, id: Uuid) -> Result<Option<Event>> {
 }
 
 pub fn delete_event(conn: &Connection, id: Uuid) -> Result<()> {
-    conn.execute("DELETE FROM events WHERE id = ?1", [id.to_string()])
-        .map_err(|e| DatabaseError::sqlite(format!("Failed to delete event '{}'", id), e))?;
+    let updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    conn.execute(
+        "UPDATE events SET deleted = 1, updated_at = ?2, synced_at = NULL WHERE id = ?1",
+        rusqlite::params![id.to_string(), updated_at],
+    )
+    .map_err(|e| DatabaseError::sqlite(format!("Failed to delete event '{}'", id), e))?;
     Ok(())
 }

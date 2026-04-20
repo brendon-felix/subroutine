@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use rusqlite::{Connection, OptionalExtension};
 use simple_core::{Action, ActionCompletion};
 use uuid::Uuid;
@@ -13,9 +13,14 @@ struct ActionRow {
     content: Option<String>,
     target: Option<String>,
     target_static: i64,
+    naive_date: Option<String>,
     duration_secs: Option<i64>,
     recurrence_secs: Option<i64>,
     ephemeral: i64,
+    completed_at: Option<String>,
+    updated_at: String,
+    synced_at: Option<String>,
+    deleted: i64,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for ActionRow {
@@ -30,9 +35,14 @@ impl TryFrom<&rusqlite::Row<'_>> for ActionRow {
             content: row.get(4)?,
             target: row.get(5)?,
             target_static: row.get(6)?,
-            duration_secs: row.get(7)?,
-            recurrence_secs: row.get(8)?,
-            ephemeral: row.get(9)?,
+            naive_date: row.get(7)?,
+            duration_secs: row.get(8)?,
+            recurrence_secs: row.get(9)?,
+            ephemeral: row.get(10)?,
+            completed_at: row.get(11)?,
+            updated_at: row.get(12)?,
+            synced_at: row.get(13)?,
+            deleted: row.get(14)?,
         })
     }
 }
@@ -47,9 +57,14 @@ impl From<&Action> for ActionRow {
             content: action.content.clone(),
             target: action.target.map(|t| t.to_rfc3339()),
             target_static: action.target_static as i64,
+            naive_date: action.naive_date.map(|d| d.to_string()),
             duration_secs: action.duration.map(|d| d.num_seconds()),
             recurrence_secs: action.recurrence.map(|d| d.num_seconds()),
             ephemeral: action.ephemeral as i64,
+            completed_at: action.completed_at.map(|t| t.to_rfc3339()),
+            updated_at: Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            synced_at: None,
+            deleted: 0,
         }
     }
 }
@@ -78,6 +93,27 @@ impl TryFrom<ActionRow> for Action {
             })
             .transpose()?;
 
+        let naive_date = row
+            .naive_date
+            .map(|s| {
+                s.parse::<NaiveDate>()
+                    .map_err(|e| DatabaseError::InvalidNaiveDate {
+                        column: 7,
+                        value: s.clone(),
+                        source: e,
+                    })
+            })
+            .transpose()?;
+
+        let completed_at = row
+            .completed_at
+            .map(|s| {
+                DateTime::parse_from_rfc3339(&s)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(|e| DatabaseError::invalid_datetime(11, &s, e))
+            })
+            .transpose()?;
+
         Ok(Action {
             id,
             lineage_id,
@@ -86,9 +122,11 @@ impl TryFrom<ActionRow> for Action {
             content: row.content,
             target,
             target_static: row.target_static != 0,
+            naive_date,
             duration: row.duration_secs.map(Duration::seconds),
             recurrence: row.recurrence_secs.map(Duration::seconds),
             ephemeral: row.ephemeral != 0,
+            completed_at,
         })
     }
 }
@@ -106,9 +144,11 @@ pub fn upsert_action(conn: &Connection, action: &Action) -> Result<()> {
         r#"
         INSERT INTO actions (
             id, lineage_id, origin_routine_id,
-            title, content, target, target_static, duration_secs, recurrence_secs, ephemeral
+            title, content, target, target_static, naive_date,
+            duration_secs, recurrence_secs, ephemeral, completed_at,
+            updated_at, synced_at, deleted
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, 0)
         ON CONFLICT(id) DO UPDATE SET
             lineage_id        = excluded.lineage_id,
             origin_routine_id = excluded.origin_routine_id,
@@ -116,9 +156,13 @@ pub fn upsert_action(conn: &Connection, action: &Action) -> Result<()> {
             content           = excluded.content,
             target            = excluded.target,
             target_static     = excluded.target_static,
+            naive_date        = excluded.naive_date,
             duration_secs     = excluded.duration_secs,
             recurrence_secs   = excluded.recurrence_secs,
-            ephemeral         = excluded.ephemeral
+            ephemeral         = excluded.ephemeral,
+            completed_at      = excluded.completed_at,
+            updated_at        = excluded.updated_at,
+            synced_at         = NULL
         "#,
         rusqlite::params![
             row.id,
@@ -128,9 +172,12 @@ pub fn upsert_action(conn: &Connection, action: &Action) -> Result<()> {
             row.content,
             row.target,
             row.target_static,
+            row.naive_date,
             row.duration_secs,
             row.recurrence_secs,
             row.ephemeral,
+            row.completed_at,
+            row.updated_at,
         ],
     )
     .map_err(|e| DatabaseError::sqlite("Failed to insert or update action", e))?;
@@ -142,8 +189,11 @@ pub fn fetch_actions(conn: &Connection) -> Result<Vec<Action>> {
         .prepare(
             r#"
             SELECT id, lineage_id, origin_routine_id,
-                   title, content, target, target_static, duration_secs, recurrence_secs, ephemeral
+                   title, content, target, target_static, naive_date,
+                   duration_secs, recurrence_secs, ephemeral, completed_at,
+                   updated_at, synced_at, deleted
             FROM actions
+            WHERE deleted = 0
             ORDER BY title ASC
             "#,
         )
@@ -163,9 +213,11 @@ pub fn fetch_action_by_id(conn: &Connection, id: Uuid) -> Result<Option<Action>>
         .prepare(
             r#"
             SELECT id, lineage_id, origin_routine_id,
-                   title, content, target, target_static, duration_secs, recurrence_secs, ephemeral
+                   title, content, target, target_static, naive_date,
+                   duration_secs, recurrence_secs, ephemeral, completed_at,
+                   updated_at, synced_at, deleted
             FROM actions
-            WHERE id = ?1
+            WHERE id = ?1 AND deleted = 0
             "#,
         )
         .map_err(|e| DatabaseError::sqlite("Failed to prepare action fetch by id query", e))?;
@@ -176,8 +228,12 @@ pub fn fetch_action_by_id(conn: &Connection, id: Uuid) -> Result<Option<Action>>
 }
 
 pub fn delete_action(conn: &Connection, id: Uuid) -> Result<()> {
-    conn.execute("DELETE FROM actions WHERE id = ?1", [id.to_string()])
-        .map_err(|e| DatabaseError::sqlite(format!("Failed to delete action '{}'", id), e))?;
+    let updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    conn.execute(
+        "UPDATE actions SET deleted = 1, updated_at = ?2, synced_at = NULL WHERE id = ?1",
+        rusqlite::params![id.to_string(), updated_at],
+    )
+    .map_err(|e| DatabaseError::sqlite(format!("Failed to delete action '{}'", id), e))?;
     Ok(())
 }
 
@@ -187,6 +243,9 @@ struct ActionCompletionRow {
     lineage_id: String,
     completed_at: String,
     notes: Option<String>,
+    updated_at: String,
+    synced_at: Option<String>,
+    deleted: i64,
 }
 
 impl TryFrom<&rusqlite::Row<'_>> for ActionCompletionRow {
@@ -199,6 +258,9 @@ impl TryFrom<&rusqlite::Row<'_>> for ActionCompletionRow {
             lineage_id: row.get(2)?,
             completed_at: row.get(3)?,
             notes: row.get(4)?,
+            updated_at: row.get(5)?,
+            synced_at: row.get(6)?,
+            deleted: row.get(7)?,
         })
     }
 }
@@ -211,6 +273,9 @@ impl From<&ActionCompletion> for ActionCompletionRow {
             lineage_id: completion.lineage_id.to_string(),
             completed_at: completion.completed_at.to_rfc3339(),
             notes: completion.notes.clone(),
+            updated_at: Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            synced_at: None,
+            deleted: 0,
         }
     }
 }
@@ -253,13 +318,15 @@ pub fn insert_action_completion(conn: &Connection, completion: &ActionCompletion
     let row = ActionCompletionRow::from(completion);
     conn.execute(
         r#"
-        INSERT INTO action_completions (id, action_id, lineage_id, completed_at, notes)
-        VALUES (?1, ?2, ?3, ?4, ?5)
+        INSERT INTO action_completions (id, action_id, lineage_id, completed_at, notes, updated_at, synced_at, deleted)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 0)
         ON CONFLICT(id) DO UPDATE SET
             action_id    = excluded.action_id,
             lineage_id   = excluded.lineage_id,
             completed_at = excluded.completed_at,
-            notes        = excluded.notes
+            notes        = excluded.notes,
+            updated_at   = excluded.updated_at,
+            synced_at    = NULL
         "#,
         rusqlite::params![
             row.id,
@@ -267,6 +334,7 @@ pub fn insert_action_completion(conn: &Connection, completion: &ActionCompletion
             row.lineage_id,
             row.completed_at,
             row.notes,
+            row.updated_at,
         ],
     )
     .map_err(|e| DatabaseError::sqlite("Failed to insert action completion", e))?;
@@ -274,9 +342,10 @@ pub fn insert_action_completion(conn: &Connection, completion: &ActionCompletion
 }
 
 pub fn delete_action_completion(conn: &Connection, id: Uuid) -> Result<()> {
+    let updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     conn.execute(
-        "DELETE FROM action_completions WHERE id = ?1",
-        [id.to_string()],
+        "UPDATE action_completions SET deleted = 1, updated_at = ?2, synced_at = NULL WHERE id = ?1",
+        rusqlite::params![id.to_string(), updated_at],
     )
     .map_err(|e| {
         DatabaseError::sqlite(format!("Failed to delete action completion '{}'", id), e)
@@ -291,9 +360,9 @@ pub fn fetch_completions_by_lineage(
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, action_id, lineage_id, completed_at, notes
+            SELECT id, action_id, lineage_id, completed_at, notes, updated_at, synced_at, deleted
             FROM action_completions
-            WHERE lineage_id = ?1
+            WHERE lineage_id = ?1 AND deleted = 0
             ORDER BY completed_at ASC
             "#,
         )
@@ -312,8 +381,9 @@ pub fn fetch_all_completions(conn: &Connection) -> Result<Vec<ActionCompletion>>
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, action_id, lineage_id, completed_at, notes
+            SELECT id, action_id, lineage_id, completed_at, notes, updated_at, synced_at, deleted
             FROM action_completions
+            WHERE deleted = 0
             ORDER BY completed_at DESC
             "#,
         )
@@ -335,10 +405,11 @@ pub fn fetch_completions_by_origin_routine(
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT c.id, c.action_id, c.lineage_id, c.completed_at, c.notes
+            SELECT c.id, c.action_id, c.lineage_id, c.completed_at, c.notes,
+                   c.updated_at, c.synced_at, c.deleted
             FROM action_completions c
             JOIN actions a ON a.id = c.action_id
-            WHERE a.origin_routine_id = ?1
+            WHERE a.origin_routine_id = ?1 AND c.deleted = 0
             ORDER BY c.completed_at ASC
             "#,
         )

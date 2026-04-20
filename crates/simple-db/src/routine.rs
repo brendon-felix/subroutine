@@ -11,6 +11,9 @@ struct RoutineRow {
     content: Option<String>,
     target: Option<String>,
     recurrence_secs: Option<i64>,
+    updated_at: String,
+    synced_at: Option<String>,
+    deleted: i64,
 }
 
 impl TryFrom<RoutineRow> for Routine {
@@ -48,6 +51,9 @@ impl From<&Routine> for RoutineRow {
             content: routine.content.clone(),
             target: routine.target.map(|t| t.to_rfc3339()),
             recurrence_secs: routine.recurrence.map(|d| d.num_seconds()),
+            updated_at: Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            synced_at: None,
+            deleted: 0,
         }
     }
 }
@@ -59,6 +65,9 @@ fn read_routine_row(row: &rusqlite::Row) -> rusqlite::Result<RoutineRow> {
         content: row.get(2)?,
         target: row.get(3)?,
         recurrence_secs: row.get(4)?,
+        updated_at: row.get(5)?,
+        synced_at: row.get(6)?,
+        deleted: row.get(7)?,
     })
 }
 
@@ -142,20 +151,23 @@ pub fn upsert_routine(conn: &Connection, routine: &Routine) -> Result<()> {
     let row = RoutineRow::from(routine);
     conn.execute(
         r#"
-        INSERT INTO routines (id, title, content, target, recurrence_secs)
-        VALUES (?1, ?2, ?3, ?4, ?5)
+        INSERT INTO routines (id, title, content, target, recurrence_secs, updated_at, synced_at, deleted)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 0)
         ON CONFLICT(id) DO UPDATE SET
             title           = excluded.title,
             content         = excluded.content,
             target          = excluded.target,
-            recurrence_secs = excluded.recurrence_secs
+            recurrence_secs = excluded.recurrence_secs,
+            updated_at      = excluded.updated_at,
+            synced_at       = NULL
         "#,
         rusqlite::params![
             row.id,
             row.title,
             row.content,
             row.target,
-            row.recurrence_secs
+            row.recurrence_secs,
+            row.updated_at,
         ],
     )
     .map_err(|e| DatabaseError::sqlite("Failed to insert or update routine", e))?;
@@ -169,8 +181,9 @@ pub fn fetch_routines(conn: &Connection) -> Result<Vec<Routine>> {
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, title, content, target, recurrence_secs
+            SELECT id, title, content, target, recurrence_secs, updated_at, synced_at, deleted
             FROM routines
+            WHERE deleted = 0
             ORDER BY title ASC
             "#,
         )
@@ -196,9 +209,9 @@ pub fn fetch_routine_by_id(conn: &Connection, id: Uuid) -> Result<Option<Routine
     let mut stmt = conn
         .prepare(
             r#"
-            SELECT id, title, content, target, recurrence_secs
+            SELECT id, title, content, target, recurrence_secs, updated_at, synced_at, deleted
             FROM routines
-            WHERE id = ?1
+            WHERE id = ?1 AND deleted = 0
             "#,
         )
         .map_err(|e| DatabaseError::sqlite("Failed to prepare routine fetch by id query", e))?;
@@ -229,8 +242,12 @@ pub fn delete_routine(conn: &Connection, id: Uuid) -> Result<()> {
         )
     })?;
 
-    conn.execute("DELETE FROM routines WHERE id = ?1", [id.to_string()])
-        .map_err(|e| DatabaseError::sqlite(format!("Failed to delete routine '{}'", id), e))?;
+    let updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    conn.execute(
+        "UPDATE routines SET deleted = 1, updated_at = ?2, synced_at = NULL WHERE id = ?1",
+        rusqlite::params![id.to_string(), updated_at],
+    )
+    .map_err(|e| DatabaseError::sqlite(format!("Failed to delete routine '{}'", id), e))?;
 
     Ok(())
 }

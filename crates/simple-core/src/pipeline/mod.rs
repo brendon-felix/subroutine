@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, Local, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -31,6 +31,7 @@ pub struct RefreshResult {
     pub new_events: Vec<Event>,
     pub new_actions: Vec<Action>,
     pub demoted_actions: Vec<Action>,
+    pub promoted_actions: Vec<Action>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,6 +247,39 @@ impl Pipeline {
 
     pub fn refresh(&mut self, now: DateTime<Utc>) -> RefreshResult {
         let mut result = RefreshResult::default();
+
+        // --- Promote backlog actions whose naive_date has arrived ---
+        //
+        // A backlog action with a naive_date set is scheduled to be promoted
+        // to the queue once that date is today or in the past (in local time).
+        // We remove it from the backlog, assign it the next available slot,
+        // and record it in `result.promoted_actions` so callers can persist it.
+        let today_local = Local::now().date_naive();
+        let mut to_promote: Vec<Action> = Vec::new();
+
+        self.backlog.retain(|action| {
+            if let Some(naive_date) = action.naive_date {
+                if naive_date <= today_local {
+                    to_promote.push(action.clone());
+                    return false;
+                }
+            }
+            true
+        });
+
+        for mut action in to_promote {
+            let duration = action_effective_duration(&action);
+            let target = next_available_slot(&self.queue, now, duration);
+            action.target = Some(target);
+            action.naive_date = None;
+            action.target_static = false;
+            result.promoted_actions.push(action.clone());
+            self.queue.push(QueueItem::Action(action));
+        }
+        if !result.promoted_actions.is_empty() {
+            self.queue
+                .sort_by_key(|item| item.time().unwrap_or(DateTime::<Utc>::MAX_UTC));
+        }
 
         let mut next_events: Vec<Event> = Vec::new();
 

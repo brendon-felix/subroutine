@@ -9,6 +9,10 @@ path = "src/lib.rs"
 [dependencies]
 simple-core = { path = "../simple-core" }
 
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tokio-postgres = "0.7"
+
 dirs = { workspace = true }
 uuid = { workspace = true }
 serde = { workspace = true }

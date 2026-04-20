@@ -239,6 +239,21 @@ pub fn refresh_pipeline(conn: &Connection) -> Result<Pipeline> {
         })?;
     }
 
+    for action in &result.promoted_actions {
+        upsert_action(conn, action).map_err(|error| {
+            DatabaseError::sqlite(
+                format!(
+                    "Failed to upsert promoted action '{}' during pipeline refresh",
+                    action.id
+                ),
+                match error {
+                    DatabaseError::Sqlite { source, .. } => source,
+                    other => return other,
+                },
+            )
+        })?;
+    }
+
     save_pipeline(conn, &pipeline)?;
 
     Ok(pipeline)

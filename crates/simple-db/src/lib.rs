@@ -12,11 +12,13 @@ mod action;
 mod event;
 mod pipeline;
 mod routine;
+pub mod sync;
 
 pub use action::*;
 pub use event::*;
 pub use pipeline::*;
 pub use routine::*;
+pub use sync::{PostgresConfig, spawn_sync_loop, sync_once};
 
 pub type DatabaseConnection = Arc<Mutex<Connection>>;
 
@@ -48,6 +50,12 @@ pub enum DatabaseError {
         column: usize,
         value: String,
         source: chrono::ParseError,
+    },
+
+    InvalidNaiveDate {
+        column: usize,
+        value: String,
+        source: chrono::format::ParseError,
     },
 
     UnknownVariant {
@@ -84,6 +92,11 @@ impl fmt::Display for DatabaseError {
                 "Invalid RFC3339 datetime in column {}: '{}'",
                 column, value
             ),
+            Self::InvalidNaiveDate { column, value, .. } => write!(
+                formatter,
+                "Invalid ISO date (YYYY-MM-DD) in column {}: '{}'",
+                column, value
+            ),
             Self::UnknownVariant { column, value } => write!(
                 formatter,
                 "Unknown variant '{}' for column '{}'",
@@ -110,6 +123,7 @@ impl std::error::Error for DatabaseError {
             Self::Migration { source } => Some(source),
             Self::InvalidUuid { source, .. } => Some(source),
             Self::InvalidDateTime { source, .. } => Some(source),
+            Self::InvalidNaiveDate { source, .. } => Some(source),
             Self::NoDataDirectory | Self::UnknownVariant { .. } | Self::MissingReference { .. } => {
                 None
             }
@@ -203,9 +217,7 @@ fn database_path() -> Result<PathBuf> {
 }
 
 pub fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![M::up(include_str!(
-        "../migrations/20260310000000_init_schema.sql"
-    ))])
+    Migrations::new(vec![M::up(include_str!("../migrations/sqlite_schema.sql"))])
 }
 
 pub fn create_connection() -> Result<Connection> {

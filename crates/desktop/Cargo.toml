@@ -11,6 +11,7 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "
 gpui_transitions = { path = "/Users/felixb/Projects/gpui_transitions" }
 open = { workspace = true }
 simple-core = { path = "../simple-core" }
+simple-parser = { path = "../simple-parser" }
 simple-db = { path = "../simple-db" }
 uuid = { workspace = true }
 serde = { workspace = true }
