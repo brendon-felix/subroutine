@@ -8,7 +8,7 @@ pub mod drag_drop;
 pub mod event_creator;
 pub mod panel_group;
 pub mod popover;
-pub mod resizable;
+// pub mod resizable;
 
 pub fn init(cx: &mut App) {
     // picker::init(cx);

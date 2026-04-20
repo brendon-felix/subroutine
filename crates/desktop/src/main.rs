@@ -6,6 +6,7 @@ mod assets;
 mod components;
 mod stores;
 // mod tasks;
+mod icons;
 mod themes;
 mod transitions;
 mod utils;

@@ -169,7 +169,6 @@ impl FocusView {
                 theme.background
             })
             .hover(|style| style.bg(theme.list_hover.opacity(0.35)))
-            .cursor_pointer()
             .on_click(move |_event, _window, cx| {
                 entity.update(cx, |this, cx| {
                     this.selected_index = ix;

@@ -47,6 +47,7 @@ impl<T: Clone + Debug> DragData<T> {
         self
     }
 
+    #[allow(dead_code)]
     pub fn with_preview<F>(mut self, factory: F) -> Self
     where
         F: Fn() -> AnyElement + 'static,
@@ -126,6 +127,7 @@ pub struct DropIndicator {
 
 /// Position indicator for reorderable lists, showing where an item will be inserted.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 pub enum DropPosition {
     Before,
     After,
@@ -152,7 +154,7 @@ pub struct Draggable<T: Clone + Debug + 'static> {
     hover_bg: Option<Hsla>,
     children: Vec<AnyElement>,
     style: StyleRefinement,
-    on_drag_listener: Option<Box<dyn Fn(&mut Window, &mut App) + 'static>>,
+    // on_drag_listener: Option<Box<dyn Fn(&mut Window, &mut App) + 'static>>,
 }
 
 impl<T: Clone + Debug + 'static> Draggable<T> {
@@ -164,27 +166,27 @@ impl<T: Clone + Debug + 'static> Draggable<T> {
             hover_bg: None,
             children: Vec::new(),
             style: StyleRefinement::default(),
-            on_drag_listener: None,
+            // on_drag_listener: None,
         }
     }
 
-    pub fn cursor_style(mut self, cursor: CursorStyle) -> Self {
-        self.cursor_style = cursor;
-        self
-    }
+    // pub fn cursor_style(mut self, cursor: CursorStyle) -> Self {
+    //     self.cursor_style = cursor;
+    //     self
+    // }
 
-    pub fn hover_bg(mut self, color: Hsla) -> Self {
-        self.hover_bg = Some(color);
-        self
-    }
+    // pub fn hover_bg(mut self, color: Hsla) -> Self {
+    //     self.hover_bg = Some(color);
+    //     self
+    // }
 
-    pub fn on_drag_listener<F>(
-        mut self,
-        listener: impl Fn(&mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_drag_listener = Some(Box::new(listener));
-        self
-    }
+    // pub fn on_drag_listener<F>(
+    //     mut self,
+    //     listener: impl Fn(&mut Window, &mut App) + 'static,
+    // ) -> Self {
+    //     self.on_drag_listener = Some(Box::new(listener));
+    //     self
+    // }
 }
 
 impl<T: Clone + Debug + 'static> InteractiveElement for Draggable<T> {
@@ -208,7 +210,7 @@ impl<T: Clone + Debug + 'static> ParentElement for Draggable<T> {
 }
 
 impl<T: Clone + Debug + 'static> RenderOnce for Draggable<T> {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let drag_data = self.drag_data.clone();
         let user_style = self.style;
 
@@ -233,6 +235,7 @@ impl<T: Clone + Debug + 'static> RenderOnce for Draggable<T> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(dead_code)]
 pub enum DropZoneStyle {
     Dashed,
     Solid,
@@ -252,6 +255,7 @@ pub struct DropZone<T: Clone + Debug + 'static> {
     _phantom: std::marker::PhantomData<T>,
 }
 
+#[allow(dead_code)]
 impl<T: Clone + Debug + 'static> DropZone<T> {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {

@@ -6,8 +6,9 @@ edition = "2024"
 [dependencies]
 anyhow = { workspace = true }
 futures = { workspace = true }
-gpui = { path = "/Users/felixb/.cargo/git/checkouts/zed-a70e2ad075855582/ff34f22/crates/gpui" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "6e5bd330" }
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 gpui_transitions = { path = "/Users/felixb/Projects/gpui_transitions" }
 open = { workspace = true }
 simple-core = { path = "../simple-core" }
@@ -26,3 +27,4 @@ rust-embed = { workspace = true }
 tracing = { workspace = true }
 regex = { workspace = true }
 fuzzy-matcher = { workspace = true }
+palette = { workspace = true }

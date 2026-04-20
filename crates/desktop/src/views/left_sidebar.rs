@@ -1,4 +1,3 @@
-use chrono::Utc;
 use gpui::prelude::*;
 use gpui::{
     Context, DragMoveEvent, Entity, EventEmitter, IntoElement, Render, Subscription, Window, div,
@@ -15,7 +14,7 @@ use crate::stores::database_store::PipelineChanged;
 
 use crate::views::Pipeline;
 
-pub struct PipelineSidebarView {
+pub struct LeftSidebarView {
     collapsed: bool,
     pub pipeline: Entity<Pipeline>,
     database_store: Entity<DatabaseStore>,
@@ -23,21 +22,22 @@ pub struct PipelineSidebarView {
     _subscriptions: Vec<Subscription>,
 }
 
-impl PipelineSidebarView {
+impl LeftSidebarView {
     pub fn new(
         database_store: Entity<DatabaseStore>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let pipeline = cx.new(|cx| Pipeline::new(database_store.clone(), cx));
+        let pipeline = cx.new(|cx| Pipeline::new(database_store.clone(), window, cx));
 
         let mut subscriptions = Vec::new();
 
-        subscriptions.push(cx.subscribe(
+        subscriptions.push(cx.subscribe_in(
             &database_store,
-            |this, store, _event: &PipelineChanged, cx| {
+            window,
+            |this, _store, _event: &PipelineChanged, window, cx| {
                 this.pipeline.update(cx, |pipeline, cx| {
-                    pipeline.update_items(cx);
+                    pipeline.update_items(window, cx);
                     cx.notify();
                 });
                 cx.notify();
@@ -53,15 +53,15 @@ impl PipelineSidebarView {
         }
     }
 
-    pub fn toggle_collapsed(&mut self, cx: &mut Context<Self>) -> bool {
-        self.collapsed = !self.collapsed;
-        cx.notify();
-        self.collapsed
-    }
+    // pub fn toggle_collapsed(&mut self, cx: &mut Context<Self>) -> bool {
+    //     self.collapsed = !self.collapsed;
+    //     cx.notify();
+    //     self.collapsed
+    // }
 
-    pub fn is_collapsed(&self) -> bool {
-        self.collapsed
-    }
+    // pub fn is_collapsed(&self) -> bool {
+    //     self.collapsed
+    // }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
@@ -106,9 +106,9 @@ impl PipelineSidebarView {
     }
 }
 
-impl EventEmitter<()> for PipelineSidebarView {}
+impl EventEmitter<()> for LeftSidebarView {}
 
-impl Render for PipelineSidebarView {
+impl Render for LeftSidebarView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let drop_active = self.drop_active;
         let pipeline = self.pipeline.clone();
@@ -121,6 +121,7 @@ impl Render for PipelineSidebarView {
                 // Outer drop zone fills remaining space so the whole sidebar accepts drops.
                 this.child(
                     DropZone::<DragData<Action>>::new("pipeline-queue-drop-zone")
+                        .bg(cx.theme().secondary)
                         .flex_1()
                         .min_h_0()
                         .w_full()
@@ -170,11 +171,12 @@ impl Render for PipelineSidebarView {
                                 .child(
                                     div()
                                         .id("pipeline-scroll")
+                                        .bg(cx.theme().group_box)
                                         .overflow_y_scroll()
-                                        .w_full()
-                                        // .max_h(px(340.))
-                                        .border_y_1()
+                                        .size_full()
+                                        .border_1()
                                         .border_color(cx.theme().border)
+                                        .rounded_lg()
                                         .child(pipeline),
                                 ),
                         ),

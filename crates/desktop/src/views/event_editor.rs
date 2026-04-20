@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::components::popover::popover;
 use crate::stores::DatabaseStore;
-use crate::stores::database_store::EventsLoaded;
+// use crate::stores::database_store::EventsLoaded;
 use crate::utils::{format_datetime_local, format_duration, parse_datetime_local, parse_duration};
 
 pub struct StartEventEditor {
@@ -482,7 +482,6 @@ impl EventEditor {
             .child(
                 Button::new("save-queue")
                     .label(save_label)
-                    .cursor_pointer()
                     .primary()
                     .on_click(cx.listener(|this, _event, window, cx| {
                         this.save(window, cx);
@@ -491,7 +490,6 @@ impl EventEditor {
             .child(
                 Button::new("save-template")
                     .label("Save template")
-                    .cursor_pointer()
                     .outline()
                     .on_click(cx.listener(|this, _event, _window, cx| {
                         this.save_template(cx);
@@ -502,7 +500,6 @@ impl EventEditor {
                     Button::new("delete")
                         .label("Delete")
                         .danger()
-                        .cursor_pointer()
                         .on_click(cx.listener(|this, _event, _window, cx| {
                             this.delete_event(cx);
                         })),

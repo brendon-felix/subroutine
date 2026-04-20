@@ -131,7 +131,6 @@ impl RenderOnce for ListItem {
         selected_style.corner_radii = corner_radii;
         let theme = cx.theme();
         self.base
-            .cursor_pointer()
             .relative()
             .gap_x_1()
             // .py_1()

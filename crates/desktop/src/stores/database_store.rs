@@ -2,10 +2,9 @@ use chrono::{DateTime, Utc};
 use gpui::{Context, EventEmitter, Task};
 use simple_core::{Action, ActionCompletion, Event, OverlapWarning, Pipeline, QueueItem, Routine};
 use simple_db::{
-    DatabaseConnection, connect_and_migrate, delete_action, delete_action_completion, delete_event,
-    delete_routine, fetch_actions, fetch_all_completions, fetch_events, fetch_routines,
-    insert_action_completion, load_pipeline, refresh_pipeline, save_pipeline, upsert_action,
-    upsert_event, upsert_routine,
+    DatabaseConnection, connect_and_migrate, delete_action, delete_event, delete_routine,
+    fetch_actions, fetch_all_completions, fetch_events, fetch_routines, insert_action_completion,
+    refresh_pipeline, save_pipeline, upsert_action, upsert_event, upsert_routine,
 };
 use uuid::Uuid;
 
@@ -117,21 +116,21 @@ impl DatabaseStore {
         );
     }
 
-    pub fn get_completions(&self) -> &Vec<ActionCompletion> {
-        &self.completions
-    }
+    // pub fn get_completions(&self) -> &Vec<ActionCompletion> {
+    //     &self.completions
+    // }
 
-    pub fn delete_completion(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        db_op!(
-            self,
-            cx,
-            "delete_completion",
-            move |conn| delete_action_completion(conn, id),
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.load_completions(cx);
-            }
-        );
-    }
+    // pub fn delete_completion(&mut self, id: Uuid, cx: &mut Context<Self>) {
+    //     db_op!(
+    //         self,
+    //         cx,
+    //         "delete_completion",
+    //         move |conn| delete_action_completion(conn, id),
+    //         |this: &mut Self, cx: &mut Context<Self>, _: ()| {
+    //             this.load_completions(cx);
+    //         }
+    //     );
+    // }
 
     pub fn initialize(&mut self, cx: &mut Context<Self>) {
         let task = cx.spawn(async move |this, cx| {
@@ -253,18 +252,18 @@ impl DatabaseStore {
 
     // ─── Pipeline ───────────────────────────────────────────────────────────────
 
-    pub fn load_pipeline(&mut self, cx: &mut Context<Self>) {
-        db_op!(
-            self,
-            cx,
-            "load_pipeline",
-            |conn| load_pipeline(conn),
-            |this: &mut Self, cx: &mut Context<Self>, pipeline: Pipeline| {
-                this.pipeline = pipeline;
-                cx.emit(PipelineChanged);
-            }
-        );
-    }
+    // pub fn load_pipeline(&mut self, cx: &mut Context<Self>) {
+    //     db_op!(
+    //         self,
+    //         cx,
+    //         "load_pipeline",
+    //         |conn| load_pipeline(conn),
+    //         |this: &mut Self, cx: &mut Context<Self>, pipeline: Pipeline| {
+    //             this.pipeline = pipeline;
+    //             cx.emit(PipelineChanged);
+    //         }
+    //     );
+    // }
 
     pub fn refresh_pipeline(&mut self, cx: &mut Context<Self>) {
         db_op!(
@@ -361,37 +360,51 @@ impl DatabaseStore {
         self.pipeline.backlog.iter().find(|a| a.id == id)
     }
 
-    /// Adds an action to the backlog and persists the pipeline.
-    pub fn add_action_to_backlog(&mut self, action: Action, cx: &mut Context<Self>) {
-        let action_for_db = action.clone();
-        self.pipeline.backlog.push(action);
-        db_op!(
-            self,
-            cx,
-            "add_action_to_backlog",
-            move |conn| {
-                upsert_action(conn, &action_for_db)?;
-                Ok::<(), anyhow::Error>(())
-            },
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.save_pipeline(cx);
-                cx.emit(PipelineChanged);
-            }
-        );
-    }
+    // /// Adds an action to the backlog and persists the pipeline.
+    // pub fn add_action_to_backlog(&mut self, action: Action, cx: &mut Context<Self>) {
+    //     let action_for_db = action.clone();
+    //     self.pipeline.backlog.push(action);
+    //     db_op!(
+    //         self,
+    //         cx,
+    //         "add_action_to_backlog",
+    //         move |conn| {
+    //             upsert_action(conn, &action_for_db)?;
+    //             Ok::<(), anyhow::Error>(())
+    //         },
+    //         |this: &mut Self, cx: &mut Context<Self>, _: ()| {
+    //             this.save_pipeline(cx);
+    //             cx.emit(PipelineChanged);
+    //         }
+    //     );
+    // }
 
-    /// Adds an action to the queue using smart scheduling:
-    /// - If the action has no target, it is placed in the next available slot
-    ///   after consecutive non-static chains and events.
-    /// - If the action has a target, it is inserted as a static action, any
-    ///   non-static actions that now conflict are displaced, and overlap
+    /// Adds an action to the pipeline using smart routing:
+    /// - If the action has a `naive_date` (date-only, no time), it goes to the
+    ///   backlog. The pipeline's `refresh` will promote it once the date arrives.
+    /// - If the action has a full `target` datetime, it is inserted as a static
+    ///   action; non-static actions that now conflict are displaced, and overlap
     ///   warnings for immovable items are returned.
+    /// - If the action has neither, it is placed in the next available slot
+    ///   after consecutive non-static chains and events.
     pub fn add_action_to_queue(
         &mut self,
         action: Action,
         cx: &mut Context<Self>,
     ) -> Vec<OverlapWarning> {
-        let warnings = if action.target.is_some() {
+        let id = action.id;
+        // Remove any existing copy of this item from both queue and backlog
+        // before inserting, so dragging an item that is already present (e.g.
+        // a pipeline item dropped back onto the pipeline, or a backlog item
+        // dropped onto the pipeline drop-zone) never creates a duplicate.
+        self.pipeline.queue.retain(|item| item.id() != id);
+        self.pipeline.backlog.retain(|a| a.id != id);
+
+        let warnings = if action.naive_date.is_some() {
+            // Date-only: park in the backlog; refresh will promote it.
+            self.pipeline.backlog.push(action.clone());
+            Vec::new()
+        } else if action.target.is_some() {
             self.pipeline
                 .queue_action_static(action.clone(), Utc::now())
         } else {
@@ -424,6 +437,12 @@ impl DatabaseStore {
         event: Event,
         cx: &mut Context<Self>,
     ) -> Vec<OverlapWarning> {
+        let id = event.id;
+        // Remove any existing copy of this event from the queue before
+        // inserting, so dropping a pipeline event back onto the pipeline
+        // drop-zone never creates a duplicate.
+        self.pipeline.queue.retain(|item| item.id() != id);
+
         let warnings = self.pipeline.queue_event(event.clone(), Utc::now());
 
         let event_for_db = event;
@@ -444,12 +463,12 @@ impl DatabaseStore {
         warnings
     }
 
-    /// Creates a new ephemeral action and places it in the next available
-    /// slot in the queue.
-    pub fn create_action(&mut self, title: String, cx: &mut Context<Self>) {
-        let action = Action::new(title);
-        self.add_action_to_queue(action, cx);
-    }
+    // /// Creates a new ephemeral action and places it in the next available
+    // /// slot in the queue.
+    // pub fn create_action(&mut self, title: String, cx: &mut Context<Self>) {
+    //     let action = Action::new(title);
+    //     self.add_action_to_queue(action, cx);
+    // }
 
     /// Promotes a backlog action to the queue, scheduling it in the next
     /// available slot after now (respecting consecutive actions and events).
@@ -520,6 +539,8 @@ impl DatabaseStore {
         };
 
         let completion = ActionCompletion::new(&action);
+        let mut action = action;
+        action.completed_at = Some(completion.completed_at);
         let next = action.next_recurrence();
 
         if let Some(next_action) = next.clone() {
@@ -536,6 +557,7 @@ impl DatabaseStore {
             cx,
             "complete_action",
             move |conn| {
+                upsert_action(conn, &action)?;
                 insert_action_completion(conn, &completion)?;
                 if let Some(next_action) = &next {
                     upsert_action(conn, next_action)?;

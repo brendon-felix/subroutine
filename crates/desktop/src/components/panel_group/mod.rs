@@ -7,7 +7,7 @@ use gpui::{
     prelude::FluentBuilder, px,
 };
 use gpui_component::{
-    IconName, PixelsExt, StyledExt,
+    IconName, StyledExt,
     button::{Button, ButtonVariants},
     h_flex, v_flex,
 };
@@ -122,6 +122,7 @@ impl RenderOnce for NavigationBar {
         let traffic_light_padding = self.traffic_light_padding;
 
         self.base
+            .h_8()
             .items_center()
             // .justify_between()
             .when_some(self.left_panel_open, |this, open| {
@@ -131,7 +132,6 @@ impl RenderOnce for NavigationBar {
                         Button::new("left-panel-button")
                             .size_6()
                             .ghost()
-                            .cursor_pointer()
                             .when_else(
                                 open,
                                 |btn| btn.icon(IconName::PanelLeftClose),
@@ -156,7 +156,6 @@ impl RenderOnce for NavigationBar {
                     Button::new("right-panel-button")
                         .size_6()
                         .ghost()
-                        .cursor_pointer()
                         .when_else(
                             open,
                             |btn| btn.icon(IconName::PanelRightClose),
@@ -188,10 +187,10 @@ impl CenterPanel {
         }
     }
 
-    pub fn navigation_bar(mut self) -> Self {
-        self.navigation_bar = Some(NavigationBar::new());
-        self
-    }
+    // pub fn navigation_bar(mut self) -> Self {
+    //     self.navigation_bar = Some(NavigationBar::new());
+    //     self
+    // }
 }
 
 impl Styled for CenterPanel {
@@ -232,7 +231,7 @@ pub struct SidePanel {
     base: gpui::Stateful<gpui::Div>,
     width_range: Range<Pixels>,
     initial_width: Option<Pixels>,
-    start_open: bool,
+    // start_open: bool,
 }
 
 impl SidePanel {
@@ -241,7 +240,7 @@ impl SidePanel {
             base: div().id(id),
             width_range: px(10.)..Pixels::MAX,
             initial_width: None,
-            start_open: true,
+            // start_open: true,
         }
     }
 
@@ -263,10 +262,10 @@ impl SidePanel {
         self
     }
 
-    pub fn start_open(mut self, open: bool) -> Self {
-        self.start_open = open;
-        self
-    }
+    // pub fn start_open(mut self, open: bool) -> Self {
+    //     self.start_open = open;
+    //     self
+    // }
 }
 
 impl Styled for SidePanel {
@@ -291,7 +290,7 @@ impl ParentElement for SidePanel {
 
 impl RenderOnce for SidePanel {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        self.base
+        self.base.size_full()
     }
 }
 
@@ -319,12 +318,12 @@ impl Default for SidePanelState {
 }
 
 impl SidePanelState {
-    pub fn new(proportion: f32) -> Self {
-        Self {
-            opened_proportion: proportion,
-            ..Default::default()
-        }
-    }
+    // pub fn new(proportion: f32) -> Self {
+    //     Self {
+    //         opened_proportion: proportion,
+    //         ..Default::default()
+    //     }
+    // }
 }
 
 #[derive(Clone)]
@@ -381,21 +380,21 @@ impl PanelGroupState {
         self.bounds.size.width
     }
 
-    fn total_side_proportion(&self) -> f32 {
-        let left = self
-            .left_panel
-            .as_ref()
-            .filter(|p| p.open)
-            .map(|p| p.opened_proportion)
-            .unwrap_or(0.0);
-        let right = self
-            .right_panel
-            .as_ref()
-            .filter(|p| p.open)
-            .map(|p| p.opened_proportion)
-            .unwrap_or(0.0);
-        left + right
-    }
+    // fn total_side_proportion(&self) -> f32 {
+    //     let left = self
+    //         .left_panel
+    //         .as_ref()
+    //         .filter(|p| p.open)
+    //         .map(|p| p.opened_proportion)
+    //         .unwrap_or(0.0);
+    //     let right = self
+    //         .right_panel
+    //         .as_ref()
+    //         .filter(|p| p.open)
+    //         .map(|p| p.opened_proportion)
+    //         .unwrap_or(0.0);
+    //     left + right
+    // }
 
     /// Resize the left panel given the new mouse x position in window coordinates.
     fn resize_left(&mut self, mouse_x: Pixels) {
@@ -703,8 +702,6 @@ impl RenderOnce for PanelGroup {
 
         h_flex()
             .refine_style(&self.style)
-            .size_full()
-            .relative()
             // Track container bounds each frame so resize math has the correct origin.
             .on_prepaint({
                 let state = state.clone();
@@ -718,7 +715,7 @@ impl RenderOnce for PanelGroup {
                 }
             })
             // Left side panel
-            .when_some(self.left, |this, mut left| {
+            .when_some(self.left, |this, left| {
                 // The open width is the fixed width the content always occupies.
                 // The outer wrapper clips to the animated width, and the inner content
                 // is anchored to the right (center-facing) edge so it slides in from

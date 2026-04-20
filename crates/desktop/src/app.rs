@@ -1,11 +1,11 @@
 use anyhow::Result;
 use gpui::{
-    App, AppContext, Application, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions,
-    WindowBounds, WindowOptions, actions, point, px, size,
+    App, AppContext, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
+    WindowOptions, actions, point, px, size,
 };
 use gpui_component::{ActiveTheme, Root, Theme, ThemeMode, ThemeRegistry, input};
 
-use crate::assets::Assets;
+use crate::assets::AppAssets;
 use crate::stores::DatabaseStore;
 use crate::themes::{SwitchTheme, SwitchThemeMode};
 use crate::views::RootView;
@@ -26,25 +26,42 @@ actions!(
     ]
 );
 
-pub trait ResultExt<T> {
-    fn log_err(self);
-}
+// pub trait ResultExt<T> {
+//     fn log_err(self);
+// }
 
-impl<T> ResultExt<T> for Result<T> {
-    fn log_err(self) {
-        if let Err(err) = self {
-            eprintln!("Error: {}", err);
-        }
-    }
-}
+// impl<T> ResultExt<T> for Result<T> {
+//     fn log_err(self) {
+//         if let Err(err) = self {
+//             eprintln!("Error: {}", err);
+//         }
+//     }
+// }
 
 pub fn run() -> Result<()> {
     // let json = std::fs::read_to_string(STATE_FILE).unwrap_or_default();
     // let state = serde_json::from_str::<State>(&json).unwrap_or_default();
 
-    Application::new().with_assets(Assets).run(init);
+    gpui_platform::application()
+        .with_assets(AppAssets)
+        .run(init);
     Ok(())
 }
+
+// fn load_embedded_fonts(cx: &App) -> anyhow::Result<()> {
+//     let font_paths = cx.asset_source().list("fonts")?;
+//     let mut embedded_fonts = Vec::new();
+//     for font_path in font_paths {
+//         if font_path.ends_with(".ttf") {
+//             let font_bytes = cx
+//                 .asset_source()
+//                 .load(font_path.as_str())?
+//                 .expect("Should never be None");
+//             embedded_fonts.push(font_bytes);
+//         }
+//     }
+//     cx.text_system().add_fonts(embedded_fonts)
+// }
 
 pub fn init(cx: &mut App) {
     cx.activate(true);
@@ -52,6 +69,10 @@ pub fn init(cx: &mut App) {
     gpui_component::init(cx);
     themes::init(cx);
     components::init(cx);
+
+    // if let Err(e) = load_embedded_fonts(cx) {
+    //     eprintln!("Failed to load embedded fonts: {}", e);
+    // }
 
     cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
     let database_store = cx.new(move |cx| DatabaseStore::new(cx));
@@ -105,6 +126,7 @@ fn theme_menu(cx: &App) -> MenuItem {
     themes.sort_by(|a, b| a.name.cmp(&b.name));
     let current_name = cx.theme().theme_name();
     MenuItem::Submenu(Menu {
+        disabled: false,
         name: "Theme".into(),
         items: themes
             .iter()
@@ -132,6 +154,7 @@ fn update_app_menu(cx: &App) {
     let mode = cx.theme().mode;
     cx.set_menus(vec![
         Menu {
+            disabled: false,
             name: "Subroutine".into(),
             items: vec![
                 MenuItem::action("About", About),
@@ -139,6 +162,7 @@ fn update_app_menu(cx: &App) {
                 MenuItem::action("Open...", Open),
                 MenuItem::Separator,
                 MenuItem::Submenu(Menu {
+                    disabled: false,
                     name: "Appearance".into(),
                     items: vec![
                         MenuItem::action("Light", SwitchThemeMode(ThemeMode::Light))
@@ -154,6 +178,7 @@ fn update_app_menu(cx: &App) {
             ],
         },
         Menu {
+            disabled: false,
             name: "Edit".into(),
             items: vec![
                 MenuItem::action("Undo", input::Undo),
@@ -173,10 +198,12 @@ fn update_app_menu(cx: &App) {
             ],
         },
         Menu {
+            disabled: false,
             name: "Window".into(),
             items: vec![MenuItem::action("Toggle Search", ToggleSearch)],
         },
         Menu {
+            disabled: false,
             name: "Help".into(),
             items: vec![MenuItem::action("Open Website", Open)],
         },

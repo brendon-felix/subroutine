@@ -4,15 +4,10 @@ members = [
     # "crates/app-core",
     # "crates/cli",
     # "crates/database",
-    "crates/desktop", "crates/simple-cli", "crates/simple-core", "crates/simple-db",
+    "crates/desktop", "crates/parser-cli", "crates/simple-cli", "crates/simple-core", "crates/simple-db",
+    "crates/simple-parser", "crates/tui",
 ]
 resolver = "3"
-
-[patch.crates-io]
-gpui = { path = "/Users/felixb/.cargo/git/checkouts/zed-a70e2ad075855582/ff34f22/crates/gpui" }
-
-[patch."https://github.com/zed-industries/zed"]
-gpui = { path = "/Users/felixb/.cargo/git/checkouts/zed-a70e2ad075855582/ff34f22/crates/gpui" }
 
 [workspace.dependencies]
 # Error handling
@@ -53,6 +48,7 @@ im = "15.1.0"
 regex = "1.12.2"
 fuzzy-matcher = "0.3.7"
 open = "5.3.3"
+palette = "0.7"
 rand = "0.9"
 bitflags = { version = "2.11.0", features = ["serde"] }
 

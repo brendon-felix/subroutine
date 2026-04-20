@@ -70,13 +70,6 @@ impl<T: 'static, E: 'static + Render> ResizeHandle<T, E> {
         self
     }
 
-    /// Position the visual indicator on the left side of the hit area.
-    /// Used for the right-side panel whose handle sits on its left boundary.
-    pub(crate) fn left_side(mut self) -> Self {
-        self.left_side = true;
-        self
-    }
-
     pub(crate) fn on_drag(
         mut self,
         value: T,

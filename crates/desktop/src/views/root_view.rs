@@ -5,13 +5,9 @@ use gpui::{
     actions, div, px,
 };
 use gpui::{KeyBinding, prelude::*};
-use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::notification::{Notification, NotificationType};
-use gpui_component::{
-    ActiveTheme, IconName, PixelsExt as _, Root, Sizable, ThemeMode, WindowExt, h_flex,
-};
+use gpui_component::notification::NotificationType;
+use gpui_component::{ActiveTheme, IconName, Root, ThemeMode, WindowExt, h_flex, v_flex};
 
-use crate::app::ResultExt;
 use crate::components::action_creator::ActionCreator;
 use crate::components::command_palette::{
     CloseCommandPalette, Command, CommandPalette, CommandPaletteExt, CommandPaletteState,
@@ -24,8 +20,9 @@ use crate::components::panel_group::{
 use crate::components::popover::CloseOverlay;
 use crate::stores::DatabaseStore;
 use crate::themes::SwitchThemeMode;
+use crate::views::RightSidebarView;
 use crate::views::{
-    MainView, MainViewMode, PipelineSidebarView, RoutineEditor, action_editor::StartActionEditor,
+    LeftSidebarView, MainView, MainViewMode, RoutineEditor, action_editor::StartActionEditor,
     event_editor::StartEventEditor, pipeline::StartQueueEventEditor,
     routines_view::StartRoutineEditor,
 };
@@ -37,8 +34,8 @@ actions!(
         StartActionCreator,
         StartEventCreator,
         StartNewRoutine,
-        ToggleSideBar,
-        ToggleRightPanel,
+        ToggleLeftSidebar,
+        ToggleRightSidebar,
         ExpeditePipelineActions
     ]
 );
@@ -55,7 +52,8 @@ pub enum CurrentOverlay {
 pub struct RootView {
     database_store: Entity<DatabaseStore>,
     main_view: Entity<MainView>,
-    left_sidebar: Entity<PipelineSidebarView>,
+    left_sidebar: Entity<LeftSidebarView>,
+    right_sidebar: Entity<RightSidebarView>,
     layout_state: Entity<PanelGroupState>,
     focus_handle: FocusHandle,
     overlay: Option<CurrentOverlay>,
@@ -72,15 +70,15 @@ impl RootView {
             KeyBinding::new("cmd-n", StartActionCreator, None),
             KeyBinding::new("cmd-e", StartEventCreator, None),
             KeyBinding::new("cmd-shift-r", StartNewRoutine, None),
-            KeyBinding::new("alt-[", ToggleSideBar, None),
-            KeyBinding::new("alt-]", ToggleRightPanel, None),
+            KeyBinding::new("alt-[", ToggleLeftSidebar, None),
+            KeyBinding::new("alt-]", ToggleRightSidebar, None),
         ]);
 
         let main_view = cx.new(|cx| MainView::new(database_store.clone(), window, cx));
         let list_state = main_view.read(cx).action_list.read(cx).list_state.clone();
 
-        let left_sidebar =
-            cx.new(|cx| PipelineSidebarView::new(database_store.clone(), window, cx));
+        let left_sidebar = cx.new(|cx| LeftSidebarView::new(database_store.clone(), window, cx));
+        let right_sidebar = cx.new(|cx| RightSidebarView::new(database_store.clone(), window, cx));
 
         cx.subscribe_in(
             &list_state,
@@ -137,7 +135,7 @@ impl RootView {
             state.left_panel = Some(SidePanelState {
                 proportion_range: 0.1..0.5,
                 opened_proportion: 0.25,
-                open: true,
+                open: false,
             });
             state.right_panel = Some(SidePanelState {
                 proportion_range: 0.1..0.5,
@@ -151,6 +149,7 @@ impl RootView {
             database_store,
             main_view,
             left_sidebar,
+            right_sidebar,
             layout_state,
             focus_handle,
             overlay: None,
@@ -328,14 +327,14 @@ impl CommandPaletteExt for RootView {
                 .icon(IconName::PanelLeftOpen)
                 .search_terms(["sidebar", "panel", "toggle", "left"])
                 .on_select(|window, cx| {
-                    window.dispatch_action(Box::new(ToggleSideBar), cx);
+                    window.dispatch_action(Box::new(ToggleLeftSidebar), cx);
                 }),
             Command::new("Toggle Right Sidebar")
                 .shortcut("alt-]")
                 .icon(IconName::PanelRightOpen)
                 .search_terms(["sidebar", "panel", "toggle", "right"])
                 .on_select(|window, cx| {
-                    window.dispatch_action(Box::new(ToggleRightPanel), cx);
+                    window.dispatch_action(Box::new(ToggleRightSidebar), cx);
                 }),
             Command::new("Expedite Actions")
                 .icon(IconName::Play)
@@ -378,8 +377,6 @@ impl CommandPaletteExt for RootView {
     }
 }
 
-struct SaveConfirmation;
-
 impl Focusable for RootView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -390,8 +387,6 @@ impl EventEmitter<()> for RootView {}
 
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        use gpui_component::v_flex;
-
         let (
             left_panel_open,
             animated_left_px,
@@ -439,11 +434,11 @@ impl Render for RootView {
         };
         let right_pad = px(8.0 - t_right * 4.0);
 
-        let current_mode = self.main_view.read(cx).mode;
+        // let current_mode = self.main_view.read(cx).mode;
         let main_view = self.main_view.clone();
 
         let nav_bar = {
-            let main_view = main_view.clone();
+            // let main_view = main_view.clone();
             NavigationBar::new()
                 .h_8()
                 .gap_3()
@@ -468,200 +463,151 @@ impl Render for RootView {
                         });
                     }
                 })
-            // .child(
-            //     Button::new("nav-focus")
-            //         .small()
-            //         .rounded_r_none()
-            //         .border_1()
-            //         .border_r_0()
-            //         .border_color(cx.theme().border)
-            //         .ghost()
-            //         .icon(IconName::Star)
-            //         .label("Focus")
-            //         .when(current_mode == MainViewMode::Focus, |b| b.primary())
-            //         .on_click({
-            //             let main_view = main_view.clone();
-            //             move |_, _window, cx| {
-            //                 main_view.update(cx, |v, cx| v.set_mode(MainViewMode::Focus, cx));
-            //             }
-            //         }),
-            // )
-            // .child(
-            //     Button::new("nav-routines")
-            //         .small()
-            //         .rounded_none()
-            //         .border_y_1()
-            //         .border_color(cx.theme().border)
-            //         .ghost()
-            //         .icon(IconName::Palette)
-            //         .label("Routines")
-            //         .when(current_mode == MainViewMode::Routines, |b| b.primary())
-            //         .on_click({
-            //             let main_view = main_view.clone();
-            //             move |_, _window, cx| {
-            //                 main_view
-            //                     .update(cx, |v, cx| v.set_mode(MainViewMode::Routines, cx));
-            //             }
-            //         }),
-            // )
-            // .child(
-            //     Button::new("nav-backlog")
-            //         .small()
-            //         .rounded_l_none()
-            //         .border_1()
-            //         .border_l_0()
-            //         .border_color(cx.theme().border)
-            //         .ghost()
-            //         .icon(IconName::GalleryVerticalEnd)
-            //         .label("Backlog")
-            //         .when(current_mode == MainViewMode::ActionList, |b| b.primary())
-            //         .on_click({
-            //             let main_view = main_view.clone();
-            //             move |_, _window, cx| {
-            //                 main_view
-            //                     .update(cx, |v, cx| v.set_mode(MainViewMode::ActionList, cx));
-            //             }
-            //         }),
-            // )
         };
 
-        let main_area = PanelGroup::new(self.layout_state.clone())
-            .left(
-                SidePanel::left()
-                    .width_range_open(px(180.)..px(500.))
-                    .initial_width(px(320.))
-                    .child(
-                        v_flex()
-                            .size_full()
-                            .pt_0()
-                            .pl_2()
-                            .pb_2()
-                            .pr_1()
-                            .bg(cx.theme().secondary)
-                            .child(h_flex().h_8())
+        v_flex()
+            .size_full()
+            .inset_0()
+            // .on_prepaint(|bounds, _, _| {
+            //     println!(
+            //         "{}px, {}px",
+            //         bounds.size.width.as_f32(),
+            //         bounds.size.height.as_f32()
+            //     )
+            // })
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(|this, _: &ToggleLeftSidebar, _window, cx| {
+                this.layout_state.update(cx, |state, cx| {
+                    state.toggle_left();
+                    cx.notify();
+                });
+            }))
+            .on_action(cx.listener(|this, _: &ToggleRightSidebar, _window, cx| {
+                this.layout_state.update(cx, |state, cx| {
+                    state.toggle_right();
+                    cx.notify();
+                });
+            }))
+            .on_action(cx.listener(|this, _: &StartCommandPalette, window, cx| {
+                this.open_command_palette(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &StartActionCreator, window, cx| {
+                this.open_action_creator(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &StartEventCreator, window, cx| {
+                this.open_event_creator(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &StartNewRoutine, window, cx| {
+                this.open_routine_editor(None, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &CloseOverlay, window, cx| {
+                this.overlay = None;
+                cx.focus_self(window);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &CloseCommandPalette, window, cx| {
+                this.overlay = None;
+                cx.focus_self(window);
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &SelectCommand, window, cx| {
+                if let Some(CurrentOverlay::CommandPalette(entity)) = &this.overlay {
+                    let executed =
+                        cx.update_entity(entity, |cmd_palette: &mut CommandPaletteState, cx| {
+                            cmd_palette.execute_selected(window, cx)
+                        });
+                    if executed {
+                        this.overlay = None;
+                        cx.focus_self(window);
+                    }
+                }
+                cx.notify();
+            }))
+            .child(
+                PanelGroup::new(self.layout_state.clone())
+                    .absolute()
+                    .inset_0()
+                    .left(
+                        SidePanel::left()
+                            .width_range_open(px(180.)..px(500.))
+                            .initial_width(px(320.))
                             .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
+                                v_flex()
                                     .size_full()
-                                    .overflow_hidden()
-                                    .bg(cx.theme().background)
-                                    .rounded_lg()
-                                    .child(self.left_sidebar.clone()),
+                                    .pt_0()
+                                    .pl_2()
+                                    .pb_2()
+                                    .pr_1()
+                                    .bg(cx.theme().secondary)
+                                    .child(h_flex().h_8())
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .size_full()
+                                            .overflow_hidden()
+                                            .bg(cx.theme().secondary)
+                                            .rounded_lg()
+                                            .child(self.left_sidebar.clone()),
+                                    ),
                             ),
-                    ),
-            )
-            .center(
-                CenterPanel::new().child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .size_full()
-                        .pt_0()
-                        .pr(right_pad)
-                        .pb_2()
-                        .pl(left_pad)
-                        .bg(cx.theme().secondary)
-                        .child(nav_bar)
-                        .child(
-                            v_flex()
+                    )
+                    .center(
+                        CenterPanel::new().child(
+                            div()
+                                .flex()
+                                .flex_col()
                                 .size_full()
-                                .bg(cx.theme().background)
-                                .rounded_lg()
-                                .child(div().flex_1().min_h(px(0.)).w_full().child(main_view)),
+                                .pt_0()
+                                .pr(right_pad)
+                                .pb_2()
+                                .pl(left_pad)
+                                .bg(cx.theme().secondary)
+                                .child(nav_bar)
+                                .child(
+                                    v_flex()
+                                        .size_full()
+                                        .bg(cx.theme().background)
+                                        .rounded_lg()
+                                        .child(
+                                            div().flex_1().min_h(px(0.)).w_full().child(main_view),
+                                        ),
+                                ),
                         ),
-                ),
-            )
-            .right(
-                SidePanel::right()
-                    .width_range_open(px(180.)..px(500.))
-                    .child(
-                        v_flex()
-                            .size_full()
-                            .pt_0()
-                            .pl_1()
-                            .pb_2()
-                            .pr_2()
-                            .bg(cx.theme().secondary)
-                            .child(h_flex().h_8())
+                    )
+                    .right(
+                        SidePanel::right()
+                            .width_range_open(px(180.)..px(500.))
                             .child(
-                                div()
+                                v_flex()
                                     .size_full()
-                                    .overflow_hidden()
-                                    .bg(cx.theme().background)
-                                    .rounded_lg(),
+                                    .pt_0()
+                                    .pl_1()
+                                    .pb_2()
+                                    .pr_2()
+                                    .bg(cx.theme().secondary)
+                                    .child(h_flex().h_8())
+                                    .child(
+                                        div()
+                                            .size_full()
+                                            .overflow_hidden()
+                                            .bg(cx.theme().secondary)
+                                            .rounded_lg()
+                                            .child(self.right_sidebar.clone()),
+                                    ),
                             ),
                     ),
-            );
-
-        let content = div().size_full().flex().child(
-            div()
-                .size_full()
-                .flex()
-                .track_focus(&self.focus_handle)
-                .on_action(cx.listener(|this, _: &ToggleSideBar, _window, cx| {
-                    this.layout_state.update(cx, |state, cx| {
-                        state.toggle_left();
-                        cx.notify();
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &ToggleRightPanel, _window, cx| {
-                    this.layout_state.update(cx, |state, cx| {
-                        state.toggle_right();
-                        cx.notify();
-                    });
-                }))
-                .on_action(cx.listener(|this, _: &StartCommandPalette, window, cx| {
-                    this.open_command_palette(window, cx);
-                }))
-                .on_action(cx.listener(|this, _: &StartActionCreator, window, cx| {
-                    this.open_action_creator(window, cx);
-                }))
-                .on_action(cx.listener(|this, _: &StartEventCreator, window, cx| {
-                    this.open_event_creator(window, cx);
-                }))
-                .on_action(cx.listener(|this, _: &StartNewRoutine, window, cx| {
-                    this.open_routine_editor(None, window, cx);
-                }))
-                .on_action(cx.listener(|this, _: &CloseOverlay, window, cx| {
-                    this.overlay = None;
-                    cx.focus_self(window);
-                    cx.notify();
-                }))
-                .on_action(cx.listener(|this, _: &CloseCommandPalette, window, cx| {
-                    this.overlay = None;
-                    cx.focus_self(window);
-                    cx.notify();
-                }))
-                .on_action(cx.listener(|this, _: &SelectCommand, window, cx| {
-                    if let Some(CurrentOverlay::CommandPalette(entity)) = &this.overlay {
-                        let executed = cx.update_entity(
-                            entity,
-                            |cmd_palette: &mut CommandPaletteState, cx| {
-                                cmd_palette.execute_selected(window, cx)
-                            },
-                        );
-                        if executed {
-                            this.overlay = None;
-                            cx.focus_self(window);
-                        }
-                    }
-                    cx.notify();
-                }))
-                .child(main_area)
-                .when_some(self.overlay.as_ref(), |content, overlay| match overlay {
-                    CurrentOverlay::CommandPalette(state) => {
-                        content.child(CommandPalette::new(state.clone()))
-                    }
-                    CurrentOverlay::ActionCreator(creator) => content.child(creator.clone()),
-                    CurrentOverlay::ActionEditor(editor) => content.child(editor.clone()),
-                    CurrentOverlay::EventCreator(creator) => content.child(creator.clone()),
-                    CurrentOverlay::EventEditor(editor) => content.child(editor.clone()),
-                    CurrentOverlay::RoutineEditor(editor) => content.child(editor.clone()),
-                }),
-        );
-
-        content
+            )
+            .when_some(self.overlay.as_ref(), |content, overlay| match overlay {
+                CurrentOverlay::CommandPalette(state) => {
+                    content.child(CommandPalette::new(state.clone()))
+                }
+                CurrentOverlay::ActionCreator(creator) => content.child(creator.clone()),
+                CurrentOverlay::ActionEditor(editor) => content.child(editor.clone()),
+                CurrentOverlay::EventCreator(creator) => content.child(creator.clone()),
+                CurrentOverlay::EventEditor(editor) => content.child(editor.clone()),
+                CurrentOverlay::RoutineEditor(editor) => content.child(editor.clone()),
+            })
             .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_sheet_layer(window, cx))
             .children(Root::render_notification_layer(window, cx))

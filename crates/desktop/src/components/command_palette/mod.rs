@@ -1,12 +1,11 @@
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use gpui::{
-    App, Entity, FocusHandle, Focusable, KeyBinding, Keystroke, SharedString, StyleRefinement,
-    Window, actions, div, prelude::*, px,
+    App, Entity, FocusHandle, Focusable, KeyBinding, SharedString, StyleRefinement, Window,
+    actions, div, prelude::*, px,
 };
 use gpui_component::{
-    ActiveTheme, StyledExt, h_flex,
+    ActiveTheme, StyledExt,
     input::{Input, InputEvent, InputState},
-    kbd::Kbd,
     label::Label,
     v_flex,
 };
@@ -22,9 +21,9 @@ use crate::components::{
     popover::popover,
 };
 
-pub fn kbd(keystroke: &'static str) -> Kbd {
-    Kbd::new(Keystroke::parse(keystroke).unwrap())
-}
+// pub fn kbd(keystroke: &'static str) -> Kbd {
+//     Kbd::new(Keystroke::parse(keystroke).unwrap())
+// }
 
 actions!(
     command_palette,
@@ -268,45 +267,45 @@ impl CommandPaletteState {
         false
     }
 
-    pub fn render_help_bar(&mut self, cx: &Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
+    // pub fn render_help_bar(&mut self, cx: &Context<Self>) -> impl IntoElement {
+    //     let theme = cx.theme();
 
-        div()
-            .flex_none()
-            .px_4()
-            .py_2()
-            .border_t_1()
-            .border_color(theme.border)
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_4()
-                    .text_xs()
-                    .justify_center()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                h_flex()
-                                    .child(kbd("up").pr_0().rounded_r_none())
-                                    .child(kbd("down").pl_0().rounded_l_none()),
-                            )
-                            .child(Label::new("to navigate").text_color(theme.muted_foreground)),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(kbd("enter"))
-                            .child(Label::new("to use").text_color(theme.muted_foreground)),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(kbd("esc"))
-                            .child(Label::new("to dismiss").text_color(theme.muted_foreground)),
-                    ),
-            )
-    }
+    //     div()
+    //         .flex_none()
+    //         .px_4()
+    //         .py_2()
+    //         .border_t_1()
+    //         .border_color(theme.border)
+    //         .child(
+    //             h_flex()
+    //                 .w_full()
+    //                 .gap_4()
+    //                 .text_xs()
+    //                 .justify_center()
+    //                 .child(
+    //                     h_flex()
+    //                         .gap_2()
+    //                         .child(
+    //                             h_flex()
+    //                                 .child(kbd("up").pr_0().rounded_r_none())
+    //                                 .child(kbd("down").pl_0().rounded_l_none()),
+    //                         )
+    //                         .child(Label::new("to navigate").text_color(theme.muted_foreground)),
+    //                 )
+    //                 .child(
+    //                     h_flex()
+    //                         .gap_2()
+    //                         .child(kbd("enter"))
+    //                         .child(Label::new("to use").text_color(theme.muted_foreground)),
+    //                 )
+    //                 .child(
+    //                     h_flex()
+    //                         .gap_2()
+    //                         .child(kbd("esc"))
+    //                         .child(Label::new("to dismiss").text_color(theme.muted_foreground)),
+    //                 ),
+    //         )
+    // }
 }
 
 impl Render for CommandPaletteState {

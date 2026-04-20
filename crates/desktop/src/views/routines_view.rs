@@ -1,8 +1,8 @@
 use chrono::Duration;
 use gpui::prelude::*;
 use gpui::{
-    App, AppContext as _, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Render, Subscription, Window, div, font, px,
+    App, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Render,
+    Subscription, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, IconName, Sizable, WindowExt,
@@ -91,7 +91,6 @@ impl Render for RoutinesView {
                             .items_center()
                             .child(
                                 Button::new("back-to-home")
-                                    .cursor_pointer()
                                     .icon(IconName::ArrowLeft)
                                     .ghost()
                                     .small()
@@ -101,11 +100,10 @@ impl Render for RoutinesView {
                                         });
                                     })),
                             )
-                            .child(Label::new("Routines").text_2xl().font(font("Georgia"))),
+                            // .child(Label::new("Routines").text_2xl().font(font("Georgia"))),
                     )
                     .child(
                         Button::new("new-routine")
-                            .cursor_pointer()
                             .icon(IconName::Plus)
                             .label("New Routine")
                             .outline()
@@ -160,7 +158,6 @@ impl Render for RoutinesView {
                                     .border_color(theme_inner.border)
                                     .bg(theme_inner.background)
                                     .hover(|s| s.bg(theme_inner.list_hover.opacity(0.3)))
-                                    .cursor_pointer()
                                     .on_click(cx.listener(move |_this, _event, _window, cx| {
                                         cx.emit(StartRoutineEditor {
                                             routine_id: Some(routine_id),
@@ -214,7 +211,6 @@ impl Render for RoutinesView {
                                                         .ghost()
                                                         .small()
                                                         .tooltip("Instantiate steps into queue")
-                                                        .cursor_pointer()
                                                         .occlude()
                                                         .on_click(cx.listener(
                                                             move |this, _event, window, cx| {
