@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+set -e
+cd "$(dirname "$0")/../wear_os"
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew :app:assembleBenchmark
+adb -t 2 install -r app/build/outputs/apk/benchmark/app-benchmark.apk
+adb -t 2 shell cmd package compile -m speed-profile -f com.example.subroutine

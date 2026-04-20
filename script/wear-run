@@ -1,0 +1,2 @@
+#!/usr/bin/env sh
+adb -t 2 shell am start -n com.example.subroutine/.presentation.MainActivity

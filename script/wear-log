@@ -1,0 +1,2 @@
+#!/usr/bin/env sh
+adb -t 2 logcat --pid=$(adb -t 2 shell pidof com.example.subroutine | tr -d '\r') -v time

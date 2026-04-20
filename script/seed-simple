@@ -1,0 +1,139 @@
+#!/usr/bin/env sh
+set -e
+
+SIMPLE="cargo run -p simple-cli --quiet --"
+
+echo "==> Seeding saved actions..."
+
+$SIMPLE actions add "Review inbox" \
+  --content "Process all items in email and task inbox to zero"
+
+$SIMPLE actions add "Pay bills" \
+  --content "Check and pay any outstanding bills or subscriptions"
+
+$SIMPLE actions add "Grocery shopping" \
+  --content "Buy food and household supplies for the week"
+
+$SIMPLE actions add "Call doctor" \
+  --content "Schedule annual checkup and any pending referrals"
+
+$SIMPLE actions add "Exercise" \
+  --content "30 minutes of cardio or strength training"
+
+$SIMPLE actions add "Read" \
+  --content "Read for at least 20 minutes"
+
+$SIMPLE actions add "Clean bathroom" \
+  --content "Scrub toilet, sink, and shower, mop floor"
+
+$SIMPLE actions add "Do laundry" \
+  --content "Wash, dry, and fold clothes"
+
+$SIMPLE actions add "Meal prep" \
+  --content "Cook and portion meals for the next few days"
+
+$SIMPLE actions add "Back up computer" \
+  --content "Run Time Machine and verify offsite backup is current"
+
+$SIMPLE actions add "Water plants" \
+  --content "Water all indoor plants and check for pests"
+
+$SIMPLE actions add "Reply to messages" \
+  --content "Respond to any pending texts, emails, or voicemails"
+
+echo ""
+echo "==> Seeding saved events..."
+
+$SIMPLE events add "Team standup" 09:00 \
+  --content "Daily sync with the team" \
+  --duration 15
+
+$SIMPLE events add "Therapy appointment" 14:00 \
+  --content "Weekly therapy session" \
+  --duration 50
+
+$SIMPLE events add "Dentist appointment" 10:30 \
+  --content "6-month cleaning and checkup" \
+  --duration 60
+
+$SIMPLE events add "Dinner with family" 18:30 \
+  --content "Weekly family dinner" \
+  --duration 90
+
+$SIMPLE events add "Weekly review" 17:00 \
+  --content "Review the week, plan the next one, clear inbox" \
+  --duration 45
+
+$SIMPLE events add "Gym class" 07:00 \
+  --content "Spin class at the local gym" \
+  --duration 45
+
+$SIMPLE events add "Book club" 19:00 \
+  --content "Monthly book club meeting at the library" \
+  --duration 120
+
+echo ""
+echo "==> Seeding routines..."
+
+$SIMPLE routines add "Morning routine" \
+  --content "Get the day started on the right foot" \
+  --steps "Wake up and don't check phone:5,Drink a glass of water:5,Stretch:10,Shower and get dressed:20,Eat breakfast:15,Review today's plan:10"
+
+$SIMPLE routines add "Evening wind-down" \
+  --content "Decompress and prepare for sleep" \
+  --steps "Stop screens:5,Tidy the kitchen and living room:15,Lay out clothes for tomorrow:5,Write 3 things you're grateful for:5,Read for 20 minutes:20"
+
+$SIMPLE routines add "Weekly reset" \
+  --content "Clear the decks and set up the coming week" \
+  --steps "Review last week's tasks and close open loops:20,Process all inbox items to zero:20,Review calendar for the coming week:10,Plan top 3 priorities for the week:10,Tidy desk and workspace:10,Do a quick home walkthrough:10"
+
+$SIMPLE routines add "Deep work session" \
+  --content "Focused uninterrupted work block" \
+  --steps "Close all notifications and social media:5,Write down the single goal for this session:5,Work block:25,Take a break:5,Work block:25,Take a break:5,Work block:25,Log what was accomplished:5"
+
+$SIMPLE routines add "Grocery run" \
+  --content "Efficient weekly grocery trip" \
+  --steps "Check pantry and fridge for what is low:10,Write shopping list organized by store section:10,Check for coupons or sales:5,Shop:30,Put groceries away immediately:15"
+
+echo ""
+echo "==> Seeding pipeline..."
+
+# Populate the backlog with saved actions that don't have a time yet
+$SIMPLE pipeline add "Pay bills"
+$SIMPLE pipeline add "Grocery shopping"
+$SIMPLE pipeline add "Call doctor"
+$SIMPLE pipeline add "Do laundry"
+$SIMPLE pipeline add "Meal prep"
+$SIMPLE pipeline add "Back up computer"
+$SIMPLE pipeline add "Water plants"
+$SIMPLE pipeline add "Clean bathroom"
+
+# Run the morning routine — places ephemeral actions in the queue at 07:00
+$SIMPLE routines run "Morning routine" 07:00
+
+# Add the gym class event to the queue (sits between routine and standup)
+$SIMPLE pipeline add "Gym class"
+
+# Add the standup event — sits naturally after the gym class in time order
+$SIMPLE pipeline add "Team standup"
+
+# Promote a couple of backlog actions into the queue at specific times
+$SIMPLE pipeline add "Review inbox"
+$SIMPLE pipeline promote "Review inbox" 11:00
+$SIMPLE pipeline add "Meal prep"
+$SIMPLE pipeline promote "Meal prep" 16:00
+
+# Add the weekly review event
+$SIMPLE pipeline add "Weekly review"
+
+# Add the dinner event
+$SIMPLE pipeline add "Dinner with family"
+
+echo ""
+echo "==> Done. Current pipeline:"
+$SIMPLE pipeline show
+
+echo ""
+echo "==> Exporting to seed.json..."
+$SIMPLE data export --output crates/simple-cli/seed.json
+echo "Export complete."

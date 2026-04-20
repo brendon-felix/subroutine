@@ -1,0 +1,32 @@
+#!/usr/bin/env sh
+# Focused logcat filter for scroll-stutter debugging.
+# Shows only:
+#   - FrameTiming  (jank gaps, categorised)
+#   - RecomposeTiming (per-composable recompose counts)
+#   - GC / ART runtime events
+#   - Fatal errors
+#
+# Usage: ./script/wear-debug-log
+# Press Ctrl-C to stop.
+
+set -e
+
+PID=$(adb -t 2 shell pidof com.example.subroutine | tr -d '\r')
+if [ -z "$PID" ]; then
+  echo "ERROR: com.example.subroutine is not running on transport 2." >&2
+  echo "Start the app first with: ./script/wear-run" >&2
+  exit 1
+fi
+
+echo "=== Subroutine wear debug log (pid=$PID) ==="
+echo "=== Tags: FrameTiming | RecomposeTiming | GC | FATAL ==="
+echo "=== Ctrl-C to stop ==="
+echo ""
+
+adb -t 2 logcat \
+  --pid="$PID" \
+  -v time \
+  FrameTiming:W \
+  RecomposeTiming:D \
+  art:D \
+  *:F

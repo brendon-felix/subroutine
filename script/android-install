@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+set -e
+cd "$(dirname "$0")/../android"
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew :app:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
