@@ -1,11 +1,15 @@
 use anyhow::{Result, bail};
 use chrono::{Duration, Local, NaiveTime, TimeZone, Utc};
 use clap::Subcommand;
-use rusqlite::Connection;
+use reqwest::blocking::Client;
 use simple_core::Event;
 use uuid::Uuid;
 
-use crate::actions::{id_matches, short_id};
+use crate::actions::{fetch_api_data, id_matches, short_id};
+
+pub fn fetch_all_events(client: &Client, base: &str) -> Result<Vec<Event>> {
+    Ok(fetch_api_data(client, base)?.events)
+}
 
 #[derive(Debug, Subcommand)]
 pub enum EventsCommand {
@@ -26,15 +30,16 @@ pub enum EventsCommand {
     Delete { identifier: String },
 }
 
-pub fn handle_events(command: &EventsCommand, conn: &Connection) -> Result<()> {
+pub fn handle_events(command: &EventsCommand, client: &Client, base: &str) -> Result<()> {
     match command {
         EventsCommand::List => {
-            let events = simple_db::fetch_events(conn)?;
-            if events.is_empty() {
+            let events = fetch_all_events(client, base)?;
+            let saved: Vec<&Event> = events.iter().filter(|e| e.saved).collect();
+            if saved.is_empty() {
                 println!("No saved events.");
                 return Ok(());
             }
-            for event in &events {
+            for event in &saved {
                 let local = event.time.with_timezone(&Local);
                 println!(
                     "  {} {}  [{}]",
@@ -68,35 +73,43 @@ pub fn handle_events(command: &EventsCommand, conn: &Connection) -> Result<()> {
                 event = event.with_duration(Duration::minutes(*mins));
             }
             let id = event.id;
-            simple_db::upsert_event(conn, &event)?;
+            client
+                .put(format!("{}/api/events/{}", base, id))
+                .json(&event)
+                .send()?
+                .error_for_status()?;
             println!("Added event '{}' ({})", title, short_id(id));
         }
         EventsCommand::Delete { identifier } => {
-            let event = resolve_event(conn, identifier)?;
-            simple_db::delete_event(conn, event.id)?;
+            let event = resolve_event(client, base, identifier)?;
+            client
+                .delete(format!("{}/api/events/{}", base, event.id))
+                .send()?
+                .error_for_status()?;
             println!("Deleted event '{}' ({})", event.title, short_id(event.id));
         }
     }
     Ok(())
 }
 
-pub fn resolve_event(conn: &Connection, identifier: &str) -> Result<Event> {
+pub fn resolve_event(client: &Client, base: &str, identifier: &str) -> Result<Event> {
     if let Ok(uuid) = Uuid::parse_str(identifier) {
-        if let Some(event) = simple_db::fetch_event_by_id(conn, uuid)? {
+        let events = fetch_all_events(client, base)?;
+        if let Some(event) = events.into_iter().find(|e| e.id == uuid) {
             return Ok(event);
         }
         bail!("No event found with id '{}'", identifier);
     }
 
-    let events = simple_db::fetch_events(conn)?;
-    let matches: Vec<&Event> = events
-        .iter()
+    let events = fetch_all_events(client, base)?;
+    let matches: Vec<Event> = events
+        .into_iter()
         .filter(|e| id_matches(e.id, &e.title, identifier))
         .collect();
 
     match matches.len() {
         0 => bail!("No event found matching '{}'", identifier),
-        1 => Ok(matches[0].clone()),
+        1 => Ok(matches.into_iter().next().unwrap()),
         _ => bail!(
             "Multiple events match '{}'. Use a more specific identifier.",
             identifier

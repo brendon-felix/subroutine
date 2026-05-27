@@ -6,6 +6,7 @@ mod routines;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use reqwest::blocking::Client;
 
 use crate::actions::{ActionsCommand, handle_actions};
 use crate::events::{EventsCommand, handle_events};
@@ -49,17 +50,30 @@ enum Commands {
     },
 }
 
+fn server_base_url() -> String {
+    if let Ok(url) = std::env::var("SUBROUTINE_SERVER_URL") {
+        return url;
+    }
+    if let Ok(host) = std::env::var("SUBROUTINE_HOST") {
+        let port: u16 = std::env::var("SUBROUTINE_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(3000);
+        return format!("http://{}:{}", host, port);
+    }
+    "http://localhost:3000".to_string()
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
-
-    let conn = simple_db::connect_and_migrate()?;
-    let conn = conn.lock().unwrap();
+    let base_url = server_base_url();
+    let client = Client::new();
 
     match &cli.command {
-        Commands::Actions { command } => handle_actions(command, &conn),
-        Commands::Events { command } => handle_events(command, &conn),
-        Commands::Routines { command } => handle_routines(command, &conn),
-        Commands::Pipeline { command } => handle_pipeline(command, &conn),
-        Commands::Data { command } => handle_export_import(command, &conn),
+        Commands::Actions { command } => handle_actions(command, &client, &base_url),
+        Commands::Events { command } => handle_events(command, &client, &base_url),
+        Commands::Routines { command } => handle_routines(command, &client, &base_url),
+        Commands::Pipeline { command } => handle_pipeline(command, &client, &base_url),
+        Commands::Data { command } => handle_export_import(command, &client, &base_url),
     }
 }

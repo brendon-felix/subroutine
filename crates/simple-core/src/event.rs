@@ -2,6 +2,8 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::RecurrenceRule;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub id: Uuid,
@@ -10,27 +12,28 @@ pub struct Event {
     pub content: Option<String>,
     pub time: DateTime<Utc>,
     pub duration: Option<Duration>,
-    pub recurrence: Option<Duration>,
-    pub ephemeral: bool,
+    pub recurrence: Option<RecurrenceRule>,
+    pub saved: bool,
 }
 
 impl Event {
     pub fn new(title: impl Into<String>, time: DateTime<Utc>) -> Self {
+        let id = Uuid::now_v7();
         Self {
-            id: Uuid::now_v7(),
-            lineage_id: Uuid::now_v7(),
+            id,
+            lineage_id: id,
             title: title.into(),
             content: None,
             time,
             duration: None,
             recurrence: None,
-            ephemeral: true,
+            saved: false,
         }
     }
 
     pub fn saved(title: impl Into<String>, time: DateTime<Utc>) -> Self {
         Self {
-            ephemeral: false,
+            saved: true,
             ..Self::new(title, time)
         }
     }
@@ -45,7 +48,7 @@ impl Event {
         self
     }
 
-    pub fn with_recurrence(mut self, recurrence: Duration) -> Self {
+    pub fn with_recurrence(mut self, recurrence: RecurrenceRule) -> Self {
         self.recurrence = Some(recurrence);
         self
     }
@@ -61,16 +64,22 @@ impl Event {
         self.end_time() < now
     }
 
+    /// Create the next recurrence of this event, if a recurrence rule is set.
+    ///
+    /// The new instance gets a fresh `id`, the same `lineage_id`, and a
+    /// `time` advanced by the recurrence rule from the end of this event.
+    /// Returns `None` if `recurrence` is unset.
     pub fn next_recurrence(&self) -> Option<Self> {
-        self.recurrence.map(|recurrence| Self {
+        let rule = self.recurrence?;
+        Some(Self {
             id: Uuid::now_v7(),
             lineage_id: self.lineage_id,
             title: self.title.clone(),
             content: self.content.clone(),
-            time: self.end_time() + recurrence,
+            time: rule.next_after(self.end_time()),
             duration: self.duration,
             recurrence: self.recurrence,
-            ephemeral: self.ephemeral,
+            saved: self.saved,
         })
     }
 }

@@ -1,0 +1,25 @@
+[package]
+name = "simple-desktop"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
+gpui-component = { git = "https://github.com/longbridge/gpui-component" }
+gpui_transitions = { path = "/Users/felixb/Projects/gpui_transitions" }
+
+open = { workspace = true }
+tokio = { workspace = true }
+flume = { workspace = true }
+reqwest = { workspace = true }
+simple-core = { path = "../simple-core" }
+simple-parser = { path = "../simple-parser" }
+chrono = { workspace = true }
+uuid = { workspace = true }
+rust-embed = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

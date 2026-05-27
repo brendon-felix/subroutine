@@ -1,7 +1,6 @@
 use anyhow::{Result, bail};
-use chrono::Duration;
 use serde::Serialize;
-use simple_core::{Action, Event};
+use simple_core::{Action, ActionState, ActionTarget, Event, RecurrenceRule};
 
 use crate::ast::{ParseDraft, RecurrenceSpec, WhenSpec};
 
@@ -35,12 +34,16 @@ fn build_action(draft: &ParseDraft) -> Action {
     match &draft.when {
         // Full datetime → schedule the action (queue it with a target time).
         Some(WhenSpec::DateTime(dt)) => {
-            action = action.with_target(*dt, true);
+            let target = ActionTarget {
+                time: *dt,
+                is_static: true,
+            };
+            action = action.with_state(ActionState::Queued(target));
         }
         // Date only → place the action in the backlog with a floating date hint.
         // The pipeline will promote it once the date arrives.
         Some(WhenSpec::NaiveDate(date)) => {
-            action = action.with_naive_date(*date);
+            action = action.with_state(ActionState::Backlogged(Some(*date)));
         }
         // No time at all → pure backlog item, no date hint.
         None => {}
@@ -50,8 +53,8 @@ fn build_action(draft: &ParseDraft) -> Action {
         action = action.with_duration(duration);
     }
 
-    if let Some(recurrence) = recurrence_to_duration(draft.recurrence.as_ref()) {
-        action = action.with_recurrence(recurrence);
+    if let Some(rule) = recurrence_to_rule(draft.recurrence.as_ref()) {
+        action = action.with_recurrence(rule);
     }
 
     action
@@ -83,32 +86,28 @@ fn build_event(draft: &ParseDraft) -> Result<Event> {
         event = event.with_duration(duration);
     }
 
-    if let Some(recurrence) = recurrence_to_duration(draft.recurrence.as_ref()) {
-        event = event.with_recurrence(recurrence);
+    if let Some(rule) = recurrence_to_rule(draft.recurrence.as_ref()) {
+        event = event.with_recurrence(rule);
     }
 
     Ok(event)
 }
 
-/// Convert a [`RecurrenceSpec`] into a [`Duration`] for use with
+/// Convert a [`RecurrenceSpec`] into a [`RecurrenceRule`] for use with
 /// `simple_core` entities.
 ///
-/// Notes on approximations:
-/// - `EveryMonths(n)` uses 30 days per month. True calendar-month advancement
-///   must be handled by the scheduler using the stored `RecurrenceSpec`.
-/// - `EveryYears(n)` uses 365 days per year for the same reason.
-/// - `OnMonthDay` ticks monthly (30-day approximation); the scheduler is
-///   responsible for snapping to the correct day-of-month.
-/// - `OnWeekdays` ticks daily; the scheduler checks whether the current day
-///   is in the set.
-pub fn recurrence_to_duration(spec: Option<&RecurrenceSpec>) -> Option<Duration> {
+/// The mapping preserves semantic intent so that calendar-correct arithmetic
+/// is used for months and years (via [`RecurrenceRule::next_after`]):
+/// - `OnMonthDay` → monthly rule (the scheduler snaps to the correct day).
+/// - `OnWeekdays` → daily rule (the scheduler filters by the weekday set).
+pub fn recurrence_to_rule(spec: Option<&RecurrenceSpec>) -> Option<RecurrenceRule> {
     match spec {
-        Some(RecurrenceSpec::EveryDays(n)) => Some(Duration::days(*n)),
-        Some(RecurrenceSpec::EveryWeeks(n)) => Some(Duration::weeks(*n)),
-        Some(RecurrenceSpec::EveryMonths(n)) => Some(Duration::days(n * 30)),
-        Some(RecurrenceSpec::EveryYears(n)) => Some(Duration::days(n * 365)),
-        Some(RecurrenceSpec::OnMonthDay(_)) => Some(Duration::days(30)),
-        Some(RecurrenceSpec::OnWeekdays(_)) => Some(Duration::days(1)),
+        Some(RecurrenceSpec::EveryDays(n)) => Some(RecurrenceRule::days(*n as u32)),
+        Some(RecurrenceSpec::EveryWeeks(n)) => Some(RecurrenceRule::weeks(*n as u32)),
+        Some(RecurrenceSpec::EveryMonths(n)) => Some(RecurrenceRule::months(*n as u32)),
+        Some(RecurrenceSpec::EveryYears(n)) => Some(RecurrenceRule::years(*n as u32)),
+        Some(RecurrenceSpec::OnMonthDay(_)) => Some(RecurrenceRule::months(1)),
+        Some(RecurrenceSpec::OnWeekdays(_)) => Some(RecurrenceRule::days(1)),
         None => None,
     }
 }

@@ -169,6 +169,72 @@ Scaffold(
 
 ---
 
+## Simple Tab Navigation (NavigationBar)
+
+For apps with 2–3 top-level destinations, `NavigationBar` + state is simpler than Navigation 3.
+
+```kotlin
+var selectedTab by remember { mutableIntStateOf(0) }
+val tabs = listOf("Queue", "Backlog")
+
+Scaffold(
+    topBar = {
+        LargeTopAppBar(
+            title = { Text(tabs[selectedTab]) },
+            scrollBehavior = scrollBehavior,
+        )
+    },
+    bottomBar = {
+        NavigationBar {
+            NavigationBarItem(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                icon = {
+                    Icon(
+                        if (selectedTab == 0) Icons.Filled.FormatListBulleted
+                        else Icons.Outlined.FormatListBulleted,
+                        contentDescription = "Queue",
+                    )
+                },
+                label = { Text("Queue") },
+            )
+            NavigationBarItem(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                icon = {
+                    Icon(
+                        if (selectedTab == 1) Icons.Filled.Inbox
+                        else Icons.Outlined.Inbox,
+                        contentDescription = "Backlog",
+                    )
+                },
+                label = { Text("Backlog") },
+            )
+        }
+    },
+    floatingActionButton = {
+        FloatingActionButton(
+            onClick = onAddClick,
+            shape = FloatingActionButtonDefaults.shape,
+        ) {
+            Icon(Icons.Filled.Add, contentDescription = "Add")
+        }
+    },
+) { innerPadding ->
+    when (selectedTab) {
+        0 -> QueueScreen(contentPadding = innerPadding)
+        1 -> BacklogScreen(contentPadding = innerPadding)
+    }
+}
+```
+
+- Use filled icon for selected, outlined for unselected — standard M3 convention.
+- Use `mutableIntStateOf` (not `mutableStateOf<Int>`) for integer-backed state — more efficient.
+- The `LargeTopAppBar` title can reflect the selected tab name.
+- For scroll-collapse to work, connect `scrollBehavior` with `Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)` on the `Scaffold`.
+
+---
+
 ## Buttons
 
 All expressive button and icon button types accept a `shapes` parameter that enables shape morphing on press. Always pass this for the expressive interaction feel.
@@ -820,51 +886,32 @@ ContainedLoadingIndicator(progress = { animatedProgress })
 
 ### Pull to refresh
 
+`PullToRefreshBox` is the simpler wrapper API (preferred over the Modifier approach):
+
 ```kotlin
-import androidx.compose.material3.pulltorefresh.pullToRefresh
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
-import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 
-var isRefreshing by remember { mutableStateOf(false) }
 val pullState = rememberPullToRefreshState()
-val coroutineScope = rememberCoroutineScope()
 
-val onRefresh = {
-    isRefreshing = true
-    coroutineScope.launch {
-        delay(2000)
-        isRefreshing = false
-    }
-}
-
-Scaffold(
-    modifier = Modifier.pullToRefresh(
-        state = pullState,
-        isRefreshing = isRefreshing,
-        onRefresh = onRefresh,
-    ),
-    topBar = { TopAppBar(title = { Text("Feed") }) },
-) { innerPadding ->
-    Box(Modifier.padding(innerPadding)) {
-        LazyColumn(Modifier.fillMaxSize()) {
-            items(itemCount) { ListItem(headlineContent = { Text("Item $it") }) }
-        }
-        // Position the indicator at the top center
-        Box(
-            Modifier
-                .align(Alignment.TopCenter)
-                .graphicsLayer {
-                    val scale = if (isRefreshing) 1f
-                        else LinearOutSlowInEasing.transform(pullState.distanceFraction).coerceIn(0f, 1f)
-                    scaleX = scale
-                    scaleY = scale
-                },
-        ) {
-            PullToRefreshDefaults.LoadingIndicator(state = pullState, isRefreshing = isRefreshing)
+PullToRefreshBox(
+    isRefreshing = uiState is UiState.Loading,
+    onRefresh = viewModel::loadData,
+    state = pullState,
+    modifier = Modifier.fillMaxSize(),
+) {
+    LazyColumn(contentPadding = innerPadding, modifier = Modifier.fillMaxSize()) {
+        items(items, key = { it.id }) { item ->
+            MyListItem(item)
         }
     }
 }
 ```
+
+- `isRefreshing` drives the spinner — tie it to your loading state.
+- `onRefresh` is called when the user pulls far enough — call your ViewModel's load function.
+- The `PullToRefreshBox` replaces the outer content container; put the `LazyColumn` inside it.
+- `rememberPullToRefreshState()` manages the pull distance animation.
 
 ---
 
@@ -911,6 +958,100 @@ Scaffold(
 
 ---
 
+## ModalBottomSheet
+
+Use for contextual actions, creation forms, and detail views that slide up from the bottom.
+
+```kotlin
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CreateActionSheet(
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartialExpansion = true)
+    var text by remember { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
+
+    // Auto-focus the text field when the sheet opens
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .navigationBarsPadding()   // avoid navigation bar overlap
+                .imePadding(),             // push content above keyboard
+        ) {
+            Text("New action", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(16.dp))
+
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                placeholder = { Text("What do you want to do?") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.Sentences,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(
+                    onDone = { if (text.isNotBlank()) onConfirm(text) },
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester),
+                shape = MaterialTheme.shapes.large,
+            )
+
+            Spacer(Modifier.height(16.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+                Button(
+                    onClick = { onConfirm(text) },
+                    enabled = text.isNotBlank(),
+                    shapes = ButtonDefaults.shapes(),
+                ) { Text("Add to backlog") }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+```
+
+Show/hide from the parent composable using a `StateFlow<Boolean>` in the ViewModel:
+
+```kotlin
+// In Scaffold content:
+val showSheet by viewModel.showCreateSheet.collectAsStateWithLifecycle()
+
+if (showSheet) {
+    CreateActionSheet(
+        onDismiss = viewModel::closeCreateSheet,
+        onConfirm = viewModel::createAction,
+    )
+}
+```
+
+Key rules:
+- `skipPartialExpansion = true` — sheet opens fully expanded, skipping the half-height stop.
+- `navigationBarsPadding()` + `imePadding()` — essential for edge-to-edge; prevents content going under the navigation bar or keyboard.
+- `LaunchedEffect(Unit) { focusRequester.requestFocus() }` — auto-opens the keyboard when the sheet appears.
+- Both `onDone` keyboard action and the button should call `onConfirm` — users expect both to work.
+- `shapes = ButtonDefaults.shapes()` on the confirm `Button` enables Expressive shape morphing.
+
+---
+
 ## LazyColumn / LazyRow
 
 Standard Compose lazy lists. Unlike Wear OS there is no required transformation modifier — use them directly.
@@ -941,6 +1082,78 @@ LazyColumn(
 - Always provide `key = { it.id }` on `items` — this prevents full re-layouts when list items reorder.
 - `contentType` groups items of the same type to improve view recycling.
 - Prefer `derivedStateOf { }` when deriving state from `listState` to avoid recomposition on every scroll pixel.
+
+---
+
+## ListItem
+
+M3's standard list row composable. Use it for any content list — it handles the M3 spacing, typography, and icon sizing automatically.
+
+```kotlin
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.HorizontalDivider
+
+ListItem(
+    headlineContent = {
+        Text(item.title, style = MaterialTheme.typography.bodyLarge)
+    },
+    supportingContent = {
+        Text(item.subtitle, style = MaterialTheme.typography.bodySmall)
+    },
+    leadingContent = {
+        Icon(
+            imageVector = Icons.Filled.RadioButtonUnchecked,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+        )
+    },
+    trailingContent = {
+        Checkbox(checked = false, onCheckedChange = { /* ... */ })
+    },
+    // Optional: tint the background for visual grouping
+    colors = ListItemDefaults.colors(
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+    ),
+)
+HorizontalDivider()
+```
+
+- `headlineContent` — required. The primary label.
+- `supportingContent` — optional second line (subtitle, metadata).
+- `leadingContent` — optional icon/avatar on the left.
+- `trailingContent` — optional widget on the right (checkbox, icon button, text).
+- `colors = ListItemDefaults.colors(containerColor = ...)` — tint the background without wrapping in a `Card`.
+- `HorizontalDivider()` after the item for separation (don't add for the last item, or always add and let the list clip it).
+
+### Mixed-type lists with sealed classes
+
+When a list contains multiple item types (e.g. queued actions + calendar events), use a sealed class and `contentType` for recycling efficiency:
+
+```kotlin
+sealed class QueueItem {
+    abstract val id: String
+    abstract val sortKey: String  // ISO-8601 for chronological sort
+
+    data class ActionItem(val action: Action) : QueueItem() { ... }
+    data class EventItem(val event: Event)   : QueueItem() { ... }
+}
+
+LazyColumn {
+    items(
+        items = queueItems,
+        key = { it.id },
+        contentType = { it::class.simpleName },   // enables ABI-efficient recycling
+    ) { item ->
+        when (item) {
+            is QueueItem.ActionItem -> ActionRow(item)
+            is QueueItem.EventItem  -> EventRow(item)
+        }
+    }
+}
+```
+
+Sort mixed lists on the ViewModel side using a shared `sortKey` before passing to the composable.
 
 ---
 
@@ -989,6 +1202,17 @@ MaterialTheme.shapes.medium   // 12.dp corner
 MaterialTheme.shapes.large    // 16.dp corner
 MaterialTheme.shapes.extraLarge  // 28.dp corner
 ```
+
+```kotlin
+// Surface container variants (use for subtle layering without elevation)
+MaterialTheme.colorScheme.surfaceContainerLowest  // most transparent
+MaterialTheme.colorScheme.surfaceContainerLow
+MaterialTheme.colorScheme.surfaceContainer
+MaterialTheme.colorScheme.surfaceContainerHigh
+MaterialTheme.colorScheme.surfaceContainerHighest
+```
+
+Use `surfaceContainerLow` for cards or list items that need subtle differentiation from the background without a drop shadow. Use `surfaceContainerHigh` for modal elements like bottom sheets and dialogs.
 
 ### Dynamic color (Material You)
 

@@ -24,11 +24,15 @@ Animated value transitions. Setup (including required `[patch.crates-io]` in wor
 
 ## Android + Rust JNI — `.skills/android.md`
 
-Calling Rust from Kotlin via a `cdylib` bridge crate. Architecture (no business logic in Kotlin), JNI naming convention, impl/wrapper split pattern, `cargo-ndk` build commands, `RustBridge` object, database path from Kotlin, data classes + `kotlinx.serialization`, repository pattern (`Dispatchers.IO`), ViewModel + `StateFlow<UiState>`, Gradle/KGP 2.x config gotchas, serde gotchas (`chrono::Duration`, `uuid`, `bitflags`).
+HTTP store pattern (Retrofit + OkHttp + kotlinx.serialization), network security config for cleartext, `JsonElement` approach for Rust external-tagged enums, extension property import gotcha, `RustBridge` stub → native progression, `StateFlow<UiState>`, `collectAsStateWithLifecycle`, Gradle/KGP 2.x config gotchas, serde gotchas (`chrono::Duration`, `uuid`).
+
+## cargo-ndk + Rust JNI Bridge — `.skills/cargo-ndk-bridge.md`
+
+Building a Rust `cdylib` for Android: toolchain setup (`cargo-ndk`, `rustup target add`), workspace membership requirement, JNI naming with underscore-escaping (`_` → `_1` in package names), impl/wrapper split pattern, build commands (dev arm64 vs release all ABIs), Kotlin stub → native progression, HTTP+bridge vs SQLite+bridge architectures.
 
 ## Android Compose Material 3 Expressive — `.skills/compose.md`
 
-Dependencies (use `compose-bom-alpha` for Expressive), Activity setup, Navigation 3, Scaffold, Buttons with `shapes`, `SplitButtonLayout`, `ButtonGroup`, `FloatingActionButtonMenu` + `ToggleFloatingActionButton`, `HorizontalFloatingToolbar`, `FlexibleBottomAppBar`, `WideNavigationRail`, wavy/loading progress indicators, `TopAppBar`, `LazyColumn`, theming, accessibility, Gradle notes.
+Dependencies (use `compose-bom-alpha` for Expressive), Activity setup, Navigation 3, simple `NavigationBar` tab pattern, Scaffold + FAB, `LargeTopAppBar` with scroll collapse, Buttons with `shapes`, `SplitButtonLayout`, `ButtonGroup`, `FloatingActionButtonMenu`, `HorizontalFloatingToolbar`, `FlexibleBottomAppBar`, `WideNavigationRail`, wavy/loading progress indicators (`LoadingIndicator`, `PullToRefreshBox`), `TopAppBar`, `ModalBottomSheet` with `imePadding` + auto-focus, `LazyColumn`, `ListItem` (all slots + `ListItemDefaults.colors`), mixed-type sealed-class lists, surface container color scale, theming, accessibility, Gradle notes.
 
 ## Wear OS standalone app — `.skills/wear-os.md`
 
@@ -70,7 +74,7 @@ use simple_db::{
 
 - `DatabaseConnection` is `Arc<Mutex<rusqlite::Connection>>`. Unlock it with `.lock().unwrap()` before passing `&conn` to `simple_db` functions.
 - `Uuid` is from the `uuid` crate — import `uuid::Uuid` directly, never via `simple_core`.
-- `chrono::Duration` fields on `Action` serialize as `i64` seconds across the JNI boundary (no built-in `serde::Serialize`); use a `duration_serde` helper module (see `.skills/android.md`).
+- `chrono::Duration` with `chrono = { features = ["serde"] }`: `Option<Duration>` where `None` serializes as `null` (clean). `Some(d)` serializes as `{"secs": i64, "nanos": u32}`. On the Kotlin side, use `JsonElement?` to remain format-agnostic. Only needed for direct JNI bridges that avoid HTTP — see `.skills/cargo-ndk-bridge.md`.
 
 ## Design documents
 

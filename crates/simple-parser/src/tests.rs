@@ -1017,6 +1017,7 @@ mod build {
     use crate::build::{BuildTarget, BuiltEntity, build_entity};
     use crate::parse::{parse_action_input, parse_event_input};
     use chrono::{Datelike, Duration, Local, Timelike};
+    use simple_core::{ActionState, RecurrenceRule};
 
     // -- Action --
 
@@ -1029,7 +1030,7 @@ mod build {
             _ => panic!("expected Action"),
         };
         assert_eq!(a.title, "Buy milk");
-        assert!(a.target.is_none());
+        assert!(matches!(a.state, ActionState::Backlogged(None)));
         assert!(a.duration.is_none());
         assert!(a.recurrence.is_none());
         assert!(a.content.is_none());
@@ -1044,9 +1045,12 @@ mod build {
             _ => panic!("expected Action"),
         };
         assert_eq!(a.title, "Deep work");
-        assert!(a.target.is_some());
+        assert!(matches!(a.state, ActionState::Queued(_)));
         assert_eq!(a.duration, Some(Duration::hours(2)));
-        assert!(a.target_static);
+        let ActionState::Queued(target) = a.state else {
+            unreachable!()
+        };
+        assert!(target.is_static);
     }
 
     #[test]
@@ -1060,7 +1064,7 @@ mod build {
             BuiltEntity::Action(a) => a,
             _ => panic!("expected Action"),
         };
-        assert_eq!(a.recurrence, Some(Duration::days(1)));
+        assert_eq!(a.recurrence, Some(RecurrenceRule::days(1)));
     }
 
     #[test]
@@ -1072,7 +1076,7 @@ mod build {
             BuiltEntity::Action(a) => a,
             _ => panic!("expected Action"),
         };
-        assert_eq!(a.recurrence, Some(Duration::weeks(1)));
+        assert_eq!(a.recurrence, Some(RecurrenceRule::weeks(1)));
     }
 
     #[test]
@@ -1086,7 +1090,7 @@ mod build {
             BuiltEntity::Action(a) => a,
             _ => panic!("expected Action"),
         };
-        assert_eq!(a.recurrence, Some(Duration::days(1)));
+        assert_eq!(a.recurrence, Some(RecurrenceRule::days(1)));
     }
 
     // -- Event --
@@ -1132,7 +1136,7 @@ mod build {
             _ => panic!("expected Event"),
         };
         // OnWeekdays → 1-day tick
-        assert_eq!(e.recurrence, Some(Duration::days(1)));
+        assert_eq!(e.recurrence, Some(RecurrenceRule::days(1)));
     }
 
     #[test]

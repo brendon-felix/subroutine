@@ -2,6 +2,8 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::RecurrenceRule;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutineStep {
     pub title: String,
@@ -29,7 +31,7 @@ pub struct Routine {
     pub content: Option<String>,
     pub target: Option<DateTime<Utc>>,
     pub steps: Vec<RoutineStep>,
-    pub recurrence: Option<Duration>,
+    pub recurrence: Option<RecurrenceRule>,
 }
 
 impl Routine {
@@ -59,7 +61,7 @@ impl Routine {
         self
     }
 
-    pub fn with_recurrence(mut self, recurrence: Duration) -> Self {
+    pub fn with_recurrence(mut self, recurrence: RecurrenceRule) -> Self {
         self.recurrence = Some(recurrence);
         self
     }

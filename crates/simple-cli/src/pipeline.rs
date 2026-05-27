@@ -1,11 +1,12 @@
 use anyhow::{Result, bail};
 use chrono::Local;
 use clap::Subcommand;
-use rusqlite::Connection;
-use simple_core::{Action, ActionCompletion, Event, QueueItem};
+use reqwest::blocking::Client;
+use serde::Deserialize;
+use simple_core::{Action, ActionState, ActionTarget, Event};
 use uuid::Uuid;
 
-use crate::actions::{id_matches, short_id};
+use crate::actions::{fetch_api_data, id_matches, short_id};
 
 #[derive(Debug, Subcommand)]
 pub enum PipelineCommand {
@@ -31,37 +32,100 @@ pub enum PipelineCommand {
     Remove { identifier: String },
 }
 
-pub fn handle_pipeline(command: &PipelineCommand, conn: &Connection) -> Result<()> {
+pub fn handle_pipeline(command: &PipelineCommand, client: &Client, base: &str) -> Result<()> {
     match command {
-        PipelineCommand::Show => show(conn),
-        PipelineCommand::Add { identifier } => add(conn, identifier),
-        PipelineCommand::Promote { identifier, time } => promote(conn, identifier, time),
-        PipelineCommand::Demote { identifier } => demote(conn, identifier),
+        PipelineCommand::Show => show(client, base),
+        PipelineCommand::Add { identifier } => add(client, base, identifier),
+        PipelineCommand::Promote { identifier, time } => promote(client, base, identifier, time),
+        PipelineCommand::Demote { identifier } => demote(client, base, identifier),
         PipelineCommand::Complete { identifier, notes } => {
-            complete(conn, identifier, notes.as_deref())
+            complete(client, base, identifier, notes.as_deref())
         }
-        PipelineCommand::Remove { identifier } => remove(conn, identifier),
+        PipelineCommand::Remove { identifier } => remove(client, base, identifier),
     }
 }
 
-fn show(conn: &Connection) -> Result<()> {
-    let pipeline = simple_db::load_pipeline(conn)?;
+// ── Local AnyItem ─────────────────────────────────────────────────────────────
 
-    if pipeline.queue.is_empty() && pipeline.backlog.is_empty() {
+enum AnyItem {
+    Action(Action),
+    Event(Event),
+}
+
+impl AnyItem {
+    fn id(&self) -> Uuid {
+        match self {
+            AnyItem::Action(a) => a.id,
+            AnyItem::Event(e) => e.id,
+        }
+    }
+
+    fn title(&self) -> &str {
+        match self {
+            AnyItem::Action(a) => &a.title,
+            AnyItem::Event(e) => &e.title,
+        }
+    }
+
+    fn time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        match self {
+            AnyItem::Action(a) => {
+                if let ActionState::Queued(target) = &a.state {
+                    Some(target.time)
+                } else {
+                    None
+                }
+            }
+            AnyItem::Event(e) => Some(e.time),
+        }
+    }
+}
+
+// ── Handlers ──────────────────────────────────────────────────────────────────
+
+fn show(client: &Client, base: &str) -> Result<()> {
+    let data = fetch_api_data(client, base)?;
+
+    // Build the queue: queued actions + all events, sorted by time.
+    let mut queue: Vec<AnyItem> = Vec::new();
+
+    for action in data.actions {
+        if matches!(action.state, ActionState::Queued(_)) {
+            queue.push(AnyItem::Action(action));
+        }
+    }
+    for event in &data.events {
+        queue.push(AnyItem::Event(event.clone()));
+    }
+
+    queue.sort_by_key(|item| item.time());
+
+    let backlog: Vec<Action> = {
+        // Re-fetch only backlogged actions from the already-fetched data.
+        // We already consumed data above, so we need to rebuild from queue + a separate pass.
+        // Actually we consumed data.actions above — fetch again for backlog.
+        fetch_api_data(client, base)?
+            .actions
+            .into_iter()
+            .filter(|a| a.is_backlogged())
+            .collect()
+    };
+
+    if queue.is_empty() && backlog.is_empty() {
         println!("The pipeline is empty.");
         return Ok(());
     }
 
-    if !pipeline.queue.is_empty() {
-        println!("Queue ({}):", pipeline.queue.len());
-        for (i, item) in pipeline.queue.iter().enumerate() {
+    if !queue.is_empty() {
+        println!("Queue ({}):", queue.len());
+        for (i, item) in queue.iter().enumerate() {
             let time_str = item
                 .time()
                 .map(|t| t.with_timezone(&Local).format("%H:%M").to_string())
                 .unwrap_or_else(|| "??:??".to_string());
             let tag = match item {
-                QueueItem::Action(_) => "action",
-                QueueItem::Event(_) => "event",
+                AnyItem::Action(_) => "action",
+                AnyItem::Event(_) => "event",
             };
             println!(
                 "  {}. [{}] {} {} ({})",
@@ -78,9 +142,9 @@ fn show(conn: &Connection) -> Result<()> {
 
     println!();
 
-    if !pipeline.backlog.is_empty() {
-        println!("Backlog ({}):", pipeline.backlog.len());
-        for action in &pipeline.backlog {
+    if !backlog.is_empty() {
+        println!("Backlog ({}):", backlog.len());
+        for action in &backlog {
             println!("  - {} ({})", action.title, short_id(action.id));
         }
     } else {
@@ -90,26 +154,29 @@ fn show(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn add(conn: &Connection, identifier: &str) -> Result<()> {
-    let item = resolve_any_item(conn, identifier)?;
-    let mut pipeline = simple_db::load_pipeline(conn)?;
+fn add(client: &Client, base: &str, identifier: &str) -> Result<()> {
+    let item = resolve_any_item(client, base, identifier)?;
 
     match item {
-        AnyItem::Action(action) => {
+        AnyItem::Action(mut action) => {
             let title = action.title.clone();
             let id = action.id;
-            pipeline.backlog.push(action);
-            simple_db::save_pipeline(conn, &pipeline)?;
+            action.backlog(None);
+            client
+                .put(format!("{}/api/actions/{}", base, id))
+                .json(&action)
+                .send()?
+                .error_for_status()?;
             println!("Added '{}' ({}) to the backlog.", title, short_id(id));
         }
         AnyItem::Event(event) => {
             let title = event.title.clone();
             let id = event.id;
-            pipeline.queue.push(QueueItem::Event(event));
-            pipeline
-                .queue
-                .sort_by_key(|item| item.time().map(|t| t.timestamp()).unwrap_or(i64::MAX));
-            simple_db::save_pipeline(conn, &pipeline)?;
+            client
+                .put(format!("{}/api/events/{}", base, id))
+                .json(&event)
+                .send()?
+                .error_for_status()?;
             println!("Added '{}' ({}) to the queue.", title, short_id(id));
         }
     }
@@ -117,7 +184,7 @@ fn add(conn: &Connection, identifier: &str) -> Result<()> {
     Ok(())
 }
 
-fn promote(conn: &Connection, identifier: &str, time: &str) -> Result<()> {
+fn promote(client: &Client, base: &str, identifier: &str, time: &str) -> Result<()> {
     use chrono::{NaiveTime, TimeZone, Utc};
 
     let naive_time = NaiveTime::parse_from_str(time, "%H:%M")
@@ -130,24 +197,25 @@ fn promote(conn: &Connection, identifier: &str, time: &str) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Could not convert local time to UTC."))?;
     let target = local_dt.with_timezone(&Utc);
 
-    let mut pipeline = simple_db::load_pipeline(conn)?;
-
-    let position = pipeline
-        .backlog
-        .iter()
-        .position(|a| id_matches(a.id, &a.title, identifier))
+    let data = fetch_api_data(client, base)?;
+    let action = data
+        .actions
+        .into_iter()
+        .filter(|a| a.is_backlogged())
+        .find(|a| id_matches(a.id, &a.title, identifier))
         .ok_or_else(|| anyhow::anyhow!("No matching action found in the backlog."))?;
 
-    let mut action = pipeline.backlog.remove(position);
     let title = action.title.clone();
     let id = action.id;
-    action.target = Some(target);
-    action.target_static = true;
-    pipeline.queue.push(QueueItem::Action(action));
-    pipeline
-        .queue
-        .sort_by_key(|item| item.time().map(|t| t.timestamp()).unwrap_or(i64::MAX));
-    simple_db::save_pipeline(conn, &pipeline)?;
+    let updated = action.with_state(ActionState::Queued(ActionTarget {
+        time: target,
+        is_static: true,
+    }));
+    client
+        .put(format!("{}/api/actions/{}", base, id))
+        .json(&updated)
+        .send()?
+        .error_for_status()?;
 
     println!(
         "Promoted '{}' ({}) to the queue at {}.",
@@ -158,155 +226,152 @@ fn promote(conn: &Connection, identifier: &str, time: &str) -> Result<()> {
     Ok(())
 }
 
-fn demote(conn: &Connection, identifier: &str) -> Result<()> {
-    let mut pipeline = simple_db::load_pipeline(conn)?;
+fn demote(client: &Client, base: &str, identifier: &str) -> Result<()> {
+    let data = fetch_api_data(client, base)?;
 
-    let position = pipeline
-        .queue
-        .iter()
-        .position(|item| id_matches(item.id(), item.title(), identifier))
-        .ok_or_else(|| anyhow::anyhow!("No matching item found in the queue."))?;
+    let action = data
+        .actions
+        .into_iter()
+        .filter(|a| matches!(a.state, ActionState::Queued(_)))
+        .find(|a| id_matches(a.id, &a.title, identifier))
+        .ok_or_else(|| anyhow::anyhow!("No matching action found in the queue."))?;
 
-    let item = pipeline.queue.remove(position);
-    match item {
-        QueueItem::Action(mut action) => {
-            let title = action.title.clone();
-            let id = action.id;
-            action.target = None;
-            action.target_static = false;
-            pipeline.backlog.push(action);
-            simple_db::save_pipeline(conn, &pipeline)?;
-            println!("Demoted '{}' ({}) to the backlog.", title, short_id(id));
-        }
-        QueueItem::Event(event) => {
-            pipeline.queue.insert(position, QueueItem::Event(event));
-            bail!("Events cannot be demoted to the backlog.");
-        }
-    }
+    let title = action.title.clone();
+    let id = action.id;
+    client
+        .post(format!("{}/api/actions/{}/backlog", base, id))
+        .json(&serde_json::json!({}))
+        .send()?
+        .error_for_status()?;
 
+    println!("Demoted '{}' ({}) to the backlog.", title, short_id(id));
     Ok(())
 }
 
-fn complete(conn: &Connection, identifier: &str, notes: Option<&str>) -> Result<()> {
-    let mut pipeline = simple_db::load_pipeline(conn)?;
-
-    let position = pipeline
-        .queue
-        .iter()
-        .position(|item| id_matches(item.id(), item.title(), identifier))
-        .ok_or_else(|| anyhow::anyhow!("No matching item found in the queue."))?;
-
-    let item = pipeline.queue.remove(position);
-    match item {
-        QueueItem::Action(action) => {
-            let title = action.title.clone();
-            let id = action.id;
-
-            let mut completion = ActionCompletion::new(&action);
-            if let Some(notes_text) = notes {
-                completion = completion.with_notes(notes_text);
-            }
-            simple_db::insert_action_completion(conn, &completion)?;
-
-            if let Some(next) = action.next_recurrence() {
-                simple_db::upsert_action(conn, &next)?;
-                pipeline.backlog.push(next);
-            }
-
-            simple_db::save_pipeline(conn, &pipeline)?;
-            println!("Completed '{}' ({}).", title, short_id(id));
-        }
-        QueueItem::Event(event) => {
-            pipeline.queue.insert(position, QueueItem::Event(event));
-            bail!(
-                "Events cannot be completed. Use 'pipeline remove' to dismiss an event from the queue."
-            );
-        }
-    }
-
-    Ok(())
+#[derive(Debug, Deserialize)]
+struct CompleteResponse {
+    #[allow(dead_code)]
+    completed: Action,
+    next: Option<Action>,
 }
 
-fn remove(conn: &Connection, identifier: &str) -> Result<()> {
-    let mut pipeline = simple_db::load_pipeline(conn)?;
+fn complete(client: &Client, base: &str, identifier: &str, notes: Option<&str>) -> Result<()> {
+    let data = fetch_api_data(client, base)?;
 
-    if let Some(pos) = pipeline
-        .backlog
-        .iter()
-        .position(|a| id_matches(a.id, &a.title, identifier))
-    {
-        let action = pipeline.backlog.remove(pos);
-        simple_db::save_pipeline(conn, &pipeline)?;
+    let action = data
+        .actions
+        .into_iter()
+        .filter(|a| matches!(a.state, ActionState::Queued(_)))
+        .find(|a| id_matches(a.id, &a.title, identifier))
+        .ok_or_else(|| anyhow::anyhow!("No matching action found in the queue."))?;
+
+    let title = action.title.clone();
+    let id = action.id;
+
+    if notes.is_some() {
+        eprintln!("Note: completion notes are not yet persisted.");
+    }
+
+    let resp: CompleteResponse = client
+        .post(format!("{}/api/actions/{}/complete", base, id))
+        .json(&serde_json::json!({}))
+        .send()?
+        .error_for_status()?
+        .json()?;
+
+    if let Some(next) = resp.next {
         println!(
-            "Removed '{}' ({}) from the pipeline.",
-            action.title,
-            short_id(action.id)
+            "Completed '{}' ({}). Next recurrence scheduled: {} ({}).",
+            title,
+            short_id(id),
+            next.title,
+            short_id(next.id)
         );
+    } else {
+        println!("Completed '{}' ({}).", title, short_id(id));
+    }
+
+    Ok(())
+}
+
+fn remove(client: &Client, base: &str, identifier: &str) -> Result<()> {
+    let data = fetch_api_data(client, base)?;
+
+    // Check backlog first.
+    if let Some(action) = data
+        .actions
+        .iter()
+        .filter(|a| a.is_backlogged())
+        .find(|a| id_matches(a.id, &a.title, identifier))
+    {
+        let title = action.title.clone();
+        let id = action.id;
+        client
+            .delete(format!("{}/api/actions/{}", base, id))
+            .send()?
+            .error_for_status()?;
+        println!("Removed '{}' ({}) from the pipeline.", title, short_id(id));
         return Ok(());
     }
 
-    if let Some(pos) = pipeline
-        .queue
+    // Then check queued actions.
+    if let Some(action) = data
+        .actions
         .iter()
-        .position(|item| id_matches(item.id(), item.title(), identifier))
+        .filter(|a| matches!(a.state, ActionState::Queued(_)))
+        .find(|a| id_matches(a.id, &a.title, identifier))
     {
-        let item = pipeline.queue.remove(pos);
-        let title = item.title().to_string();
-        let id = item.id();
+        let title = action.title.clone();
+        let id = action.id;
+        client
+            .delete(format!("{}/api/actions/{}", base, id))
+            .send()?
+            .error_for_status()?;
+        println!("Removed '{}' ({}) from the pipeline.", title, short_id(id));
+        return Ok(());
+    }
 
-        if let QueueItem::Event(event) = item {
-            if let Some(next) = event.next_recurrence() {
-                simple_db::upsert_event(conn, &next)?;
-                pipeline.queue.push(QueueItem::Event(next));
-                pipeline
-                    .queue
-                    .sort_by_key(|item| item.time().map(|t| t.timestamp()).unwrap_or(i64::MAX));
-                simple_db::save_pipeline(conn, &pipeline)?;
-                println!(
-                    "Removed '{}' ({}) from the pipeline. Next recurrence scheduled.",
-                    title,
-                    short_id(id)
-                );
-            } else {
-                simple_db::save_pipeline(conn, &pipeline)?;
-                println!("Removed '{}' ({}) from the pipeline.", title, short_id(id));
-            }
-        } else {
-            simple_db::save_pipeline(conn, &pipeline)?;
-            println!("Removed '{}' ({}) from the pipeline.", title, short_id(id));
-        }
-
+    // Then check events.
+    if let Some(event) = data
+        .events
+        .iter()
+        .find(|e| id_matches(e.id, &e.title, identifier))
+    {
+        let title = event.title.clone();
+        let id = event.id;
+        client
+            .delete(format!("{}/api/events/{}", base, id))
+            .send()?
+            .error_for_status()?;
+        println!("Removed '{}' ({}) from the pipeline.", title, short_id(id));
         return Ok(());
     }
 
     bail!("No matching item found in the pipeline.");
 }
 
-enum AnyItem {
-    Action(Action),
-    Event(Event),
-}
+fn resolve_any_item(client: &Client, base: &str, identifier: &str) -> Result<AnyItem> {
+    let data = fetch_api_data(client, base)?;
 
-fn resolve_any_item(conn: &Connection, identifier: &str) -> Result<AnyItem> {
     if let Ok(uuid) = Uuid::parse_str(identifier) {
-        if let Some(action) = simple_db::fetch_action_by_id(conn, uuid)? {
+        if let Some(action) = data.actions.into_iter().find(|a| a.id == uuid) {
             return Ok(AnyItem::Action(action));
         }
-        if let Some(event) = simple_db::fetch_event_by_id(conn, uuid)? {
+        if let Some(event) = data.events.into_iter().find(|e| e.id == uuid) {
             return Ok(AnyItem::Event(event));
         }
         bail!("No action or event found with id '{}'.", identifier);
     }
 
-    let actions = simple_db::fetch_actions(conn)?;
-    let action_matches: Vec<&Action> = actions
-        .iter()
+    let action_matches: Vec<Action> = data
+        .actions
+        .into_iter()
         .filter(|a| id_matches(a.id, &a.title, identifier))
         .collect();
 
-    let events = simple_db::fetch_events(conn)?;
-    let event_matches: Vec<&Event> = events
-        .iter()
+    let event_matches: Vec<Event> = data
+        .events
+        .into_iter()
         .filter(|e| id_matches(e.id, &e.title, identifier))
         .collect();
 
@@ -316,10 +381,10 @@ fn resolve_any_item(conn: &Connection, identifier: &str) -> Result<AnyItem> {
         0 => bail!("No action or event found matching '{}'.", identifier),
         1 => {
             if let Some(action) = action_matches.into_iter().next() {
-                return Ok(AnyItem::Action((*action).clone()));
+                return Ok(AnyItem::Action(action));
             }
             if let Some(event) = event_matches.into_iter().next() {
-                return Ok(AnyItem::Event((*event).clone()));
+                return Ok(AnyItem::Event(event));
             }
             unreachable!()
         }

@@ -1,0 +1,21 @@
+[package]
+name = "simple-server"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "simple-server"
+path = "src/main.rs"
+
+[dependencies]
+simple-core = { path = "../simple-core" }
+axum = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

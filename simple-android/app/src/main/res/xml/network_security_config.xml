@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow cleartext HTTP to the Tailscale server -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">100.112.215.8</domain>
+    </domain-config>
+</network-security-config>

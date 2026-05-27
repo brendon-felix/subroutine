@@ -1,11 +1,15 @@
 use anyhow::{Result, bail};
 use chrono::{Duration, Local, NaiveTime, TimeZone, Utc};
 use clap::Subcommand;
-use rusqlite::Connection;
-use simple_core::{Action, QueueItem, Routine, RoutineStep};
+use reqwest::blocking::Client;
+use simple_core::{Action, ActionState, ActionTarget, Routine, RoutineStep};
 use uuid::Uuid;
 
-use crate::actions::{id_matches, short_id};
+use crate::actions::{fetch_api_data, id_matches, short_id};
+
+pub fn fetch_all_routines(client: &Client, base: &str) -> Result<Vec<Routine>> {
+    Ok(fetch_api_data(client, base)?.routines)
+}
 
 #[derive(Debug, Subcommand)]
 pub enum RoutinesCommand {
@@ -39,10 +43,10 @@ pub enum RoutinesCommand {
     },
 }
 
-pub fn handle_routines(command: &RoutinesCommand, conn: &Connection) -> Result<()> {
+pub fn handle_routines(command: &RoutinesCommand, client: &Client, base: &str) -> Result<()> {
     match command {
         RoutinesCommand::List => {
-            let routines = simple_db::fetch_routines(conn)?;
+            let routines = fetch_all_routines(client, base)?;
             if routines.is_empty() {
                 println!("No routines.");
                 return Ok(());
@@ -57,7 +61,7 @@ pub fn handle_routines(command: &RoutinesCommand, conn: &Connection) -> Result<(
             }
         }
         RoutinesCommand::Show { identifier } => {
-            let routine = resolve_routine(conn, identifier)?;
+            let routine = resolve_routine(client, base, identifier)?;
             println!("Routine: {}", routine.title);
             println!("ID:      {}", routine.id);
             if let Some(ref content) = routine.content {
@@ -104,12 +108,19 @@ pub fn handle_routines(command: &RoutinesCommand, conn: &Connection) -> Result<(
                 routine = routine.with_steps(steps_vec);
             }
             let id = routine.id;
-            simple_db::upsert_routine(conn, &routine)?;
+            client
+                .put(format!("{}/api/routines/{}", base, id))
+                .json(&routine)
+                .send()?
+                .error_for_status()?;
             println!("Added routine '{}' ({})", title, short_id(id));
         }
         RoutinesCommand::Delete { identifier } => {
-            let routine = resolve_routine(conn, identifier)?;
-            simple_db::delete_routine(conn, routine.id)?;
+            let routine = resolve_routine(client, base, identifier)?;
+            client
+                .delete(format!("{}/api/routines/{}", base, routine.id))
+                .send()?
+                .error_for_status()?;
             println!(
                 "Deleted routine '{}' ({})",
                 routine.title,
@@ -121,14 +132,20 @@ pub fn handle_routines(command: &RoutinesCommand, conn: &Connection) -> Result<(
             time,
             default_duration,
         } => {
-            run(conn, identifier, time, *default_duration)?;
+            run(client, base, identifier, time, *default_duration)?;
         }
     }
     Ok(())
 }
 
-fn run(conn: &Connection, identifier: &str, time: &str, default_duration_mins: i64) -> Result<()> {
-    let routine = resolve_routine(conn, identifier)?;
+fn run(
+    client: &Client,
+    base: &str,
+    identifier: &str,
+    time: &str,
+    default_duration_mins: i64,
+) -> Result<()> {
+    let routine = resolve_routine(client, base, identifier)?;
 
     if routine.steps.is_empty() {
         bail!("Routine '{}' has no steps to run.", routine.title);
@@ -146,37 +163,36 @@ fn run(conn: &Connection, identifier: &str, time: &str, default_duration_mins: i
 
     let default_step_duration = Duration::minutes(default_duration_mins);
 
-    let mut pipeline = simple_db::load_pipeline(conn)?;
     let mut spawned: Vec<(String, Uuid)> = Vec::new();
 
     for step in &routine.steps {
         let step_duration = step.duration.unwrap_or(default_step_duration);
 
         let action = Action::new(&step.title)
-            .with_target(cursor, true)
+            .with_state(ActionState::Queued(ActionTarget {
+                time: cursor,
+                is_static: true,
+            }))
             .with_duration(step_duration)
             .with_origin_routine(routine.id);
 
         let action = Action {
-            ephemeral: true,
+            saved: false,
             ..action
         };
 
         let title = action.title.clone();
         let id = action.id;
 
-        simple_db::upsert_action(conn, &action)?;
-        pipeline.queue.push(QueueItem::Action(action));
-        spawned.push((title, id));
+        client
+            .put(format!("{}/api/actions/{}", base, id))
+            .json(&action)
+            .send()?
+            .error_for_status()?;
 
+        spawned.push((title, id));
         cursor += step_duration;
     }
-
-    pipeline
-        .queue
-        .sort_by_key(|item| item.time().map(|t| t.timestamp()).unwrap_or(i64::MAX));
-
-    simple_db::save_pipeline(conn, &pipeline)?;
 
     println!(
         "Running '{}' — added {} action(s) to the queue starting at {}:",
@@ -191,23 +207,24 @@ fn run(conn: &Connection, identifier: &str, time: &str, default_duration_mins: i
     Ok(())
 }
 
-pub fn resolve_routine(conn: &Connection, identifier: &str) -> Result<Routine> {
+pub fn resolve_routine(client: &Client, base: &str, identifier: &str) -> Result<Routine> {
     if let Ok(uuid) = Uuid::parse_str(identifier) {
-        if let Some(routine) = simple_db::fetch_routine_by_id(conn, uuid)? {
+        let routines = fetch_all_routines(client, base)?;
+        if let Some(routine) = routines.into_iter().find(|r| r.id == uuid) {
             return Ok(routine);
         }
         bail!("No routine found with id '{}'", identifier);
     }
 
-    let routines = simple_db::fetch_routines(conn)?;
-    let matches: Vec<&Routine> = routines
-        .iter()
+    let routines = fetch_all_routines(client, base)?;
+    let matches: Vec<Routine> = routines
+        .into_iter()
         .filter(|r| id_matches(r.id, &r.title, identifier))
         .collect();
 
     match matches.len() {
         0 => bail!("No routine found matching '{}'", identifier),
-        1 => Ok(matches[0].clone()),
+        1 => Ok(matches.into_iter().next().unwrap()),
         _ => bail!(
             "Multiple routines match '{}'. Use a more specific identifier.",
             identifier
