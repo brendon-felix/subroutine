@@ -102,8 +102,8 @@ class MainViewModel : ViewModel() {
             _saving.value = true
             runCatching { repository.updateAction(action, title, content) }
                 .onSuccess {
-                    loadActions()
                     onSuccess()
+                    loadActions()
                 }
                 .onFailure { e ->
                     _uiState.value = ActionsUiState.Error(e.message ?: "Save failed")
@@ -117,8 +117,8 @@ class MainViewModel : ViewModel() {
             _saving.value = true
             runCatching { repository.queueAction(actionId) }
                 .onSuccess {
-                    loadActions()
                     onSuccess()
+                    loadActions()
                 }
                 .onFailure { e ->
                     _uiState.value = ActionsUiState.Error(e.message ?: "Queue failed")
@@ -132,8 +132,8 @@ class MainViewModel : ViewModel() {
             _saving.value = true
             runCatching { repository.backlogAction(actionId) }
                 .onSuccess {
-                    loadActions()
                     onSuccess()
+                    loadActions()
                 }
                 .onFailure { e ->
                     _uiState.value = ActionsUiState.Error(e.message ?: "Backlog failed")
@@ -162,8 +162,8 @@ class MainViewModel : ViewModel() {
             _saving.value = true
             runCatching { repository.updateEvent(event, title, content) }
                 .onSuccess {
-                    loadActions()
                     onSuccess()
+                    loadActions()
                 }
                 .onFailure { e ->
                     _uiState.value = ActionsUiState.Error(e.message ?: "Save failed")
@@ -177,8 +177,8 @@ class MainViewModel : ViewModel() {
             _saving.value = true
             runCatching { repository.deleteEvent(eventId) }
                 .onSuccess {
-                    loadActions()
                     onSuccess()
+                    loadActions()
                 }
                 .onFailure { e ->
                     _uiState.value = ActionsUiState.Error(e.message ?: "Delete failed")

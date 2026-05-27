@@ -65,10 +65,11 @@ fun EditEventScreen(
         else -> null
     }
 
-    if (event == null) {
+    if (event == null && !saving) {
         onBack()
         return
     }
+    if (event == null) return
 
     EditEventContent(
         event = event,

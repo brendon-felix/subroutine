@@ -68,11 +68,12 @@ fun EditActionScreen(
         else -> null
     }
 
-    if (action == null) {
+    if (action == null && !saving) {
         // Still loading or action no longer exists — go back.
         onBack()
         return
     }
+    if (action == null) return
 
     EditActionContent(
         action = action,
