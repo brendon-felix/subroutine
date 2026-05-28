@@ -16,10 +16,12 @@ use crate::{
         custom_list::{List, ListDelegate, ListEvent, ListItem, ListState},
         drag_drop::{DragData, Draggable, DropZone},
     },
+    icons::AppIcon,
     stores::{
-        DatabaseStore,
-        database_store::{DatabaseError, EventsLoaded},
+        AppDatabaseStore,
+        database_store::{DatabaseError, EventDataChanged},
     },
+    utils::format_recurrence,
     views::event_editor::StartEventEditor,
 };
 
@@ -33,34 +35,21 @@ fn format_duration(d: chrono::Duration) -> String {
     }
 }
 
-fn format_recurrence(d: chrono::Duration) -> String {
-    let days = d.num_days();
-    match days {
-        1 => "daily".into(),
-        7 => "weekly".into(),
-        14 => "fortnightly".into(),
-        28 | 30 | 31 => "monthly".into(),
-        365 | 366 => "yearly".into(),
-        n if n % 7 == 0 => format!("every {} weeks", n / 7),
-        n => format!("every {} days", n),
-    }
-}
-
 // ── Delegate ──────────────────────────────────────────────────────────────────
 
 pub struct SavedEventsDelegate {
     pub events: Vec<Event>,
     selected_index: Option<usize>,
-    pub database_store: Entity<DatabaseStore>,
+    pub database_store: Entity<AppDatabaseStore>,
 }
 
 impl SavedEventsDelegate {
-    pub fn new(database_store: Entity<DatabaseStore>, cx: &App) -> Self {
+    pub fn new(database_store: Entity<AppDatabaseStore>, cx: &App) -> Self {
         let events = database_store
             .read(cx)
-            .events
+            .events()
             .iter()
-            .filter(|e| !e.ephemeral)
+            .filter(|e| e.saved)
             .cloned()
             .collect();
         Self {
@@ -74,9 +63,9 @@ impl SavedEventsDelegate {
         self.events = self
             .database_store
             .read(cx)
-            .events
+            .events()
             .iter()
-            .filter(|e| !e.ephemeral)
+            .filter(|e| e.saved)
             .cloned()
             .collect();
     }
@@ -130,7 +119,7 @@ impl ListDelegate for SavedEventsDelegate {
                                                     list_state.delegate().database_store.update(
                                                         cx,
                                                         |store, cx| {
-                                                            store.add_event_to_queue(event, cx);
+                                                            store.upsert_event(event, cx);
                                                         },
                                                     );
                                                 }
@@ -149,9 +138,8 @@ impl ListDelegate for SavedEventsDelegate {
                                 )
                                 .separator()
                                 .item(
-                                    PopupMenuItem::new("Delete")
-                                        .icon(IconName::Delete)
-                                        .on_click(move |_event, _window, cx| {
+                                    PopupMenuItem::new("Delete").icon(AppIcon::Trash).on_click(
+                                        move |_event, _window, cx| {
                                             entity_delete.update(cx, |list_state, cx| {
                                                 list_state.delegate().database_store.update(
                                                     cx,
@@ -160,7 +148,8 @@ impl ListDelegate for SavedEventsDelegate {
                                                     },
                                                 );
                                             });
-                                        }),
+                                        },
+                                    ),
                                 )
                             }
                         })
@@ -249,13 +238,13 @@ impl EventEmitter<StartEventEditor> for ListState<SavedEventsDelegate> {}
 pub struct SavedEventsListView {
     pub list_state: Entity<ListState<SavedEventsDelegate>>,
     drop_active: bool,
-    database_store: Entity<DatabaseStore>,
+    database_store: Entity<AppDatabaseStore>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl SavedEventsListView {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -266,7 +255,7 @@ impl SavedEventsListView {
 
         subscriptions.push(cx.subscribe(
             &database_store,
-            |this, _store, _event: &EventsLoaded, cx| {
+            |this, _store, _event: &EventDataChanged, cx| {
                 this.list_state.update(cx, |list_state, cx| {
                     list_state.delegate_mut().update_events(cx);
                     cx.notify();
@@ -307,7 +296,7 @@ impl Render for SavedEventsListView {
             .active(drop_active)
             .on_drop(cx.listener(|this, data: &DragData<Event>, _window, cx| {
                 let mut event = data.data.clone();
-                event.ephemeral = false;
+                event.saved = true;
                 this.database_store.update(cx, |store, cx| {
                     store.upsert_event(event, cx);
                 });

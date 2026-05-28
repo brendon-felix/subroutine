@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui::{Action, App, SharedString};
+use gpui::{Action, Anchor, App, SharedString};
 use gpui_component::{
     ActiveTheme as _, Theme, ThemeMode, ThemeRegistry, notification::NotificationSettings,
     scroll::ScrollbarShow,
@@ -70,7 +70,7 @@ pub fn init(cx: &mut App) {
         Theme::global_mut(cx).scrollbar_show = scrollbar_show;
     }
     Theme::global_mut(cx).notification = NotificationSettings {
-        placement: gpui_component::Anchor::BottomRight,
+        placement: Anchor::BottomRight,
         ..Default::default()
     };
 

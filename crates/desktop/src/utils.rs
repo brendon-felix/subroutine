@@ -1,5 +1,50 @@
 use anyhow::{Result, bail};
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use simple_core::RecurrenceRule;
+
+pub fn parse_recurrence(s: &str) -> Result<RecurrenceRule> {
+    let s = s.trim();
+    if let Some(value) = s.strip_suffix("mo") {
+        let count: u32 = value
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Expected a number before 'mo'"))?;
+        return Ok(RecurrenceRule::months(count));
+    }
+    if let Some(value) = s.strip_suffix('d') {
+        let count: u32 = value
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Expected a number before 'd'"))?;
+        return Ok(RecurrenceRule::days(count));
+    }
+    if let Some(value) = s.strip_suffix('h') {
+        let count: u32 = value
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Expected a number before 'h'"))?;
+        return Ok(RecurrenceRule::hours(count));
+    }
+    if let Some(value) = s.strip_suffix('m') {
+        let count: u32 = value
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Expected a number before 'm'"))?;
+        return Ok(RecurrenceRule::minutes(count));
+    }
+    if let Some(value) = s.strip_suffix('w') {
+        let count: u32 = value
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Expected a number before 'w'"))?;
+        return Ok(RecurrenceRule::weeks(count));
+    }
+    if let Some(value) = s.strip_suffix('y') {
+        let count: u32 = value
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Expected a number before 'y'"))?;
+        return Ok(RecurrenceRule::years(count));
+    }
+    bail!(
+        "Unrecognized recurrence format '{}'. Use a number followed by mo, d, h, m, w, or y (e.g. 1h, 30m, 2d, 1mo)",
+        s
+    )
+}
 
 /// Parses a human-readable duration string like "24h", "7d", "90m", "3600s".
 pub fn parse_duration(s: &str) -> Result<Duration> {
@@ -49,6 +94,18 @@ pub fn format_duration(d: Duration) -> String {
     } else {
         format!("{}s", total_seconds)
     }
+}
+
+pub fn format_recurrence(rule: RecurrenceRule) -> String {
+    let unit_str = match rule.unit {
+        simple_core::RecurrenceUnit::Minutes => "m",
+        simple_core::RecurrenceUnit::Hours => "h",
+        simple_core::RecurrenceUnit::Days => "d",
+        simple_core::RecurrenceUnit::Months => "mo",
+        simple_core::RecurrenceUnit::Weeks => "w",
+        simple_core::RecurrenceUnit::Years => "y",
+    };
+    format!("{}{}", rule.count, unit_str)
 }
 
 /// Parses a flexible datetime string into a `DateTime<Utc>`, interpreting bare

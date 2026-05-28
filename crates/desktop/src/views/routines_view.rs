@@ -18,8 +18,9 @@ use simple_core::{Routine, RoutineStep};
 use uuid::Uuid;
 
 use crate::components::popover::popover;
-use crate::stores::DatabaseStore;
-use crate::stores::database_store::{DatabaseError, RoutinesLoaded};
+use crate::icons::AppIcon;
+use crate::stores::AppDatabaseStore;
+use crate::stores::database_store::{DatabaseError, RoutineDataChanged};
 use crate::views::MainViewMode;
 
 pub struct NavigateFromRoutines {
@@ -31,7 +32,7 @@ pub struct StartRoutineEditor {
 }
 
 pub struct RoutinesView {
-    database_store: Entity<DatabaseStore>,
+    database_store: Entity<AppDatabaseStore>,
     routines: Vec<Routine>,
     _subscriptions: Vec<Subscription>,
 }
@@ -41,7 +42,7 @@ impl EventEmitter<StartRoutineEditor> for RoutinesView {}
 
 impl RoutinesView {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -49,8 +50,8 @@ impl RoutinesView {
 
         subscriptions.push(cx.subscribe(
             &database_store,
-            |this, store, _event: &RoutinesLoaded, cx| {
-                this.routines = store.read(cx).routines.clone();
+            |this, store, _event: &RoutineDataChanged, cx| {
+                this.routines = store.read(cx).routines().clone();
                 cx.notify();
             },
         ));
@@ -62,7 +63,7 @@ impl RoutinesView {
             },
         ));
 
-        let routines = database_store.read(cx).routines.clone();
+        let routines = database_store.read(cx).routines().clone();
 
         Self {
             database_store,
@@ -96,7 +97,7 @@ impl Render for RoutinesView {
                                     .small()
                                     .on_click(cx.listener(|_this, _event, _window, cx| {
                                         cx.emit(NavigateFromRoutines {
-                                            mode: MainViewMode::Home,
+                                            mode: MainViewMode::Dashboard,
                                         });
                                     })),
                             )
@@ -237,7 +238,7 @@ impl Render for RoutinesView {
                                                         Button::new(ElementId::Name(
                                                             format!("delete-routine-{i}").into(),
                                                         ))
-                                                        .icon(IconName::Delete)
+                                                        .icon(AppIcon::Trash)
                                                         .ghost()
                                                         .small()
                                                         .tooltip("Delete routine")
@@ -267,7 +268,7 @@ impl Render for RoutinesView {
 
 pub struct RoutineEditor {
     pub focus_handle: FocusHandle,
-    database_store: Entity<DatabaseStore>,
+    database_store: Entity<AppDatabaseStore>,
     routine_id: Option<Uuid>,
     title_input: Entity<InputState>,
     content_input: Entity<InputState>,
@@ -287,7 +288,7 @@ impl Focusable for RoutineEditor {
 
 impl RoutineEditor {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         routine_id: Option<Uuid>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -555,7 +556,7 @@ impl Render for RoutineEditor {
             .text_color(theme.group_box_foreground)
             .border_1()
             .border_color(theme.border)
-            .rounded_lg()
+            .rounded_xl()
             .shadow_xl()
             .track_focus(&self.focus_handle)
             .on_any_mouse_down(|_event, _window, cx| {

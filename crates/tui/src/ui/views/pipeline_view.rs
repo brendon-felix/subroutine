@@ -12,7 +12,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, Padding, Paragraph},
 };
-use simple_core::{Action, Event};
+use simple_core::{Action, ActionState, Event};
 use simple_parser::HighlightKind;
 use tokio::sync::mpsc::UnboundedSender;
 use tui_input::{Input, InputRequest};
@@ -141,11 +141,23 @@ impl PipelineView {
 
         entries.sort_by(|a, b| {
             let time_a = match a {
-                ListEntry::Action(action) => action.target.map(|t| t.timestamp()),
+                ListEntry::Action(action) => {
+                    if let ActionState::Queued(t) = action.state {
+                        Some(t.time.timestamp())
+                    } else {
+                        None
+                    }
+                }
                 ListEntry::Event(event) => Some(event.time.timestamp()),
             };
             let time_b = match b {
-                ListEntry::Action(action) => action.target.map(|t| t.timestamp()),
+                ListEntry::Action(action) => {
+                    if let ActionState::Queued(t) = action.state {
+                        Some(t.time.timestamp())
+                    } else {
+                        None
+                    }
+                }
                 ListEntry::Event(event) => Some(event.time.timestamp()),
             };
             match (time_a, time_b) {
@@ -513,13 +525,13 @@ fn render_action_item(f: &mut Frame, area: Rect, action: &Action, selected: bool
     };
 
     // Meta string: date/time + duration + recurrence — right-aligned.
-    let when_str = match (action.target, action.naive_date) {
-        (Some(dt), _) => {
-            let local = Local.from_utc_datetime(&dt.naive_utc());
-            local.format("\u{f017} %b %d %H:%M").to_string() // nf-fa-clock_o
+    let when_str = match action.state {
+        ActionState::Queued(t) => {
+            let local = Local.from_utc_datetime(&t.time.naive_utc());
+            local.format("\u{f017} %b %d %H:%M").to_string()
         }
-        (None, Some(date)) => format!("\u{f073} {}", date.format("%b %d")), // nf-fa-calendar
-        (None, None) => String::new(),
+        ActionState::Backlogged(Some(date)) => format!("\u{f073} {}", date.format("%b %d")),
+        _ => String::new(),
     };
     let dur_str = match action.duration {
         Some(d) => {
@@ -594,9 +606,9 @@ fn render_action_item(f: &mut Frame, area: Rect, action: &Action, selected: bool
                 Style::default().fg(Color::DarkGray),
             )));
         }
-        if action.ephemeral {
+        if action.saved {
             detail_lines.push(Line::from(Span::styled(
-                "ephemeral",
+                "saved",
                 Style::default()
                     .fg(Color::DarkGray)
                     .add_modifier(Modifier::ITALIC),
@@ -707,9 +719,9 @@ fn render_event_item(f: &mut Frame, area: Rect, event: &Event, selected: bool, _
                 Style::default().fg(Color::DarkGray),
             )));
         }
-        if event.ephemeral {
+        if event.saved {
             detail_lines.push(Line::from(Span::styled(
-                "ephemeral",
+                "saved",
                 Style::default()
                     .fg(Color::DarkGray)
                     .add_modifier(Modifier::ITALIC),

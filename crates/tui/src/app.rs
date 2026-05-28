@@ -1,15 +1,15 @@
 use crate::log;
+use crate::store::{DatabaseStore, StoreStatus};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use simple_core::{Action, Event};
-use simple_db::{DatabaseConnection, PostgresConfig, connect_and_migrate, sync_once};
 use std::time::Instant;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::{
     debug,
     term::{self, AppTerminal},
-    ui::{AppView, RootView, UIAction, utils},
+    ui::{AppView, RootView},
 };
 
 // ---------------------------------------------------------------------------
@@ -28,9 +28,9 @@ impl std::fmt::Display for SyncStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Idle => write!(f, ""),
-            Self::Syncing => write!(f, " \u{f110} syncing…"), // nf-fa-spinner
-            Self::Ok => write!(f, " \u{f00c} synced"),        // nf-fa-check
-            Self::Error(e) => write!(f, " \u{f071} {e}"),     // nf-fa-warning
+            Self::Syncing => write!(f, " \u{f110} connecting…"), // nf-fa-spinner
+            Self::Ok => write!(f, " \u{f00c} connected"),        // nf-fa-check
+            Self::Error(e) => write!(f, " \u{f071} {e}"),        // nf-fa-warning
         }
     }
 }
@@ -45,26 +45,30 @@ pub enum AppAction {
     Render(Instant),
     Resize(u16, u16),
     Quit,
-    UIAction(UIAction),
-    MultiAction(Vec<AppAction>),
-    AfterNTicks(u32, Box<AppAction>),
+    // UIAction(UIAction),
+    // MultiAction(Vec<AppAction>),
+    // AfterNTicks(u32, Box<AppAction>),
+    /// Fired by Store's on_change callback when the initial DB load finishes
+    /// (successfully or not). The handler maps StoreStatus → SyncStatus and
+    /// kicks off RefreshActions + RefreshEvents.
+    StoreReady,
 
-    /// Trigger a DB reload into the action cache.
+    /// Trigger a reload from the store's in-memory cache into the UI.
     RefreshActions,
-    /// Replace the action cache after a DB reload.
+    /// Replace the action list held by the UI layer.
     SetActions(Vec<Action>),
-    /// Sync status update from the background sync task.
+    /// Connection / sync status update shown in the status bar.
     SyncStatus(SyncStatus),
     /// Persist a new action created from the input bar.
     CreateAction(String),
     /// Delete (soft-delete) the action by UUID.
     DeleteAction(uuid::Uuid),
-    /// Complete the action by UUID.
+    /// Mark the action as complete by UUID.
     CompleteAction(uuid::Uuid),
 
-    /// Trigger a DB reload into the event cache.
+    /// Trigger a reload from the store's in-memory cache into the UI.
     RefreshEvents,
-    /// Replace the event cache after a DB reload.
+    /// Replace the event list held by the UI layer.
     SetEvents(Vec<Event>),
     /// Persist a new event created from the input bar.
     CreateEvent(String),
@@ -82,7 +86,7 @@ pub struct PendingAction {
 // ---------------------------------------------------------------------------
 
 pub struct App {
-    pub db: DatabaseConnection,
+    pub store: DatabaseStore,
     pub actions: Vec<Action>,
     pub events: Vec<Event>,
     pub sync_status: SyncStatus,
@@ -97,24 +101,31 @@ pub struct App {
 impl App {
     pub fn new() -> Result<Self> {
         let (tx, rx) = mpsc::unbounded_channel();
-        let db = connect_and_migrate()?;
-        let actions = Vec::new();
-        let events = Vec::new();
-        let sync_status = SyncStatus::Idle;
-        let pending_action = None;
+
+        // Build the Postgres URL from environment variables, then create the
+        // Store. Store::new() returns immediately; the connection and initial
+        // data load happen in a background thread. When done (or on error) the
+        // on_change closure fires and sends AppAction::StoreReady so we can
+        // react in the normal event loop.
+        let url = server_url_from_env().unwrap_or_else(|| "http://localhost:3000".to_string());
+        let tx_for_store = tx.clone();
+        let store = DatabaseStore::new(url, move || {
+            let _ = tx_for_store.send(AppAction::StoreReady);
+        });
+
         let ti = AppTerminal::new()?;
         let ui = RootView::new(tx.clone());
-        let quitting = false;
         debug::init_debug_sender(tx.clone());
+
         Ok(Self {
-            db,
-            actions,
-            events,
-            sync_status,
-            pending_action,
+            store,
+            actions: Vec::new(),
+            events: Vec::new(),
+            sync_status: SyncStatus::Syncing,
+            pending_action: None,
             ti,
             ui,
-            quitting,
+            quitting: false,
             tx,
             rx,
         })
@@ -123,30 +134,6 @@ impl App {
     pub async fn run(&mut self) -> Result<()> {
         let tx = self.tx.clone();
         self.ti.enter()?;
-
-        // Load actions and events on startup.
-        tx.send(AppAction::RefreshActions)?;
-        tx.send(AppAction::RefreshEvents)?;
-
-        // Kick off a startup sync if Postgres config is available.
-        if let Some(pg_config) = postgres_config_from_env() {
-            let db = self.db.clone();
-            let tx2 = tx.clone();
-            let _ = tx2.send(AppAction::SyncStatus(SyncStatus::Syncing));
-            tokio::spawn(async move {
-                match sync_once(&db, &pg_config).await {
-                    Ok(()) => {
-                        log!("[sync] startup sync ok");
-                        let _ = tx2.send(AppAction::SyncStatus(SyncStatus::Ok));
-                        let _ = tx2.send(AppAction::RefreshActions);
-                    }
-                    Err(e) => {
-                        log!("[sync] startup sync error: {e:#}");
-                        let _ = tx2.send(AppAction::SyncStatus(SyncStatus::Error(e.to_string())));
-                    }
-                }
-            });
-        }
 
         loop {
             if let Some(event) = self.ti.next().await {
@@ -162,55 +149,46 @@ impl App {
             }
         }
 
-        // Sync on quit.
-        if let Some(pg_config) = postgres_config_from_env() {
-            let db = self.db.clone();
-            let _ = sync_once(&db, &pg_config).await;
-        }
-
         self.ti.exit()?;
         Ok(())
     }
 
     fn handle_event(&mut self, event: term::Event, tx: &UnboundedSender<AppAction>) -> Result<()> {
         match event {
-            term::Event::Tick => tx.send(AppAction::Tick)?,
-            term::Event::Render(last) => tx.send(AppAction::Render(last))?,
-            term::Event::Resize(w, h) => tx.send(AppAction::Resize(w, h))?,
+            term::Event::Tick => {
+                let _ = tx.send(AppAction::Tick);
+            }
+            term::Event::Render(instant) => {
+                let _ = tx.send(AppAction::Render(instant));
+            }
             term::Event::Key(key) => self.handle_key_event(key, tx)?,
-            term::Event::Mouse(mouse) => self.handle_mouse_event(mouse, tx)?,
-            term::Event::Paste(_content) => {}
+            term::Event::Mouse(mouse) => self.handle_mouse_event(mouse)?,
+            term::Event::Resize(w, h) => {
+                let _ = tx.send(AppAction::Resize(w, h));
+            }
             _ => {}
         }
         Ok(())
     }
 
-    fn handle_key_event(
-        &mut self,
-        key_event: KeyEvent,
-        tx: &UnboundedSender<AppAction>,
-    ) -> Result<()> {
-        if self.ui.handle_key_event(key_event, tx) {
+    fn handle_key_event(&mut self, key: KeyEvent, tx: &UnboundedSender<AppAction>) -> Result<()> {
+        if self.ui.handle_key_event(key, tx) {
             return Ok(());
         }
-        match key_event.code {
+        match key.code {
             KeyCode::Char('q') => {
-                tx.send(AppAction::Quit)?;
+                let _ = tx.send(AppAction::Quit);
             }
-            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                tx.send(AppAction::Quit)?
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let _ = tx.send(AppAction::Quit);
             }
             _ => {}
         }
         Ok(())
     }
 
-    fn handle_mouse_event(
-        &mut self,
-        mouse_event: MouseEvent,
-        _tx: &UnboundedSender<AppAction>,
-    ) -> Result<()> {
-        self.ui.handle_mouse_event(mouse_event);
+    fn handle_mouse_event(&mut self, mouse: MouseEvent) -> Result<()> {
+        self.ui.handle_mouse_event(mouse);
         Ok(())
     }
 
@@ -233,44 +211,37 @@ impl App {
                 self.ti.resize(w, h)?;
             }
             AppAction::Quit => self.quitting = true,
-            AppAction::UIAction(action) => self.ui.execute_action(action, tx),
-            AppAction::MultiAction(actions) => {
-                for act in actions {
-                    self.execute_action(act, tx)?;
-                }
-            }
-            AppAction::AfterNTicks(n_ticks, action) => {
-                self.pending_action = Some(PendingAction {
-                    ticks: n_ticks,
-                    action: *action,
-                });
+            // AppAction::UIAction(action) => self.ui.execute_action(action, tx),
+            // AppAction::MultiAction(actions) => {
+            //     for act in actions {
+            //         self.execute_action(act, tx)?;
+            //     }
+            // }
+            // AppAction::AfterNTicks(n_ticks, action) => {
+            //     self.pending_action = Some(PendingAction {
+            //         ticks: n_ticks,
+            //         action: *action,
+            //     });
+            // }
+
+            // ── Store lifecycle ───────────────────────────────────────────────
+            AppAction::StoreReady => {
+                // Map StoreStatus → SyncStatus for the status bar.
+                let sync = match self.store.status() {
+                    StoreStatus::Ready => SyncStatus::Ok,
+                    StoreStatus::Error(msg) => SyncStatus::Error(msg),
+                    StoreStatus::Loading => SyncStatus::Syncing,
+                };
+                let _ = tx.send(AppAction::SyncStatus(sync));
+                // Populate the UI now that the cache is warm.
+                let _ = tx.send(AppAction::RefreshActions);
+                let _ = tx.send(AppAction::RefreshEvents);
             }
 
+            // ── Actions ───────────────────────────────────────────────────────
             AppAction::RefreshActions => {
-                let db = self.db.clone();
-                let tx2 = tx.clone();
-                tokio::spawn(async move {
-                    let result = tokio::task::spawn_blocking(move || {
-                        let conn = db.lock().unwrap();
-                        simple_db::fetch_actions(&conn)
-                    })
-                    .await;
-                    match result {
-                        Ok(Ok(actions)) => {
-                            let _ = tx2.send(AppAction::SetActions(actions));
-                        }
-                        Ok(Err(e)) => {
-                            let _ = tx2.send(AppAction::SyncStatus(SyncStatus::Error(format!(
-                                "DB read error: {e}"
-                            ))));
-                        }
-                        Err(e) => {
-                            let _ = tx2.send(AppAction::SyncStatus(SyncStatus::Error(format!(
-                                "Task panic: {e}"
-                            ))));
-                        }
-                    }
-                });
+                let actions = self.store.all_actions();
+                let _ = tx.send(AppAction::SetActions(actions));
             }
 
             AppAction::SetActions(actions) => {
@@ -278,27 +249,43 @@ impl App {
                 self.ui.set_actions(actions);
             }
 
-            AppAction::RefreshEvents => {
-                let db = self.db.clone();
-                let tx2 = tx.clone();
-                tokio::spawn(async move {
-                    let result = tokio::task::spawn_blocking(move || {
-                        let conn = db.lock().unwrap();
-                        simple_db::fetch_events(&conn)
-                    })
-                    .await;
-                    match result {
-                        Ok(Ok(events)) => {
-                            let _ = tx2.send(AppAction::SetEvents(events));
-                        }
-                        Ok(Err(e)) => {
-                            let _ = tx2.send(AppAction::SyncStatus(SyncStatus::Error(format!(
-                                "DB read error: {e}"
-                            ))));
-                        }
-                        Err(_) => {}
+            AppAction::SyncStatus(status) => {
+                self.sync_status = status.clone();
+                self.ui.set_sync_status(status);
+            }
+
+            AppAction::CreateAction(input) => {
+                use simple_parser::{BuildTarget, BuiltEntity, build_entity, parse_action_input};
+                log!("[create] input: {:?}", input);
+                match parse_action_input(&input)
+                    .ok()
+                    .and_then(|draft| build_entity(&draft, BuildTarget::Action).ok())
+                {
+                    Some(BuiltEntity::Action(action)) => {
+                        log!("[create] built action: {:?}", action.title);
+                        self.store.upsert_action(action);
+                        let _ = tx.send(AppAction::RefreshActions);
                     }
-                });
+                    _ => {
+                        log!("[create] parse/build failed for: {:?}", input);
+                    }
+                }
+            }
+
+            AppAction::DeleteAction(id) => {
+                self.store.trash_action(id);
+                let _ = tx.send(AppAction::RefreshActions);
+            }
+
+            AppAction::CompleteAction(id) => {
+                self.store.complete_action(id);
+                let _ = tx.send(AppAction::RefreshActions);
+            }
+
+            // ── Events ────────────────────────────────────────────────────────
+            AppAction::RefreshEvents => {
+                let events = self.store.all_events();
+                let _ = tx.send(AppAction::SetEvents(events));
             }
 
             AppAction::SetEvents(events) => {
@@ -315,27 +302,8 @@ impl App {
                 {
                     Some(BuiltEntity::Event(event)) => {
                         log!("[create event] built: {:?}", event.title);
-                        let db = self.db.clone();
-                        let tx2 = tx.clone();
-                        tokio::spawn(async move {
-                            let result = tokio::task::spawn_blocking(move || {
-                                let conn = db.lock().unwrap();
-                                simple_db::upsert_event(&conn, &event)
-                            })
-                            .await;
-                            match result {
-                                Ok(Ok(())) => {
-                                    let _ = tx2.send(AppAction::RefreshEvents);
-                                }
-                                Ok(Err(e)) => {
-                                    log!("[create event] save error: {e:#}");
-                                    let _ = tx2.send(AppAction::SyncStatus(SyncStatus::Error(
-                                        format!("Save error: {e}"),
-                                    )));
-                                }
-                                Err(_) => {}
-                            }
-                        });
+                        self.store.upsert_event(event);
+                        let _ = tx.send(AppAction::RefreshEvents);
                     }
                     _ => {
                         log!("[create event] parse/build failed for: {:?}", input);
@@ -344,170 +312,41 @@ impl App {
             }
 
             AppAction::DeleteEvent(id) => {
-                let db = self.db.clone();
-                let tx2 = tx.clone();
-                tokio::spawn(async move {
-                    let result = tokio::task::spawn_blocking(move || {
-                        let conn = db.lock().unwrap();
-                        simple_db::delete_event(&conn, id)
-                    })
-                    .await;
-                    match result {
-                        Ok(Ok(())) => {
-                            let _ = tx2.send(AppAction::RefreshEvents);
-                        }
-                        Ok(Err(e)) => {
-                            let _ = tx2.send(AppAction::SyncStatus(SyncStatus::Error(format!(
-                                "Delete error: {e}"
-                            ))));
-                        }
-                        Err(_) => {}
-                    }
-                });
-            }
-
-            AppAction::SyncStatus(status) => {
-                self.sync_status = status.clone();
-                self.ui.set_sync_status(status);
-            }
-
-            AppAction::CreateAction(input) => {
-                use simple_parser::{BuildTarget, build_entity, parse_action_input};
-                log!("[create] input: {:?}", input);
-                let parse_result = parse_action_input(&input);
-                log!(
-                    "[create] parse result: {:?}",
-                    parse_result.as_ref().map(|d| &d.title)
-                );
-                match parse_result
-                    .ok()
-                    .and_then(|draft| build_entity(&draft, BuildTarget::Action).ok())
-                {
-                    Some(simple_parser::BuiltEntity::Action(action)) => {
-                        log!("[create] built action: {:?}", action.title);
-                        let db = self.db.clone();
-                        let tx2 = tx.clone();
-                        let action_clone = action.clone();
-                        tokio::spawn(async move {
-                            let result = tokio::task::spawn_blocking(move || {
-                                let conn = db.lock().unwrap();
-                                simple_db::upsert_action(&conn, &action_clone)
-                            })
-                            .await;
-                            match result {
-                                Ok(Ok(())) => {
-                                    log!("[create] saved ok");
-                                    let _ = tx2.send(AppAction::RefreshActions);
-                                }
-                                Ok(Err(e)) => {
-                                    log!("[create] save error: {e:#}");
-                                    let _ = tx2.send(AppAction::SyncStatus(SyncStatus::Error(
-                                        format!("Save error: {e}"),
-                                    )));
-                                }
-                                Err(e) => {
-                                    log!("[create] task panic: {e}");
-                                    let _ = tx2.send(AppAction::SyncStatus(SyncStatus::Error(
-                                        format!("Task panic: {e}"),
-                                    )));
-                                }
-                            }
-                        });
-                    }
-                    _ => {
-                        log!("[create] parse/build failed for input: {:?}", input);
-                    }
-                }
-            }
-
-            AppAction::DeleteAction(id) => {
-                let db = self.db.clone();
-                let tx2 = tx.clone();
-                tokio::spawn(async move {
-                    let result = tokio::task::spawn_blocking(move || {
-                        let conn = db.lock().unwrap();
-                        simple_db::delete_action(&conn, id)
-                    })
-                    .await;
-                    match result {
-                        Ok(Ok(())) => {
-                            let _ = tx2.send(AppAction::RefreshActions);
-                        }
-                        Ok(Err(e)) => {
-                            let _ = tx2.send(AppAction::SyncStatus(SyncStatus::Error(format!(
-                                "Delete error: {e}"
-                            ))));
-                        }
-                        Err(_) => {}
-                    }
-                });
-            }
-
-            AppAction::CompleteAction(id) => {
-                if let Some(action) = self.actions.iter().find(|a| a.id == id).cloned() {
-                    let db = self.db.clone();
-                    let tx2 = tx.clone();
-                    tokio::spawn(async move {
-                        let result = tokio::task::spawn_blocking(move || {
-                            let conn = db.lock().unwrap();
-                            let mut completed = action.clone();
-                            completed.completed_at = Some(chrono::Utc::now());
-                            simple_db::upsert_action(&conn, &completed)?;
-                            // Remove from pipeline.
-                            simple_db::delete_action(&conn, action.id)
-                        })
-                        .await;
-                        match result {
-                            Ok(Ok(())) => {
-                                let _ = tx2.send(AppAction::RefreshActions);
-                            }
-                            Ok(Err(e)) => {
-                                let _ = tx2.send(AppAction::SyncStatus(SyncStatus::Error(
-                                    format!("Complete error: {e}"),
-                                )));
-                            }
-                            Err(_) => {}
-                        }
-                    });
-                }
+                self.store.trash_event(id);
+                let _ = tx.send(AppAction::RefreshEvents);
             }
         }
+
         Ok(())
     }
 
     fn render(&mut self, last_frame: Instant) -> Result<()> {
         self.ti.draw(|f| {
-            self.ui.draw(f, f.area(), last_frame);
+            let area = f.area();
+            self.ui.draw(f, area, last_frame);
         })?;
         Ok(())
     }
 }
 
 // ---------------------------------------------------------------------------
-// Postgres config from environment / .env
+// Database URL from environment / .env file
 // ---------------------------------------------------------------------------
 
-pub fn postgres_config_from_env() -> Option<PostgresConfig> {
-    // Try to load from database.env relative to the workspace root,
-    // falling back to real environment variables.
+pub fn server_url_from_env() -> Option<String> {
     load_dotenv();
 
-    let host = std::env::var("POSTGRES_HOST").ok()?;
-    let port = std::env::var("POSTGRES_PORT")
+    if let Ok(url) = std::env::var("SUBROUTINE_SERVER_URL") {
+        return Some(url);
+    }
+
+    let host = std::env::var("SUBROUTINE_HOST").ok()?;
+    let port: u16 = std::env::var("SUBROUTINE_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
-        .unwrap_or(5432);
-    let user = std::env::var("POSTGRES_USER").ok()?;
-    let password = std::env::var("POSTGRES_PASSWORD").ok()?;
-    let dbname = std::env::var("POSTGRES_DBNAME").ok()?;
+        .unwrap_or(3000);
 
-    Some(PostgresConfig {
-        host,
-        port,
-        user,
-        password,
-        dbname,
-    })
+    Some(format!("http://{host}:{port}"))
 }
 
 fn load_dotenv() {

@@ -11,14 +11,15 @@ use gpui_component::{
 };
 use simple_core::Action;
 
-use crate::components::drag_drop::{DragData, Draggable, DropZone};
 use crate::{
     components::custom_list::{List, ListDelegate, ListEvent, ListItem, ListState},
-    stores::{
-        DatabaseStore,
-        database_store::{DatabaseError, PipelineChanged},
-    },
+    icons::AppIcon,
+    stores::{ActionDataChanged, AppDatabaseStore, DataChanged, database_store::DatabaseError},
     views::action_editor::StartActionEditor,
+};
+use crate::{
+    components::drag_drop::{DragData, Draggable, DropZone},
+    utils::format_recurrence,
 };
 
 #[derive(Clone, Debug)]
@@ -36,30 +37,30 @@ fn format_duration(d: chrono::Duration) -> String {
     }
 }
 
-fn format_recurrence(d: chrono::Duration) -> String {
-    let days = d.num_days();
-    match days {
-        1 => "daily".into(),
-        7 => "weekly".into(),
-        14 => "fortnightly".into(),
-        28 | 30 | 31 => "monthly".into(),
-        365 | 366 => "yearly".into(),
-        n if n % 7 == 0 => format!("every {} weeks", n / 7),
-        n => format!("every {} days", n),
-    }
-}
+// fn format_recurrence(d: chrono::Duration) -> String {
+//     let days = d.num_days();
+//     match days {
+//         1 => "daily".into(),
+//         7 => "weekly".into(),
+//         14 => "fortnightly".into(),
+//         28 | 30 | 31 => "monthly".into(),
+//         365 | 366 => "yearly".into(),
+//         n if n % 7 == 0 => format!("every {} weeks", n / 7),
+//         n => format!("every {} days", n),
+//     }
+// }
 
 // ── Delegate ──────────────────────────────────────────────────────────────────
 
 pub struct BacklogListDelegate {
     pub actions: Vec<Action>,
     selected_index: Option<usize>,
-    pub database_store: Entity<DatabaseStore>,
+    pub database_store: Entity<AppDatabaseStore>,
 }
 
 impl BacklogListDelegate {
-    pub fn new(database_store: Entity<DatabaseStore>, cx: &App) -> Self {
-        let actions = database_store.read(cx).pipeline.backlog.clone();
+    pub fn new(database_store: Entity<AppDatabaseStore>, cx: &App) -> Self {
+        let actions = database_store.read(cx).backlogged_actions();
         Self {
             actions,
             selected_index: None,
@@ -68,7 +69,7 @@ impl BacklogListDelegate {
     }
 
     pub fn update_actions(&mut self, cx: &App) {
-        self.actions = self.database_store.read(cx).pipeline.backlog.clone();
+        self.actions = self.database_store.read(cx).backlogged_actions();
     }
 }
 
@@ -91,7 +92,11 @@ impl ListDelegate for BacklogListDelegate {
         let duration_label = action.duration.map(format_duration);
         let recurrence_label = action.recurrence.map(format_recurrence);
         let has_content = action.content.as_ref().is_some_and(|c| !c.is_empty());
-        let date_label = action.naive_date.map(|d| d.format("%b %-d").to_string());
+        let date_label = if let simple_core::ActionState::Backlogged(Some(d)) = action.state {
+            Some(d.format("%b %-d").to_string())
+        } else {
+            None
+        };
 
         let has_meta = duration_label.is_some()
             || recurrence_label.is_some()
@@ -121,7 +126,7 @@ impl ListDelegate for BacklogListDelegate {
                                                 list_state.delegate().database_store.update(
                                                     cx,
                                                     |store, cx| {
-                                                        store.promote_action(id, cx);
+                                                        store.auto_queue_action(id, cx);
                                                     },
                                                 );
                                             });
@@ -141,14 +146,14 @@ impl ListDelegate for BacklogListDelegate {
                                 )
                                 .separator()
                                 .item(
-                                    PopupMenuItem::new("Remove from backlog")
-                                        .icon(IconName::Minus)
+                                    PopupMenuItem::new("Delete action")
+                                        .icon(AppIcon::Trash)
                                         .on_click(move |_event, _window, cx| {
                                             entity_remove.update(cx, |list_state, cx| {
                                                 list_state.delegate().database_store.update(
                                                     cx,
                                                     |store, cx| {
-                                                        store.remove_from_pipeline(id, cx);
+                                                        store.delete_action(id, cx);
                                                     },
                                                 );
                                             });
@@ -258,13 +263,13 @@ impl EventEmitter<StartActionEditor> for ListState<BacklogListDelegate> {}
 pub struct BacklogListView {
     pub list_state: Entity<ListState<BacklogListDelegate>>,
     drop_active: bool,
-    database_store: Entity<DatabaseStore>,
+    database_store: Entity<AppDatabaseStore>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl BacklogListView {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -275,7 +280,18 @@ impl BacklogListView {
 
         subscriptions.push(cx.subscribe(
             &database_store,
-            |this, _store, _event: &PipelineChanged, cx| {
+            |this, _store, _event: &DataChanged, cx| {
+                this.list_state.update(cx, |list_state, cx| {
+                    list_state.delegate_mut().update_actions(cx);
+                    cx.notify();
+                });
+                cx.notify();
+            },
+        ));
+
+        subscriptions.push(cx.subscribe(
+            &database_store,
+            |this, _store, _event: &ActionDataChanged, cx| {
                 this.list_state.update(cx, |list_state, cx| {
                     list_state.delegate_mut().update_actions(cx);
                     cx.notify();
@@ -320,10 +336,10 @@ impl Render for BacklogListView {
                 let id = data.data.id;
                 // If the action is currently in the queue, demote it back to the
                 // backlog. Otherwise it's already here or a saved template — no-op.
-                let is_in_queue = this.database_store.read(cx).get_queue_action(id).is_some();
+                let is_in_queue = this.database_store.read(cx).get_action(id).is_some();
                 if is_in_queue {
                     this.database_store.update(cx, |store, cx| {
-                        store.demote_action(id, cx);
+                        store.backlog_action(id, cx);
                     });
                 }
                 this.drop_active = false;

@@ -402,7 +402,7 @@ impl RenderOnce for Checkbox {
                         })
                         .when(cx.theme().shadow && !self.disabled, |this| this.shadow_xs())
                         .map(|this| match checked {
-                            false => this.bg(cx.theme().background),
+                            false => this.bg(cx.theme().background.alpha(0.5)),
                             _ => this.bg(color),
                         })
                         .child(checkbox_check_icon(

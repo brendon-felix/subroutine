@@ -13,14 +13,15 @@ use gpui_component::notification::NotificationType;
 use gpui_component::scroll::Scrollbar;
 use gpui_component::{ActiveTheme, Icon, IconName, WindowExt, h_flex, v_flex};
 use palette::{Clamp, FromColor, IntoColor, Oklch, Srgb};
-use simple_core::{Action, Event, QueueItem};
-use simple_parser::{ParseDraft, parse_action_input, parse_event_input, recurrence_to_duration};
+use simple_core::{Action, AnyItem, Event};
+use simple_parser::{ParseDraft, parse_action_input, parse_event_input, recurrence_to_rule};
 use uuid::Uuid;
 
 use crate::components::checkbox::Checkbox;
 use crate::components::drag_drop::{DragData, Draggable};
-use crate::stores::DatabaseStore;
-use crate::stores::database_store::PipelineChanged;
+use crate::icons::AppIcon;
+use crate::stores::AppDatabaseStore;
+use crate::stores::database_store::DataChanged;
 use crate::views::action_editor::StartActionEditor;
 use crate::views::event_editor::StartEventEditor;
 
@@ -88,9 +89,9 @@ impl TitleEditState {
     }
 }
 
-pub struct Pipeline {
-    database_store: Entity<DatabaseStore>,
-    entries: Vec<QueueItem>,
+pub struct PipelineView {
+    database_store: Entity<AppDatabaseStore>,
+    entries: Vec<AnyItem>,
     title_inputs: HashMap<Uuid, Entity<InputState>>,
     /// Live parse state, keyed by item ID.
     title_edit_states: HashMap<Uuid, TitleEditState>,
@@ -98,13 +99,13 @@ pub struct Pipeline {
     _subscriptions: Vec<gpui::Subscription>,
 }
 
-impl Pipeline {
+impl PipelineView {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let entries = database_store.read(cx).pipeline.queue.clone();
+        let entries = database_store.read(cx).sorted_queue();
         let title_inputs = Self::build_title_inputs(&entries, window, cx);
 
         let title_edit_states = entries
@@ -117,8 +118,8 @@ impl Pipeline {
         subscriptions.push(cx.subscribe_in(
             &database_store,
             window,
-            |this, store, _event: &PipelineChanged, window, cx| {
-                let new_entries = store.read(cx).pipeline.queue.clone();
+            |this, store, _event: &DataChanged, window, cx| {
+                let new_entries = store.read(cx).sorted_queue();
                 for item in &new_entries {
                     // Only reset the input if the item is not being actively edited
                     // (i.e. its input doesn't have focus).
@@ -176,7 +177,7 @@ impl Pipeline {
     }
 
     pub fn update_items(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let new_entries = self.database_store.read(cx).pipeline.queue.clone();
+        let new_entries = self.database_store.read(cx).sorted_queue();
         for item in &new_entries {
             let title = item.title().to_string();
 
@@ -207,7 +208,7 @@ impl Pipeline {
     }
 
     fn build_title_inputs(
-        entries: &[QueueItem],
+        entries: &[AnyItem],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> HashMap<Uuid, Entity<InputState>> {
@@ -303,9 +304,9 @@ impl Pipeline {
         let saved_title = {
             let store = self.database_store.read(cx);
             store
-                .get_queue_action(id)
+                .get_action(id)
                 .map(|a| a.title.clone())
-                .or_else(|| store.get_queue_event(id).map(|e| e.title.clone()))
+                .or_else(|| store.get_event(id).map(|e| e.title.clone()))
         };
         let Some(title) = saved_title else { return };
 
@@ -432,7 +433,7 @@ impl Pipeline {
     fn commit_action(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
         // Get the current action from the store so we preserve fields not
         // touched by the parser (id, lineage_id, ephemeral, completed_at, …).
-        let original = match self.database_store.read(cx).get_queue_action(id) {
+        let original = match self.database_store.read(cx).get_action(id) {
             Some(a) => a.clone(),
             None => return,
         };
@@ -463,14 +464,10 @@ impl Pipeline {
                     use simple_parser::ast::WhenSpec;
                     match when {
                         WhenSpec::DateTime(dt) => {
-                            a.target = Some(*dt);
-                            a.target_static = true;
-                            a.naive_date = None;
+                            a.queue_static(*dt);
                         }
                         WhenSpec::NaiveDate(date) => {
-                            a.naive_date = Some(*date);
-                            a.target = None;
-                            a.target_static = false;
+                            a.backlog(Some(*date));
                         }
                     }
                 }
@@ -478,7 +475,7 @@ impl Pipeline {
                     a.duration = Some(dur);
                 }
                 if let Some(ref rec) = d.recurrence {
-                    if let Some(dur) = recurrence_to_duration(Some(rec)) {
+                    if let Some(dur) = recurrence_to_rule(Some(rec)) {
                         a.recurrence = Some(dur);
                     }
                 }
@@ -517,22 +514,21 @@ impl Pipeline {
             }
         }
 
-        let overlap_warnings = self.database_store.update(cx, |store, cx| {
-            store.update_queue_action(updated_action, cx)
-        });
+        self.database_store
+            .update(cx, |store, cx| store.upsert_action(updated_action, cx));
 
-        for warning in overlap_warnings {
-            window.push_notification(
-                (
-                    NotificationType::Warning,
-                    SharedString::from(format!(
-                        "\"{}\" overlaps with \"{}\"",
-                        warning.inserted_title, warning.conflicting_title
-                    )),
-                ),
-                cx,
-            );
-        }
+        // for warning in overlap_warnings {
+        //     window.push_notification(
+        //         (
+        //             NotificationType::Warning,
+        //             SharedString::from(format!(
+        //                 "\"{}\" overlaps with \"{}\"",
+        //                 warning.inserted_title, warning.conflicting_title
+        //             )),
+        //         ),
+        //         cx,
+        //     );
+        // }
 
         window.blur();
     }
@@ -540,7 +536,7 @@ impl Pipeline {
     /// Commit edits for an event item: parse the title input, build an updated
     /// Event preserving the original ID, then call update_queue_event.
     fn commit_event(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        let original = match self.database_store.read(cx).get_queue_event(id) {
+        let original = match self.database_store.read(cx).get_event(id) {
             Some(e) => e.clone(),
             None => return,
         };
@@ -574,7 +570,7 @@ impl Pipeline {
                     e.duration = Some(dur);
                 }
                 if let Some(ref rec) = d.recurrence {
-                    if let Some(dur) = recurrence_to_duration(Some(rec)) {
+                    if let Some(dur) = recurrence_to_rule(Some(rec)) {
                         e.recurrence = Some(dur);
                     }
                 }
@@ -613,22 +609,21 @@ impl Pipeline {
             }
         }
 
-        let overlap_warnings = self
-            .database_store
-            .update(cx, |store, cx| store.update_queue_event(updated_event, cx));
+        self.database_store
+            .update(cx, |store, cx| store.upsert_event(updated_event, cx));
 
-        for warning in overlap_warnings {
-            window.push_notification(
-                (
-                    NotificationType::Warning,
-                    SharedString::from(format!(
-                        "\"{}\" overlaps with \"{}\"",
-                        warning.inserted_title, warning.conflicting_title
-                    )),
-                ),
-                cx,
-            );
-        }
+        // for warning in overlap_warnings {
+        //     window.push_notification(
+        //         (
+        //             NotificationType::Warning,
+        //             SharedString::from(format!(
+        //                 "\"{}\" overlaps with \"{}\"",
+        //                 warning.inserted_title, warning.conflicting_title
+        //             )),
+        //         ),
+        //         cx,
+        //     );
+        // }
 
         window.blur();
     }
@@ -739,7 +734,7 @@ impl Pipeline {
             let entity_delete = entity.clone();
             menu.item(
                 PopupMenuItem::new("Complete")
-                    .icon(IconName::CircleCheck)
+                    .icon(AppIcon::Check)
                     .on_click(move |_event, _window, cx: &mut App| {
                         entity_complete.update(cx, |this, cx| {
                             this.database_store.update(cx, |store, cx| {
@@ -750,27 +745,25 @@ impl Pipeline {
             )
             .item(
                 PopupMenuItem::new("Demote to backlog")
-                    .icon(IconName::ChevronDown)
+                    .icon(AppIcon::Minus)
                     .on_click(move |_event, _window, cx: &mut App| {
                         entity_demote.update(cx, |this, cx| {
                             this.database_store.update(cx, |store, cx| {
-                                store.demote_action(action_id, cx);
+                                store.backlog_action(action_id, cx);
                             });
                         });
                     }),
             )
             .separator()
-            .item(
-                PopupMenuItem::new("Delete")
-                    .icon(IconName::Delete)
-                    .on_click(move |_event, _window, cx: &mut App| {
-                        entity_delete.update(cx, |this, cx| {
-                            this.database_store.update(cx, |store, cx| {
-                                store.delete_queue_action(action_id, cx);
-                            });
+            .item(PopupMenuItem::new("Delete").icon(AppIcon::Trash).on_click(
+                move |_event, _window, cx: &mut App| {
+                    entity_delete.update(cx, |this, cx| {
+                        this.database_store.update(cx, |store, cx| {
+                            store.delete_action(action_id, cx);
                         });
-                    }),
-            )
+                    });
+                },
+            ))
         }
     }
 
@@ -782,17 +775,15 @@ impl Pipeline {
         let entity = cx.entity();
         move |menu, _window, _cx| {
             let entity_delete = entity.clone();
-            menu.item(
-                PopupMenuItem::new("Delete")
-                    .icon(IconName::Delete)
-                    .on_click(move |_event, _window, cx: &mut App| {
-                        entity_delete.update(cx, |this, cx| {
-                            this.database_store.update(cx, |store, cx| {
-                                store.remove_from_pipeline(event_id, cx);
-                            });
+            menu.item(PopupMenuItem::new("Delete").icon(AppIcon::Trash).on_click(
+                move |_event, _window, cx: &mut App| {
+                    entity_delete.update(cx, |this, cx| {
+                        this.database_store.update(cx, |store, cx| {
+                            store.delete_event(event_id, cx);
                         });
-                    }),
-            )
+                    });
+                },
+            ))
         }
     }
 
@@ -832,7 +823,7 @@ impl Pipeline {
                 .into_any_element();
         };
 
-        let time_label = format_time_label(&QueueItem::Action(action.clone()));
+        let time_label = format_time_label(&AnyItem::Action(action.clone()));
 
         // Ensure this item's input is subscribed to parse/commit events.
         // We guard by checking if a subscription entry exists via title_edit_states
@@ -914,7 +905,7 @@ impl Pipeline {
                 .into_any_element();
         };
 
-        let time_label = format_time_label(&QueueItem::Event(event.clone()));
+        let time_label = format_time_label(&AnyItem::Event(event.clone()));
 
         self.ensure_event_subscribed(event_id, &title_input, window, cx);
 
@@ -1046,11 +1037,11 @@ fn tint_oklch(color: Hsla, hue_source: Hsla, chroma: f32) -> Hsla {
     out_rgba.into()
 }
 
-fn format_time_label(item: &QueueItem) -> String {
+fn format_time_label(item: &AnyItem) -> String {
     let target_str = item.time().map(format_target_time);
     let duration_str = match item {
-        QueueItem::Action(a) => a.duration.as_ref().map(format_duration),
-        QueueItem::Event(e) => e.duration.as_ref().map(format_duration),
+        AnyItem::Action(a) => a.duration.as_ref().map(format_duration),
+        AnyItem::Event(e) => e.duration.as_ref().map(format_duration),
     };
     match (target_str, duration_str) {
         (Some(t), Some(d)) => format!("{} · {}", t, d),
@@ -1109,11 +1100,11 @@ fn format_duration(duration: &chrono::Duration) -> String {
     }
 }
 
-impl EventEmitter<StartActionEditor> for Pipeline {}
-impl EventEmitter<StartEventEditor> for Pipeline {}
-impl EventEmitter<StartQueueEventEditor> for Pipeline {}
+impl EventEmitter<StartActionEditor> for PipelineView {}
+impl EventEmitter<StartEventEditor> for PipelineView {}
+impl EventEmitter<StartQueueEventEditor> for PipelineView {}
 
-impl Render for Pipeline {
+impl Render for PipelineView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
 
@@ -1136,7 +1127,7 @@ impl Render for Pipeline {
 
         // We need to clone entries to avoid borrow conflicts while calling
         // render_action/render_event (which need &mut self).
-        let entries: Vec<QueueItem> = self.entries.clone();
+        let entries: Vec<AnyItem> = self.entries.clone();
 
         div()
             .relative()
@@ -1159,8 +1150,8 @@ impl Render for Pipeline {
                     .w_full()
                     .child(v_flex().w_full().gap_2().p_2().children(
                         entries.iter().enumerate().map(|(ix, entry)| match entry {
-                            QueueItem::Action(action) => self.render_action(action, ix, window, cx),
-                            QueueItem::Event(event) => self.render_event(event, ix, window, cx),
+                            AnyItem::Action(action) => self.render_action(action, ix, window, cx),
+                            AnyItem::Event(event) => self.render_event(event, ix, window, cx),
                         }),
                     )),
             )

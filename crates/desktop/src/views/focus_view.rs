@@ -13,10 +13,10 @@ use gpui_component::{
     v_flex,
 };
 
-use simple_core::QueueItem;
+use simple_core::AnyItem;
 
-use crate::stores::DatabaseStore;
-use crate::stores::database_store::PipelineChanged;
+use crate::stores::AppDatabaseStore;
+use crate::stores::database_store::DataChanged;
 use crate::views::MainViewMode;
 
 pub struct NavigateFromFocus {
@@ -24,8 +24,8 @@ pub struct NavigateFromFocus {
 }
 
 pub struct FocusView {
-    database_store: Entity<DatabaseStore>,
-    entries: Vec<QueueItem>,
+    database_store: Entity<AppDatabaseStore>,
+    entries: Vec<AnyItem>,
     selected_index: usize,
     focus_handle: FocusHandle,
 }
@@ -40,7 +40,7 @@ impl Focusable for FocusView {
 
 impl FocusView {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -49,28 +49,16 @@ impl FocusView {
 
         let entries = database_store
             .read(cx)
-            .pipeline
-            .queue
-            .iter()
+            .sorted_queue()
+            .into_iter()
             .take(3)
-            .cloned()
             .collect();
 
-        cx.subscribe(
-            &database_store,
-            |this, store, _event: &PipelineChanged, cx| {
-                this.entries = store
-                    .read(cx)
-                    .pipeline
-                    .queue
-                    .iter()
-                    .take(3)
-                    .cloned()
-                    .collect();
-                this.selected_index = 0;
-                cx.notify();
-            },
-        )
+        cx.subscribe(&database_store, |this, store, _event: &DataChanged, cx| {
+            this.entries = store.read(cx).sorted_queue().into_iter().take(3).collect();
+            this.selected_index = 0;
+            cx.notify();
+        })
         .detach();
 
         Self {
@@ -115,7 +103,7 @@ impl FocusView {
                     .small()
                     .on_click(cx.listener(|_this, _event, _window, cx| {
                         cx.emit(NavigateFromFocus {
-                            mode: MainViewMode::Home,
+                            mode: MainViewMode::Dashboard,
                         });
                     })),
             )
@@ -145,7 +133,7 @@ impl FocusView {
         &self,
         entity: gpui::Entity<Self>,
         ix: usize,
-        entry: &QueueItem,
+        entry: &AnyItem,
         cx: &App,
     ) -> impl IntoElement {
         let is_selected = ix == self.selected_index;
@@ -156,7 +144,7 @@ impl FocusView {
             .id(ElementId::NamedInteger("focus-entry".into(), ix as u64))
             .w_full()
             .p_4()
-            .rounded_lg()
+            .rounded_xl()
             .border_1()
             .border_color(if is_selected {
                 theme.accent
@@ -231,7 +219,7 @@ impl Render for FocusView {
                     .items_center()
                     .when_some(selected_entry, |row, entry| {
                         let entry_id = entry.id();
-                        let is_action = matches!(entry, QueueItem::Action(_));
+                        let is_action = matches!(entry, AnyItem::Action(_));
 
                         row.when(is_action, |row| {
                             row.child(
@@ -251,22 +239,22 @@ impl Render for FocusView {
                                     .tooltip("Move back to backlog")
                                     .on_click(cx.listener(move |this, _event, _window, cx| {
                                         this.database_store.update(cx, |store, cx| {
-                                            store.demote_action(entry_id, cx);
+                                            store.backlog_action(entry_id, cx);
                                         });
                                     })),
                             )
                         })
-                        .child(
-                            Button::new("focus-remove")
-                                .label("Remove")
-                                .ghost()
-                                .tooltip("Remove from pipeline entirely")
-                                .on_click(cx.listener(move |this, _event, _window, cx| {
-                                    this.database_store.update(cx, |store, cx| {
-                                        store.remove_from_pipeline(entry_id, cx);
-                                    });
-                                })),
-                        )
+                        // .child(
+                        //     Button::new("focus-remove")
+                        //         .label("Delete")
+                        //         .ghost()
+                        //         .tooltip("Remove from pipeline entirely")
+                        //         .on_click(cx.listener(move |this, _event, _window, cx| {
+                        //             this.database_store.update(cx, |store, cx| {
+                        //                 // store.remove_from_pipeline(entry_id, cx);
+                        //             });
+                        //         })),
+                        // )
                     });
 
             v_flex()

@@ -87,24 +87,15 @@ impl AppView for EventEditorView {
 
         // ── Recurrence ────────────────────────────────────────────────────
         let rec_val = match event.recurrence {
-            Some(d) => {
-                let m = d.num_minutes();
-                if m >= 1440 {
-                    format!("every {} days", m / 1440)
-                } else if m >= 60 {
-                    format!("every {}h", m / 60)
-                } else {
-                    format!("every {}m", m)
-                }
-            }
+            Some(d) => d.describe(),
             None => "—".to_string(),
         };
         rows.push(field_row("\u{f021}  Recurrence", &rec_val));
 
         // ── Ephemeral ─────────────────────────────────────────────────────
         rows.push(field_row(
-            "\u{f05e}  Ephemeral",
-            if event.ephemeral { "yes" } else { "no" },
+            "\u{f05e}  Saved",
+            if event.saved { "yes" } else { "no" },
         ));
 
         // ── Content ───────────────────────────────────────────────────────

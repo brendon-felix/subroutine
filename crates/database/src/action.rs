@@ -225,8 +225,8 @@ pub fn insert_action(conn: &Connection, action: &Action) -> Result<()> {
                 dependencies
             )
             VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-                ?14, ?15, ?16, ?17, ?18, ?19, ?20
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                $14, $15, $16, $17, $18, $19, $20
             )
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
@@ -317,7 +317,7 @@ pub fn fetch_action_by_id(conn: &Connection, id: Uuid) -> Result<Option<Action>>
                 minimum_duration_secs, transition_time_secs, spoons_required,
                 dependencies
             FROM actions
-            WHERE id = ?1
+            WHERE id = $1
             "#,
         )
         .context("Failed to prepare action fetch by id query")?;
@@ -331,7 +331,7 @@ pub fn fetch_action_by_id(conn: &Connection, id: Uuid) -> Result<Option<Action>>
 }
 
 pub fn delete_action(conn: &Connection, id: Uuid) -> Result<()> {
-    conn.execute("DELETE FROM actions WHERE id = ?1", [id.to_string()])
+    conn.execute("DELETE FROM actions WHERE id = $1", [id.to_string()])
         .with_context(|| format!("Failed to delete action '{}'", id))?;
     Ok(())
 }

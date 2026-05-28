@@ -6,7 +6,7 @@ use gpui::{
 };
 use gpui::{KeyBinding, prelude::*};
 use gpui_component::notification::NotificationType;
-use gpui_component::{ActiveTheme, IconName, Root, ThemeMode, WindowExt, h_flex, v_flex};
+use gpui_component::{ActiveTheme, IconName, Root, ThemeMode, WindowExt, v_flex};
 
 use crate::components::action_creator::ActionCreator;
 use crate::components::command_palette::{
@@ -18,12 +18,12 @@ use crate::components::panel_group::{
     CenterPanel, NavigationBar, PanelGroup, PanelGroupState, SidePanel, SidePanelState,
 };
 use crate::components::popover::CloseOverlay;
-use crate::stores::DatabaseStore;
+use crate::stores::AppDatabaseStore;
 use crate::themes::SwitchThemeMode;
 use crate::views::RightSidebarView;
 use crate::views::{
     LeftSidebarView, MainView, MainViewMode, RoutineEditor, action_editor::StartActionEditor,
-    event_editor::StartEventEditor, pipeline::StartQueueEventEditor,
+    event_editor::StartEventEditor, pipeline_view::StartQueueEventEditor,
     routines_view::StartRoutineEditor,
 };
 
@@ -50,7 +50,7 @@ pub enum CurrentOverlay {
 }
 
 pub struct RootView {
-    database_store: Entity<DatabaseStore>,
+    database_store: Entity<AppDatabaseStore>,
     main_view: Entity<MainView>,
     left_sidebar: Entity<LeftSidebarView>,
     right_sidebar: Entity<RightSidebarView>,
@@ -61,7 +61,7 @@ pub struct RootView {
 
 impl RootView {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -238,7 +238,7 @@ impl CommandPaletteExt for RootView {
                 let entity = self.main_view.clone();
                 move |_window, cx| {
                     cx.update_entity(&entity, |main_view, cx| {
-                        main_view.set_mode(MainViewMode::Home, cx);
+                        main_view.set_mode(MainViewMode::Dashboard, cx);
                     });
                 }
             }),
@@ -539,15 +539,18 @@ impl Render for RootView {
                                     .pb_2()
                                     .pr_1()
                                     .bg(cx.theme().secondary)
-                                    .child(h_flex().h_8())
                                     .child(
                                         div()
+                                            .absolute()
+                                            .top_8()
+                                            .bottom_2()
+                                            .left_2()
+                                            .right_1()
                                             .flex()
                                             .flex_col()
-                                            .size_full()
                                             .overflow_hidden()
                                             .bg(cx.theme().secondary)
-                                            .rounded_lg()
+                                            .rounded_xl()
                                             .child(self.left_sidebar.clone()),
                                     ),
                             ),
@@ -566,9 +569,14 @@ impl Render for RootView {
                                 .child(nav_bar)
                                 .child(
                                     v_flex()
-                                        .size_full()
+                                        .absolute()
+                                        .top_8()
+                                        .bottom_2()
+                                        .left(left_pad)
+                                        .right(right_pad)
+                                        // .size_full()
                                         .bg(cx.theme().background)
-                                        .rounded_lg()
+                                        .rounded_xl()
                                         .child(
                                             div().flex_1().min_h(px(0.)).w_full().child(main_view),
                                         ),
@@ -586,13 +594,17 @@ impl Render for RootView {
                                     .pb_2()
                                     .pr_2()
                                     .bg(cx.theme().secondary)
-                                    .child(h_flex().h_8())
+                                    // .child(h_flex().h_8())
                                     .child(
                                         div()
-                                            .size_full()
+                                            .absolute()
+                                            .top_8()
+                                            .bottom_2()
+                                            .left_1()
+                                            .right_2()
                                             .overflow_hidden()
                                             .bg(cx.theme().secondary)
-                                            .rounded_lg()
+                                            .rounded_xl()
                                             .child(self.right_sidebar.clone()),
                                     ),
                             ),

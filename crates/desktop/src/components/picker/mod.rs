@@ -195,7 +195,7 @@ impl<D: PickerDelegate> Render for PickerState<D> {
             .text_color(theme.group_box_foreground)
             .border_1()
             .border_color(theme.border)
-            .rounded_lg()
+            .rounded_xl()
             .shadow_xl()
             .on_action(cx.listener(|this, _: &NavigateUp, _window, cx| {
                 this.list_state.update(cx, |state, cx| {

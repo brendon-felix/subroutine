@@ -17,9 +17,10 @@ use crate::{
         drag_drop::{DragData, Draggable, DropZone},
     },
     stores::{
-        DatabaseStore,
-        database_store::{ActionsLoaded, DatabaseError},
+        AppDatabaseStore,
+        database_store::{ActionDataChanged, DatabaseError},
     },
+    utils::format_recurrence,
     views::action_editor::StartActionEditor,
 };
 
@@ -33,34 +34,34 @@ fn format_duration(d: chrono::Duration) -> String {
     }
 }
 
-fn format_recurrence(d: chrono::Duration) -> String {
-    let days = d.num_days();
-    match days {
-        1 => "daily".into(),
-        7 => "weekly".into(),
-        14 => "fortnightly".into(),
-        28 | 30 | 31 => "monthly".into(),
-        365 | 366 => "yearly".into(),
-        n if n % 7 == 0 => format!("every {} weeks", n / 7),
-        n => format!("every {} days", n),
-    }
-}
+// fn format_recurrence(d: chrono::Duration) -> String {
+//     let days = d.num_days();
+//     match days {
+//         1 => "daily".into(),
+//         7 => "weekly".into(),
+//         14 => "fortnightly".into(),
+//         28 | 30 | 31 => "monthly".into(),
+//         365 | 366 => "yearly".into(),
+//         n if n % 7 == 0 => format!("every {} weeks", n / 7),
+//         n => format!("every {} days", n),
+//     }
+// }
 
 // ── Delegate ──────────────────────────────────────────────────────────────────
 
 pub struct SavedActionsDelegate {
     pub actions: Vec<Action>,
     selected_index: Option<usize>,
-    pub database_store: Entity<DatabaseStore>,
+    pub database_store: Entity<AppDatabaseStore>,
 }
 
 impl SavedActionsDelegate {
-    pub fn new(database_store: Entity<DatabaseStore>, cx: &App) -> Self {
+    pub fn new(database_store: Entity<AppDatabaseStore>, cx: &App) -> Self {
         let actions = database_store
             .read(cx)
-            .actions
+            .actions()
             .iter()
-            .filter(|a| !a.ephemeral)
+            .filter(|a| a.saved)
             .cloned()
             .collect();
         Self {
@@ -74,9 +75,9 @@ impl SavedActionsDelegate {
         self.actions = self
             .database_store
             .read(cx)
-            .actions
+            .actions()
             .iter()
-            .filter(|a| !a.ephemeral)
+            .filter(|a| a.saved)
             .cloned()
             .collect();
     }
@@ -125,12 +126,13 @@ impl ListDelegate for SavedActionsDelegate {
                                                     .actions
                                                     .iter()
                                                     .find(|a| a.id == id)
-                                                    .cloned();
+                                                    .cloned()
+                                                    .map(|a| a.with_saved(true));
                                                 if let Some(action) = action {
                                                     list_state.delegate().database_store.update(
                                                         cx,
                                                         |store, cx| {
-                                                            store.add_action_to_queue(action, cx);
+                                                            store.upsert_action(action, cx);
                                                         },
                                                     );
                                                 }
@@ -251,13 +253,13 @@ impl EventEmitter<StartActionEditor> for ListState<SavedActionsDelegate> {}
 pub struct SavedActionsListView {
     pub list_state: Entity<ListState<SavedActionsDelegate>>,
     drop_active: bool,
-    database_store: Entity<DatabaseStore>,
+    database_store: Entity<AppDatabaseStore>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl SavedActionsListView {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -268,7 +270,7 @@ impl SavedActionsListView {
 
         subscriptions.push(cx.subscribe(
             &database_store,
-            |this, _store, _event: &ActionsLoaded, cx| {
+            |this, _store, _event: &ActionDataChanged, cx| {
                 this.list_state.update(cx, |list_state, cx| {
                     list_state.delegate_mut().update_actions(cx);
                     cx.notify();
@@ -309,7 +311,7 @@ impl Render for SavedActionsListView {
             .active(drop_active)
             .on_drop(cx.listener(|this, data: &DragData<Action>, _window, cx| {
                 let mut action = data.data.clone();
-                action.ephemeral = false;
+                action.saved = true;
                 this.database_store.update(cx, |store, cx| {
                     store.upsert_action(action, cx);
                 });

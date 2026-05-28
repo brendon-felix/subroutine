@@ -188,7 +188,7 @@ impl Render for CommandPaletteState {
             .text_color(theme.group_box_foreground)
             .border_1()
             .border_color(theme.border)
-            .rounded_lg()
+            .rounded_xl()
             .shadow_xl()
             .on_any_mouse_down(|_event, _window, cx| {
                 cx.stop_propagation();

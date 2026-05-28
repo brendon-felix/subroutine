@@ -7,7 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Padding, Paragraph},
 };
-use simple_core::Action;
+use simple_core::{Action, ActionState};
 use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 use uuid::Uuid;
@@ -70,13 +70,13 @@ impl AppView for ActionEditorView {
         let mut rows: Vec<Line> = Vec::new();
 
         // ── When ──────────────────────────────────────────────────────────
-        let when_val = match (action.target, action.naive_date) {
-            (Some(dt), _) => {
-                let local = Local.from_utc_datetime(&dt.naive_utc());
+        let when_val = match action.state {
+            ActionState::Queued(t) => {
+                let local = Local.from_utc_datetime(&t.time.naive_utc());
                 local.format("%a %b %d %Y  %H:%M").to_string()
             }
-            (None, Some(date)) => date.format("%a %b %d %Y").to_string(),
-            (None, None) => "—".to_string(),
+            ActionState::Backlogged(Some(date)) => date.format("%a %b %d %Y").to_string(),
+            _ => "—".to_string(),
         };
         rows.push(field_row("\u{f017}  When", &when_val));
 
@@ -96,24 +96,15 @@ impl AppView for ActionEditorView {
 
         // ── Recurrence ────────────────────────────────────────────────────
         let rec_val = match action.recurrence {
-            Some(d) => {
-                let m = d.num_minutes();
-                if m >= 1440 {
-                    format!("every {} days", m / 1440)
-                } else if m >= 60 {
-                    format!("every {}h", m / 60)
-                } else {
-                    format!("every {}m", m)
-                }
-            }
+            Some(d) => d.describe(),
             None => "—".to_string(),
         };
         rows.push(field_row("\u{f021}  Recurrence", &rec_val));
 
         // ── Ephemeral ─────────────────────────────────────────────────────
         rows.push(field_row(
-            "\u{f05e}  Ephemeral",
-            if action.ephemeral { "yes" } else { "no" },
+            "\u{f05e}  Saved",
+            if action.saved { "yes" } else { "no" },
         ));
 
         // ── Content ───────────────────────────────────────────────────────

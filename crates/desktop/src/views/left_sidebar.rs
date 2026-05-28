@@ -5,37 +5,38 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::label::Label;
-use gpui_component::{ActiveTheme, IconName, Sizable, h_flex, v_flex};
+use gpui_component::{ActiveTheme, Sizable, h_flex, v_flex};
 use simple_core::Action;
 
 use crate::components::drag_drop::{DragData, DropZone};
-use crate::stores::DatabaseStore;
-use crate::stores::database_store::PipelineChanged;
+use crate::icons::AppIcon;
+use crate::stores::AppDatabaseStore;
+use crate::stores::database_store::DataChanged;
 
-use crate::views::Pipeline;
+use crate::views::PipelineView;
 
 pub struct LeftSidebarView {
     collapsed: bool,
-    pub pipeline: Entity<Pipeline>,
-    database_store: Entity<DatabaseStore>,
+    pub pipeline: Entity<PipelineView>,
+    database_store: Entity<AppDatabaseStore>,
     drop_active: bool,
     _subscriptions: Vec<Subscription>,
 }
 
 impl LeftSidebarView {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let pipeline = cx.new(|cx| Pipeline::new(database_store.clone(), window, cx));
+        let pipeline = cx.new(|cx| PipelineView::new(database_store.clone(), window, cx));
 
         let mut subscriptions = Vec::new();
 
         subscriptions.push(cx.subscribe_in(
             &database_store,
             window,
-            |this, _store, _event: &PipelineChanged, window, cx| {
+            |this, _store, _event: &DataChanged, window, cx| {
                 this.pipeline.update(cx, |pipeline, cx| {
                     pipeline.update_items(window, cx);
                     cx.notify();
@@ -65,8 +66,8 @@ impl LeftSidebarView {
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let queue_len = self.database_store.read(cx).pipeline.queue.len();
-        let backlog_len = self.database_store.read(cx).pipeline.backlog.len();
+        let queue_len = self.database_store.read(cx).sorted_queue().len();
+        let backlog_len = self.database_store.read(cx).backlogged_actions().len();
 
         h_flex()
             .w_full()
@@ -130,7 +131,7 @@ impl Render for LeftSidebarView {
                         .on_drop(cx.listener(|this, data: &DragData<Action>, _window, cx| {
                             let action_id = data.data.id;
                             this.database_store.update(cx, |store, cx| {
-                                store.promote_action(action_id, cx);
+                                store.auto_queue_action(action_id, cx);
                             });
                             this.drop_active = false;
                             cx.notify();
@@ -153,11 +154,10 @@ impl Render for LeftSidebarView {
                                 .items_center()
                                 .justify_start()
                                 .pt_8()
-                                .pb_8()
                                 .child(
                                     h_flex().w_full().px_2().pb_2().justify_end().child(
                                         Button::new("refresh-pipeline")
-                                            .icon(IconName::Replace)
+                                            .icon(AppIcon::RefreshCcw)
                                             .ghost()
                                             .xsmall()
                                             .tooltip("Refresh pipeline")
@@ -176,7 +176,7 @@ impl Render for LeftSidebarView {
                                         .size_full()
                                         .border_1()
                                         .border_color(cx.theme().border)
-                                        .rounded_lg()
+                                        .rounded_xl()
                                         .child(pipeline),
                                 ),
                         ),

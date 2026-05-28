@@ -205,7 +205,7 @@ fn fetch_step_ids(conn: &Connection, saved_event_id: &str) -> Result<Vec<String>
         .prepare(
             r#"
             SELECT saved_action_id FROM saved_event_steps
-            WHERE saved_event_id = ?1
+            WHERE saved_event_id = $1
             ORDER BY position ASC
             "#,
         )
@@ -222,7 +222,7 @@ fn fetch_step_ids(conn: &Connection, saved_event_id: &str) -> Result<Vec<String>
 
 fn insert_step_ids(conn: &Connection, saved_event_id: &str, steps: &[String]) -> Result<()> {
     conn.execute(
-        "DELETE FROM saved_event_steps WHERE saved_event_id = ?1",
+        "DELETE FROM saved_event_steps WHERE saved_event_id = $1",
         [saved_event_id],
     )
     .context("Failed to clear saved_event_steps before insert")?;
@@ -231,7 +231,7 @@ fn insert_step_ids(conn: &Connection, saved_event_id: &str, steps: &[String]) ->
         conn.execute(
             r#"
             INSERT INTO saved_event_steps (saved_event_id, saved_action_id, position)
-            VALUES (?1, ?2, ?3)
+            VALUES ($1, $2, $3)
             "#,
             rusqlite::params![saved_event_id, saved_action_id, position as i64],
         )
@@ -256,7 +256,7 @@ pub fn insert_saved_event(conn: &Connection, saved: &SavedEvent) -> Result<()> {
                 recurrence_auto_reschedule
             )
             VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
             )
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
@@ -349,7 +349,7 @@ pub fn fetch_saved_event_by_id(conn: &Connection, id: Uuid) -> Result<Option<Sav
                 recurrence_min_interval_secs, recurrence_max_interval_secs,
                 recurrence_auto_reschedule
             FROM saved_events
-            WHERE id = ?1
+            WHERE id = $1
             "#,
         )
         .context("Failed to prepare saved event fetch by id query")?;
@@ -369,7 +369,7 @@ pub fn fetch_saved_event_by_id(conn: &Connection, id: Uuid) -> Result<Option<Sav
 
 pub fn delete_saved_event(conn: &Connection, id: Uuid) -> Result<()> {
     conn.execute(
-        "DELETE FROM saved_event_steps WHERE saved_event_id = ?1",
+        "DELETE FROM saved_event_steps WHERE saved_event_id = $1",
         [id.to_string()],
     )
     .with_context(|| {
@@ -379,7 +379,7 @@ pub fn delete_saved_event(conn: &Connection, id: Uuid) -> Result<()> {
         )
     })?;
 
-    conn.execute("DELETE FROM saved_events WHERE id = ?1", [id.to_string()])
+    conn.execute("DELETE FROM saved_events WHERE id = $1", [id.to_string()])
         .with_context(|| format!("Failed to delete saved event '{}'", id))?;
 
     Ok(())

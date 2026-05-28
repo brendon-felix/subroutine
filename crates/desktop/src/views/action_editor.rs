@@ -5,22 +5,24 @@ use gpui::{
     div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
-    ActiveTheme, Sizable, WindowExt,
+    ActiveTheme, Sizable,
     button::{Button, ButtonVariants},
     clipboard::Clipboard,
     h_flex,
     input::{Input, InputState},
     label::Label,
-    notification::NotificationType,
     v_flex,
 };
-use simple_core::Action;
+use simple_core::{Action, ActionState, ActionTarget};
 use uuid::Uuid;
 
 use crate::{
     components::popover::popover,
-    stores::DatabaseStore,
-    utils::{format_datetime_local, format_duration, parse_datetime_local, parse_duration},
+    stores::AppDatabaseStore,
+    utils::{
+        format_datetime_local, format_duration, format_recurrence, parse_datetime_local,
+        parse_duration, parse_recurrence,
+    },
 };
 
 pub struct StartActionEditor {
@@ -29,7 +31,7 @@ pub struct StartActionEditor {
 
 pub struct ActionEditor {
     pub focus_handle: FocusHandle,
-    database_store: Entity<DatabaseStore>,
+    database_store: Entity<AppDatabaseStore>,
 
     /// The action being edited, if any.
     action: Option<Action>,
@@ -58,7 +60,7 @@ impl Focusable for ActionEditor {
 
 impl ActionEditor {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -101,18 +103,18 @@ impl ActionEditor {
         let store = self.database_store.read(cx);
         // Look in the saved-actions table first, then fall back to the live
         // queue and backlog for actions that were never persisted separately.
-        let action = store
-            .get_action(action_id)
-            .or_else(|| store.get_queue_action(action_id))
-            .or_else(|| store.get_backlog_action(action_id))
-            .cloned();
+        let action = store.get_action(action_id);
 
         if let Some(action) = action {
             self.pending_title = Some(action.title.clone());
             self.pending_content = action.content.clone();
             self.pending_duration = action.duration.map(format_duration);
-            self.pending_target_time = action.target.map(format_datetime_local);
-            self.pending_recurrence = action.recurrence.map(format_duration);
+            self.pending_target_time = if let ActionState::Queued(t) = action.state {
+                Some(format_datetime_local(t.time))
+            } else {
+                None
+            };
+            self.pending_recurrence = action.recurrence.map(format_recurrence);
             self.action = Some(action);
             cx.notify();
         }
@@ -176,33 +178,40 @@ impl ActionEditor {
         let target = self.read_target_time(cx).and_then(|r| r.ok());
         // A manually entered target time is always treated as static so the
         // scheduler does not move it automatically.
-        let target_static = target.is_some();
         let recurrence = {
             let text = self.recurrence_input.read(cx).value().to_string();
             if text.trim().is_empty() {
                 None
             } else {
-                parse_duration(text.trim()).ok()
+                parse_recurrence(text.trim()).ok()
             }
         };
 
         let base = match &self.action {
             Some(existing) => existing.clone(),
-            None => Action::new_saved(title.clone()),
+            None => Action::new(title.clone()),
+        };
+
+        let state = if let Some(dt) = target {
+            ActionState::Queued(ActionTarget {
+                time: dt,
+                is_static: true,
+            })
+        } else {
+            base.state
         };
 
         Action {
             title,
             content,
             duration,
-            target,
-            target_static,
             recurrence,
+            state,
             ..base
         }
     }
 
-    fn save_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn save_action(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let action = self.build_action(cx);
         if action.title.trim().is_empty() {
             return;
@@ -212,33 +221,33 @@ impl ActionEditor {
         let is_in_queue = self
             .database_store
             .read(cx)
-            .get_queue_action(action_id)
-            .is_some();
+            .get_action(action_id)
+            .map(|a| a.is_queued())
+            .unwrap_or(false);
 
-        let warnings = if is_in_queue {
+        if is_in_queue {
             self.database_store
-                .update(cx, |store, cx| store.update_queue_action(action, cx))
+                .update(cx, |store, cx| store.upsert_action(action, cx))
         } else {
             // Not in the queue — just persist the saved-action record.
             // The pipeline will pick it up on the next refresh if needed.
             self.database_store.update(cx, |store, cx| {
                 store.upsert_action(action, cx);
             });
-            Vec::new()
-        };
-
-        for warning in warnings {
-            window.push_notification(
-                (
-                    NotificationType::Warning,
-                    SharedString::from(format!(
-                        "\"{}\" overlaps with \"{}\"",
-                        warning.inserted_title, warning.conflicting_title
-                    )),
-                ),
-                cx,
-            );
         }
+
+        // for warning in warnings {
+        //     window.push_notification(
+        //         (
+        //             NotificationType::Warning,
+        //             SharedString::from(format!(
+        //                 "\"{}\" overlaps with \"{}\"",
+        //                 warning.inserted_title, warning.conflicting_title
+        //             )),
+        //         ),
+        //         cx,
+        //     );
+        // }
     }
 
     fn delete_action(&mut self, cx: &mut Context<Self>) {
@@ -264,14 +273,20 @@ impl ActionEditor {
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| "—".to_string()),
                 ),
-                ("Ephemeral", action.ephemeral.to_string()),
-                ("Target static", action.target_static.to_string()),
+                ("Saved", action.saved.to_string()),
+                (
+                    "Target static",
+                    match action.state {
+                        ActionState::Queued(t) => t.is_static.to_string(),
+                        _ => "false".to_string(),
+                    },
+                ),
                 (
                     "Target",
-                    action
-                        .target
-                        .map(format_datetime_local)
-                        .unwrap_or_else(|| "—".to_string()),
+                    match action.state {
+                        ActionState::Queued(t) => format_datetime_local(t.time),
+                        _ => "—".to_string(),
+                    },
                 ),
                 (
                     "Duration",
@@ -284,7 +299,7 @@ impl ActionEditor {
                     "Recurrence",
                     action
                         .recurrence
-                        .map(format_duration)
+                        .map(format_recurrence)
                         .unwrap_or_else(|| "—".to_string()),
                 ),
             ],
@@ -373,7 +388,7 @@ impl Render for ActionEditor {
             .text_color(theme.group_box_foreground)
             .border_1()
             .border_color(theme.border)
-            .rounded_lg()
+            .rounded_xl()
             .shadow_xl()
             .track_focus(&self.focus_handle)
             .on_any_mouse_down(|_event, _window, cx| {

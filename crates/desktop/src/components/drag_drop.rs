@@ -162,7 +162,7 @@ impl<T: Clone + Debug + 'static> Draggable<T> {
         Self {
             base: div().id(id.into()),
             drag_data,
-            cursor_style: CursorStyle::PointingHand,
+            cursor_style: CursorStyle::OpenHand,
             hover_bg: None,
             children: Vec::new(),
             style: StyleRefinement::default(),
@@ -337,7 +337,7 @@ fn render_insertion_indicator(height: Pixels, theme: &Theme) -> AnyElement {
         .h(height)
         .w_full()
         .bg(theme.drop_target)
-        .rounded_lg()
+        .rounded_xl()
         .border_1()
         .border_color(theme.primary)
         // .rounded(px(1.0))

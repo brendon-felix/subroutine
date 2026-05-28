@@ -6,7 +6,7 @@ use gpui::{
 use gpui_component::{ActiveTheme, Root, Theme, ThemeMode, ThemeRegistry, input};
 
 use crate::assets::AppAssets;
-use crate::stores::DatabaseStore;
+use crate::stores::AppDatabaseStore;
 use crate::themes::{SwitchTheme, SwitchThemeMode};
 use crate::views::RootView;
 use crate::{components, themes};
@@ -74,11 +74,14 @@ pub fn init(cx: &mut App) {
     //     eprintln!("Failed to load embedded fonts: {}", e);
     // }
 
+    let url = server_url_from_env().unwrap_or_else(|| "http://localhost:3000".to_string());
+    eprintln!("[app] server URL: {url:?}");
+
     cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-    let database_store = cx.new(move |cx| DatabaseStore::new(cx));
-    database_store.update(cx, |store, cx| {
-        store.initialize(cx);
-    });
+    let database_store = cx.new(move |cx| AppDatabaseStore::new(url, cx));
+    // database_store.update(cx, |store, cx| {
+    //     store.initialize(cx);
+    // });
 
     let mut titlebar_options = TitlebarOptions::default();
     titlebar_options.appears_transparent = true;
@@ -149,6 +152,46 @@ fn theme_menu(cx: &App) -> MenuItem {
 //         ],
 //     })
 // }
+
+fn server_url_from_env() -> Option<String> {
+    load_dotenv();
+
+    if let Ok(url) = std::env::var("SUBROUTINE_SERVER_URL") {
+        return Some(url);
+    }
+
+    let host = std::env::var("SUBROUTINE_HOST").ok()?;
+    let port: u16 = std::env::var("SUBROUTINE_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3000);
+
+    Some(format!("http://{host}:{port}"))
+}
+
+fn load_dotenv() {
+    let candidates = [
+        std::path::PathBuf::from("database.env"),
+        std::path::PathBuf::from("../../database.env"),
+        std::path::PathBuf::from("../../../database.env"),
+    ];
+    for path in &candidates {
+        if let Ok(content) = std::fs::read_to_string(path) {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, val)) = line.split_once('=') {
+                    if std::env::var(key.trim()).is_err() {
+                        unsafe { std::env::set_var(key.trim(), val.trim()) };
+                    }
+                }
+            }
+            break;
+        }
+    }
+}
 
 fn update_app_menu(cx: &App) {
     let mode = cx.theme().mode;

@@ -129,7 +129,7 @@ fn fetch_routine_steps(conn: &Connection, routine_id: &str) -> Result<Vec<(Strin
         .prepare(
             r#"
             SELECT step_type, step_id FROM routine_steps
-            WHERE routine_id = ?1
+            WHERE routine_id = $1
             ORDER BY position ASC
             "#,
         )
@@ -150,7 +150,7 @@ fn insert_routine_steps(
     steps: &[(String, String)],
 ) -> Result<()> {
     conn.execute(
-        "DELETE FROM routine_steps WHERE routine_id = ?1",
+        "DELETE FROM routine_steps WHERE routine_id = $1",
         [routine_id],
     )
     .context("Failed to clear routine_steps before insert")?;
@@ -159,7 +159,7 @@ fn insert_routine_steps(
         conn.execute(
             r#"
             INSERT INTO routine_steps (routine_id, step_type, step_id, position)
-            VALUES (?1, ?2, ?3, ?4)
+            VALUES ($1, $2, $3, $4)
             "#,
             rusqlite::params![routine_id, step_type, step_id, position as i64],
         )
@@ -282,7 +282,7 @@ pub fn insert_routine(conn: &Connection, routine: &Routine) -> Result<()> {
                 recurrence_min_interval_secs, recurrence_max_interval_secs,
                 recurrence_auto_reschedule
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 content = excluded.content,
@@ -363,7 +363,7 @@ pub fn fetch_routine_by_id(conn: &Connection, id: Uuid) -> Result<Option<Routine
                 recurrence_min_interval_secs, recurrence_max_interval_secs,
                 recurrence_auto_reschedule
             FROM routines
-            WHERE id = ?1
+            WHERE id = $1
             "#,
         )
         .context("Failed to prepare routine fetch by id query")?;
@@ -383,12 +383,12 @@ pub fn fetch_routine_by_id(conn: &Connection, id: Uuid) -> Result<Option<Routine
 
 pub fn delete_routine(conn: &Connection, id: Uuid) -> Result<()> {
     conn.execute(
-        "DELETE FROM routine_steps WHERE routine_id = ?1",
+        "DELETE FROM routine_steps WHERE routine_id = $1",
         [id.to_string()],
     )
     .with_context(|| format!("Failed to delete routine_steps for routine '{}'", id))?;
 
-    conn.execute("DELETE FROM routines WHERE id = ?1", [id.to_string()])
+    conn.execute("DELETE FROM routines WHERE id = $1", [id.to_string()])
         .with_context(|| format!("Failed to delete routine '{}'", id))?;
 
     Ok(())
@@ -443,7 +443,7 @@ fn fetch_subroutine_steps(conn: &Connection, subroutine_id: &str) -> Result<Vec<
         .prepare(
             r#"
             SELECT saved_action_id FROM subroutine_steps
-            WHERE subroutine_id = ?1
+            WHERE subroutine_id = $1
             ORDER BY position ASC
             "#,
         )
@@ -460,7 +460,7 @@ fn fetch_subroutine_steps(conn: &Connection, subroutine_id: &str) -> Result<Vec<
 
 fn insert_subroutine_steps(conn: &Connection, subroutine_id: &str, steps: &[String]) -> Result<()> {
     conn.execute(
-        "DELETE FROM subroutine_steps WHERE subroutine_id = ?1",
+        "DELETE FROM subroutine_steps WHERE subroutine_id = $1",
         [subroutine_id],
     )
     .context("Failed to clear subroutine_steps before insert")?;
@@ -469,7 +469,7 @@ fn insert_subroutine_steps(conn: &Connection, subroutine_id: &str, steps: &[Stri
         conn.execute(
             r#"
             INSERT INTO subroutine_steps (subroutine_id, saved_action_id, position)
-            VALUES (?1, ?2, ?3)
+            VALUES ($1, $2, $3)
             "#,
             rusqlite::params![subroutine_id, saved_action_id, position as i64],
         )
@@ -580,7 +580,7 @@ pub fn insert_subroutine(conn: &Connection, subroutine: &Subroutine) -> Result<(
                 recurrence_min_interval_secs, recurrence_max_interval_secs,
                 recurrence_auto_reschedule
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 content = excluded.content,
@@ -661,7 +661,7 @@ pub fn fetch_subroutine_by_id(conn: &Connection, id: Uuid) -> Result<Option<Subr
                 recurrence_min_interval_secs, recurrence_max_interval_secs,
                 recurrence_auto_reschedule
             FROM subroutines
-            WHERE id = ?1
+            WHERE id = $1
             "#,
         )
         .context("Failed to prepare subroutine fetch by id query")?;
@@ -681,12 +681,12 @@ pub fn fetch_subroutine_by_id(conn: &Connection, id: Uuid) -> Result<Option<Subr
 
 pub fn delete_subroutine(conn: &Connection, id: Uuid) -> Result<()> {
     conn.execute(
-        "DELETE FROM subroutine_steps WHERE subroutine_id = ?1",
+        "DELETE FROM subroutine_steps WHERE subroutine_id = $1",
         [id.to_string()],
     )
     .with_context(|| format!("Failed to delete subroutine_steps for subroutine '{}'", id))?;
 
-    conn.execute("DELETE FROM subroutines WHERE id = ?1", [id.to_string()])
+    conn.execute("DELETE FROM subroutines WHERE id = $1", [id.to_string()])
         .with_context(|| format!("Failed to delete subroutine '{}'", id))?;
 
     Ok(())

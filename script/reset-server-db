@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -e
+
+HOST="100.112.215.8"
+DB_PASS="$(grep SUBROUTINE_PASSWORD "$(dirname "$0")/../database.env" | cut -d= -f2)"
+PSQL="PGPASSWORD=$DB_PASS psql -U subroutine -h $HOST -d subroutine"
+
+echo "==> Dropping tables..."
+ssh "felixb@$HOST" "$PSQL -c '
+    DROP TABLE IF EXISTS routine_steps;
+    DROP TABLE IF EXISTS _sqlx_migrations;
+    DROP TABLE IF EXISTS actions;
+    DROP TABLE IF EXISTS events;
+    DROP TABLE IF EXISTS routines;
+'"
+
+echo "==> Done. The app will recreate tables via sqlx migrations on next connect."

@@ -14,10 +14,7 @@ use tokio::sync::mpsc::UnboundedSender;
 // use tui_scrollview::{ScrollView, ScrollViewState};
 use tui_widget_list::{ListBuilder, ListState, ListView};
 
-use crate::{
-    app::AppAction,
-    ui::{AppView, UIAction, utils},
-};
+use crate::{app::AppAction, ui::AppView};
 
 pub struct TimelineState {
     // scroll_state: ScrollViewState,

@@ -1,19 +1,19 @@
-use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
-use ratatui::{Frame, layout::Rect, text::Text};
+// use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
+// use ratatui::text::Text;
 
-mod animate;
+// mod animate;
 pub mod utils;
 mod views;
 
 pub use views::*;
 
-use std::time::Instant;
-use tokio::sync::mpsc::UnboundedSender;
+// use std::time::Instant;
+// use tokio::sync::mpsc::UnboundedSender;
 
-use crate::app::AppAction;
+// use crate::app::AppAction;
 
 #[derive(Debug, Clone)]
 pub enum UIAction {
-    Dialog(Text<'static>, Box<AppAction>),
-    DebugMsg(String, u16),
+    // Dialog(Text<'static>, Box<AppAction>),
+    // DebugMsg(String, u16),
 }

@@ -389,3 +389,145 @@ bitflags = { version = "2", features = ["serde"] }
 - **UUIDs**: serialize as lowercase hyphenated strings (`"550e8400-..."`). Kotlin receives them as `String`.
 - **`BitFlags`**: serialize as integers. Kotlin receives as `Int`.
 - Always use `Json { ignoreUnknownKeys = true }` on the Kotlin side so adding new Rust fields doesn't crash older app versions.
+
+---
+
+## kotlinx.serialization `encodeDefaults` gotcha — CRITICAL
+
+**Default is `false` in kotlinx.serialization 1.6+.** Fields whose value equals their declared default are **silently omitted** from the serialized JSON.
+
+This causes HTTP 422 from the Rust/axum server because serde requires all non-`Option` fields to be present.
+
+**Always set `encodeDefaults = true` in the `Json {}` instance used for Retrofit:**
+
+```kotlin
+// RetrofitClient.kt
+private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+```
+
+This applies to the converter factory (request body serialization). The repository's local `Json` instance used only for *decoding* `RustBridge` stub output doesn't technically need it, but it's harmless to add.
+
+Affected fields in this project: `val saved: Boolean = false` on `Action` and `Event`. Without `encodeDefaults = true`, `saved = false` is dropped from PUT bodies, causing the server to reject with `missing field 'saved'`.
+
+---
+
+## HTTP error body extraction
+
+Retrofit's `HttpException.message` only contains the status line (e.g. `"HTTP 422 Unprocessable Entity"`). To see the server's actual error detail, read the response body:
+
+```kotlin
+import retrofit2.HttpException
+
+try {
+    api.upsertAction(action.id, action)
+} catch (e: HttpException) {
+    val errorBody = e.response()?.errorBody()?.string() ?: "(no body)"
+    Log.e("Repo", "HTTP ${e.code()}: $errorBody")
+    throw RuntimeException("HTTP ${e.code()}: $errorBody", e)
+}
+```
+
+The axum server includes a human-readable serde error in the 422 body, e.g.:
+> `Failed to deserialize the JSON body into the target type: missing field 'saved' at line 1 column 154`
+
+Change OkHttp logging to `Level.BODY` to see full request/response in Logcat during debugging:
+
+```kotlin
+HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BODY }
+```
+
+---
+
+## Navigation with Navigation3
+
+Route keys live in a dedicated `NavRoutes.kt`. Each is a `@Serializable` data class or data object implementing `NavKey`:
+
+```kotlin
+import androidx.navigation3.runtime.NavKey
+import kotlinx.serialization.Serializable
+
+@Serializable data object MainRoute : NavKey
+@Serializable data class EditActionRoute(val actionId: String) : NavKey
+@Serializable data class EditEventRoute(val eventId: String)   : NavKey
+```
+
+Wiring in `MainActivity`:
+
+```kotlin
+val backStack = rememberNavBackStack(MainRoute)
+
+NavDisplay(
+    backStack = backStack,
+    onBack = { backStack.removeLastOrNull() },
+    entryProvider = entryProvider {
+        entry<MainRoute> {
+            MainScreen(
+                onEditAction = { id -> backStack.add(EditActionRoute(id)) },
+                onEditEvent  = { id -> backStack.add(EditEventRoute(id)) },
+            )
+        }
+        entry<EditActionRoute> { route ->
+            EditActionScreen(actionId = route.actionId, onBack = { backStack.removeLastOrNull() })
+        }
+        entry<EditEventRoute> { route ->
+            EditEventScreen(eventId = route.eventId, onBack = { backStack.removeLastOrNull() })
+        }
+    },
+)
+```
+
+Pass navigation callbacks as plain lambdas down to screens/components — screens never touch the back stack directly.
+
+---
+
+## Edit screen pattern
+
+All edit screens follow the same structure:
+
+1. **Resolve the entity** from `UiState.Success` at the top of the composable. If `null`, call `onBack()` and `return` immediately.
+2. **Delegate to a pure `Content` composable** that owns all local state with `rememberSaveable(entity.id)`.
+3. **ViewModel save methods** accept the ID + new values, resolve the entity internally, call the repository, then `loadActions()` and invoke `onSuccess` (usually `onBack`).
+4. **`_saving: MutableStateFlow<Boolean>`** in the ViewModel — set around repository calls, disable all buttons while `true`.
+
+```kotlin
+// ViewModel
+private val _saving = MutableStateFlow(false)
+val saving: StateFlow<Boolean> = _saving.asStateFlow()
+
+fun saveEvent(eventId: String, title: String, content: String?, onSuccess: () -> Unit) {
+    val event = resolveEvent(_uiState.value, eventId) ?: return
+    viewModelScope.launch {
+        _saving.value = true
+        runCatching { repository.updateEvent(event, title, content) }
+            .onSuccess { loadActions(); onSuccess() }
+            .onFailure { e -> _uiState.value = UiState.Error(e.message ?: "Save failed") }
+        _saving.value = false
+    }
+}
+```
+
+```kotlin
+// Screen entrypoint — resolves entity, delegates to Content
+@Composable
+fun EditEventScreen(eventId: String, viewModel: MainViewModel, onBack: () -> Unit) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val saving  by viewModel.saving.collectAsStateWithLifecycle()
+
+    val event = (uiState as? ActionsUiState.Success)
+        ?.queueItems
+        ?.filterIsInstance<QueueItem.EventItem>()
+        ?.firstOrNull { it.event.id == eventId }
+        ?.event
+        ?: run { onBack(); return }
+
+    EditEventContent(
+        event   = event,
+        saving  = saving,
+        onBack  = onBack,
+        onSave  = { t, c -> viewModel.saveEvent(eventId, t, c, onBack) },
+        onDelete = { viewModel.deleteEvent(eventId, onBack) },
+    )
+}
+```
+
+Delete actions should always show an `AlertDialog` confirmation before calling the ViewModel.

@@ -4,9 +4,9 @@ use ratatui::{
     style::{Color, Style},
     widgets::{Block, Clear, Widget},
 };
-use tokio::sync::mpsc::UnboundedSender;
+// use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{app::AppAction, ui::UIAction};
+// use crate::{app::AppAction, ui::UIAction};
 
 pub fn centered_area(area: Rect, height: u16, width: u16) -> Rect {
     Layout::new(
@@ -37,7 +37,7 @@ pub fn paint_background(f: &mut Frame) {
         .render(f.area(), f.buffer_mut());
 }
 
-pub fn debug(msg: impl Into<String>, tx: &UnboundedSender<AppAction>) {
-    tx.send(AppAction::UIAction(UIAction::DebugMsg(msg.into(), 5000)))
-        .unwrap();
-}
+// pub fn debug(msg: impl Into<String>, tx: &UnboundedSender<AppAction>) {
+//     tx.send(AppAction::UIAction(UIAction::DebugMsg(msg.into(), 5000)))
+//         .unwrap();
+// }

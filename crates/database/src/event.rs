@@ -207,7 +207,7 @@ fn fetch_event_action_ids(conn: &Connection, event_id: &str) -> Result<Vec<Strin
         .prepare(
             r#"
             SELECT action_id FROM event_actions
-            WHERE event_id = ?1
+            WHERE event_id = $1
             ORDER BY position ASC
             "#,
         )
@@ -223,14 +223,14 @@ fn fetch_event_action_ids(conn: &Connection, event_id: &str) -> Result<Vec<Strin
 }
 
 fn insert_event_action_ids(conn: &Connection, event_id: &str, actions: &[String]) -> Result<()> {
-    conn.execute("DELETE FROM event_actions WHERE event_id = ?1", [event_id])
+    conn.execute("DELETE FROM event_actions WHERE event_id = $1", [event_id])
         .context("Failed to clear event_actions before insert")?;
 
     for (position, action_id) in actions.iter().enumerate() {
         conn.execute(
             r#"
             INSERT INTO event_actions (event_id, action_id, position)
-            VALUES (?1, ?2, ?3)
+            VALUES ($1, $2, $3)
             "#,
             rusqlite::params![event_id, action_id, position as i64],
         )
@@ -252,7 +252,7 @@ pub fn insert_event(conn: &Connection, event: &Event) -> Result<()> {
                 minimum_duration_secs, transition_time_secs, spoons_required,
                 dependencies
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 content = excluded.content,
@@ -339,7 +339,7 @@ pub fn fetch_event_by_id(conn: &Connection, id: Uuid) -> Result<Option<Event>> {
                 minimum_duration_secs, transition_time_secs, spoons_required,
                 dependencies
             FROM events
-            WHERE id = ?1
+            WHERE id = $1
             "#,
         )
         .context("Failed to prepare event fetch by id query")?;
@@ -359,12 +359,12 @@ pub fn fetch_event_by_id(conn: &Connection, id: Uuid) -> Result<Option<Event>> {
 
 pub fn delete_event(conn: &Connection, id: Uuid) -> Result<()> {
     conn.execute(
-        "DELETE FROM event_actions WHERE event_id = ?1",
+        "DELETE FROM event_actions WHERE event_id = $1",
         [id.to_string()],
     )
     .with_context(|| format!("Failed to delete event_actions for event '{}'", id))?;
 
-    conn.execute("DELETE FROM events WHERE id = ?1", [id.to_string()])
+    conn.execute("DELETE FROM events WHERE id = $1", [id.to_string()])
         .with_context(|| format!("Failed to delete event '{}'", id))?;
 
     Ok(())

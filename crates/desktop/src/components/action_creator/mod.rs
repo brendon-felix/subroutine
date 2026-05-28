@@ -22,7 +22,7 @@ use simple_parser::{
 
 use crate::{
     components::popover::{CloseOverlay, popover},
-    stores::DatabaseStore,
+    stores::AppDatabaseStore,
 };
 
 /// Format a [`RecurrenceSpec`] as a short human-readable string.
@@ -97,7 +97,7 @@ fn format_weekday_set(set: &WeekdaySet) -> String {
 
 pub struct ActionCreator {
     pub focus_handle: FocusHandle,
-    database_store: Entity<DatabaseStore>,
+    database_store: Entity<AppDatabaseStore>,
 
     title_input: Entity<InputState>,
     content_input: Entity<InputState>,
@@ -119,7 +119,7 @@ pub struct ActionCreator {
 
 impl ActionCreator {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -226,7 +226,7 @@ impl ActionCreator {
 
         // The `save` checkbox controls ephemerality regardless of what the
         // parser inferred.
-        action.ephemeral = !self.save;
+        action.saved = self.save;
 
         // An explicit description always takes precedence over the parsed one.
         if !self.current_content.is_empty() {
@@ -254,23 +254,31 @@ impl ActionCreator {
             );
         }
 
-        // Add to the pipeline and show overlap warnings.
-        let overlap_warnings = self
-            .database_store
-            .update(cx, |store, cx| store.add_action_to_queue(action, cx));
+        // add to the pipeline
+        self.database_store.update(cx, |store, cx| {
+            // let mut action = action;
+            // if matches!(action.state, ActionState::Backlogged(_)) {
+            //     action.state = ActionState::Queued(ActionTarget {
+            //         // time: store.next_queue_slot(),
+            //         is_static: false,
+            //     });
+            // }
+            // store.add_action_to_queue(action, cx);
+            store.upsert_action(action, cx);
+        });
 
-        for warning in overlap_warnings {
-            window.push_notification(
-                (
-                    NotificationType::Warning,
-                    SharedString::from(format!(
-                        "\"{}\" overlaps with \"{}\"",
-                        warning.inserted_title, warning.conflicting_title
-                    )),
-                ),
-                cx,
-            );
-        }
+        // for warning in overlap_warnings {
+        //     window.push_notification(
+        //         (
+        //             NotificationType::Warning,
+        //             SharedString::from(format!(
+        //                 "\"{}\" overlaps with \"{}\"",
+        //                 warning.inserted_title, warning.conflicting_title
+        //             )),
+        //         ),
+        //         cx,
+        //     );
+        // }
 
         if !self.batch_mode {
             window.dispatch_action(Box::new(CloseOverlay), cx);
@@ -372,7 +380,7 @@ impl Render for ActionCreator {
                 .text_color(theme.group_box_foreground)
                 .border_1()
                 .border_color(theme.border)
-                .rounded_lg()
+                .rounded_xl()
                 .shadow_xl()
                 .on_any_mouse_down(|_event, _window, cx| {
                     cx.stop_propagation();

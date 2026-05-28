@@ -22,7 +22,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 const TICK_RATE: f64 = 10.0; // 10 ticks/sec
-pub const TICK_PERIOD_MS: u64 = (1000.0 / TICK_RATE) as u64;
+// pub const TICK_PERIOD_MS: u64 = (1000.0 / TICK_RATE) as u64;
 const FRAME_RATE: f64 = 60.0; // 60 frames/sec
 
 #[derive(Clone, Debug)]
@@ -35,7 +35,7 @@ pub enum Event {
     Render(Instant),
     FocusGained,
     FocusLost,
-    Paste(String),
+    // Paste(String),
     Key(KeyEvent),
     Mouse(MouseEvent),
     Resize(u16, u16),
@@ -106,8 +106,8 @@ impl AppTerminal {
                                     CrosstermEvent::FocusGained => {
                                         _event_tx.send(Event::FocusGained).unwrap();
                                     },
-                                    CrosstermEvent::Paste(s) => {
-                                        _event_tx.send(Event::Paste(s)).unwrap();
+                                    CrosstermEvent::Paste(_s) => {
+                                        // _event_tx.send(Event::Paste(s)).unwrap();
                                     },
                                 }
                             }

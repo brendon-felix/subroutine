@@ -3,13 +3,14 @@ use gpui::{
     Styled, Window, div, prelude::FluentBuilder,
 };
 use gpui_component::{
-    ActiveTheme, IconName, Sizable,
+    ActiveTheme, Sizable,
     tab::{Tab, TabBar},
     v_flex,
 };
 
 use crate::{
-    stores::DatabaseStore,
+    icons::AppIcon,
+    stores::AppDatabaseStore,
     views::{
         BacklogListView, saved_actions::SavedActionsListView, saved_events::SavedEventsListView,
     },
@@ -32,7 +33,7 @@ pub struct RightSidebarView {
 
 impl RightSidebarView {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -58,7 +59,7 @@ impl Render for RightSidebarView {
             v_flex()
                 .size_full()
                 .bg(cx.theme().background)
-                .rounded_lg()
+                .rounded_xl()
                 .child(
                     TabBar::new("right-sidebar-tabs")
                         .small()
@@ -69,7 +70,7 @@ impl Render for RightSidebarView {
                         .child(
                             Tab::new()
                                 .flex_1()
-                                .icon(IconName::Inbox)
+                                .icon(AppIcon::ScrollText)
                                 .on_click(cx.listener(|this, _, _, _| {
                                     this.selected_tab = RightSidebarTab::Backlog;
                                 })),
@@ -77,25 +78,23 @@ impl Render for RightSidebarView {
                         .child(
                             Tab::new()
                                 .flex_1()
-                                .icon(IconName::Palette)
+                                .icon(AppIcon::ListCheck)
                                 .on_click(cx.listener(|this, _, _, _| {
                                     this.selected_tab = RightSidebarTab::SavedActions;
                                 })),
                         )
-                        .child(
-                            Tab::new()
-                                .flex_1()
-                                .icon(IconName::Calendar)
-                                .on_click(cx.listener(|this, _, _, _| {
-                                    this.selected_tab = RightSidebarTab::SavedEvents;
-                                })),
-                        ),
+                        .child(Tab::new().flex_1().icon(AppIcon::CalendarCheck).on_click(
+                            cx.listener(|this, _, _, _| {
+                                this.selected_tab = RightSidebarTab::SavedEvents;
+                            }),
+                        )),
                 )
                 .child(
                     div()
                         .flex_1()
                         .min_h_0()
                         .w_full()
+                        .rounded_b_xl()
                         .bg(cx.theme().background)
                         .when(selected_tab == RightSidebarTab::Backlog, |this| {
                             this.child(self.backlog.clone())

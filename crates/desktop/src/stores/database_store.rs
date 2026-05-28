@@ -1,693 +1,746 @@
-use chrono::{DateTime, Utc};
-use gpui::{Context, EventEmitter, Task};
-use simple_core::{Action, ActionCompletion, Event, OverlapWarning, Pipeline, QueueItem, Routine};
-use simple_db::{
-    DatabaseConnection, connect_and_migrate, delete_action, delete_event, delete_routine,
-    fetch_actions, fetch_all_completions, fetch_events, fetch_routines, insert_action_completion,
-    refresh_pipeline, save_pipeline, upsert_action, upsert_event, upsert_routine,
-};
+use std::thread;
+
+use flume;
+use gpui::{Context, EventEmitter};
+use serde::Deserialize;
+use simple_core::{Action, AnyItem, Event, Routine};
 use uuid::Uuid;
 
-macro_rules! lock_db {
-    ($conn:expr) => {
-        $conn.lock().unwrap_or_else(|poisoned| {
-            eprintln!("Warning: database mutex was poisoned, recovering");
-            poisoned.into_inner()
-        })
-    };
+// ── Status / events ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StoreStatus {
+    Loading,
+    Ready,
+    Error(String),
 }
 
 pub struct DatabaseError {
     pub message: String,
 }
 
-pub struct PipelineChanged;
-pub struct ActionsLoaded;
-pub struct EventsLoaded;
-pub struct RoutinesLoaded;
-pub struct CompletionsLoaded;
+pub struct DataChanged;
+pub struct ActionDataChanged;
+pub struct EventDataChanged;
+pub struct RoutineDataChanged;
 
-pub struct DatabaseStore {
-    conn: Option<DatabaseConnection>,
-    pub pipeline: Pipeline,
-    pub actions: Vec<Action>,
-    pub events: Vec<Event>,
-    pub routines: Vec<Routine>,
-    pub completions: Vec<ActionCompletion>,
-    initialize_task: Option<Task<()>>,
-    save_pipeline_task: Option<Task<()>>,
+// ── Server response types ─────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct AllData {
+    actions: Vec<Action>,
+    events: Vec<Event>,
+    routines: Vec<Routine>,
 }
 
-/// Runs a blocking database operation on GPUI's background executor, then updates
-/// the entity on the foreground thread.
-macro_rules! db_op {
-    ($self:expr, $cx:expr, $label:expr, $db_work:expr, $on_success:expr) => {{
-        let Some(conn) = $self.conn() else {
-            return Default::default();
-        };
-        $cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn({
-                    let conn = conn.clone();
-                    async move {
-                        let connection = lock_db!(conn);
-                        ($db_work)(&*connection)
-                    }
-                })
-                .await;
-            match result {
-                Ok(value) => {
-                    if let Err(error) = this.update(cx, |this, cx| {
-                        ($on_success)(this, cx, value);
-                    }) {
-                        eprintln!("Failed to update entity after {}: {error}", $label);
-                    }
+#[derive(Deserialize)]
+pub struct CompleteResult {
+    pub completed: Action,
+    pub next: Option<Action>,
+}
+
+// ── Worker command channel ────────────────────────────────────────────────────
+
+type Reply<T> = flume::Sender<Result<T, String>>;
+
+enum Cmd {
+    FetchAll(Reply<AllData>),
+    UpsertAction(Action, Reply<()>),
+    DeleteAction(Uuid, Reply<()>),
+    UpsertEvent(Event, Reply<()>),
+    DeleteEvent(Uuid, Reply<()>),
+    UpsertRoutine(Routine, Reply<()>),
+    DeleteRoutine(Uuid, Reply<()>),
+    // UpsertAndQueueAction(Action, Reply<Vec<Action>>),
+    // UpsertAndScheduleEvent(Event, Reply<Event>),
+    // UpsertAndInstantiateRoutine(Routine, Reply<Vec<Action>>),
+    CompleteAction(Uuid, Reply<CompleteResult>),
+    QueueAction(Uuid, Reply<Vec<Action>>),
+    BacklogAction(Uuid, Reply<Action>),
+    InstantiateRoutine(Uuid, Reply<Vec<Action>>),
+    RefreshPipeline(Reply<Vec<Action>>),
+    ExpeditePipeline(Reply<Vec<Action>>),
+}
+
+// ── Store ─────────────────────────────────────────────────────────────────────
+
+pub struct AppDatabaseStore {
+    cmd_tx: flume::Sender<Cmd>,
+    _worker: thread::JoinHandle<()>,
+    pub status: StoreStatus,
+    actions: Vec<Action>,
+    events: Vec<Event>,
+    routines: Vec<Routine>,
+}
+
+impl AppDatabaseStore {
+    pub fn new(server_url: String, cx: &mut Context<Self>) -> Self {
+        tracing::info!(server = %server_url, "connecting to server");
+
+        let (cmd_tx, cmd_rx) = flume::unbounded::<Cmd>();
+
+        let (init_tx, init_rx) = flume::bounded(1);
+        let _ = cmd_tx.send(Cmd::FetchAll(init_tx));
+
+        let base = server_url.clone();
+        let worker = thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime");
+            rt.block_on(async move {
+                let client = reqwest::Client::new();
+                while let Ok(cmd) = cmd_rx.recv_async().await {
+                    run(&client, &base, cmd).await;
                 }
-                Err(error) => {
-                    let error_msg = format!("{error}");
-                    if let Err(update_error) = this.update(cx, |_, cx| {
-                        Self::emit_error(cx, error_msg);
-                    }) {
-                        eprintln!("Failed to emit {} error: {update_error}", $label);
-                    }
+            });
+        });
+
+        cx.spawn(async move |this, cx| {
+            let Ok(result) = init_rx.recv_async().await else {
+                return;
+            };
+            let _ = this.update(cx, |store, cx| match result {
+                Ok(data) => {
+                    tracing::info!(
+                        actions = data.actions.len(),
+                        events = data.events.len(),
+                        routines = data.routines.len(),
+                        "store ready"
+                    );
+                    store.actions = data.actions;
+                    store.events = data.events;
+                    store.routines = data.routines;
+                    store.status = StoreStatus::Ready;
+                    cx.emit(DataChanged);
+                    cx.notify();
                 }
-            }
+                Err(e) => {
+                    tracing::error!(error = %e, "initial fetch failed");
+                    store.status = StoreStatus::Error(e.clone());
+                    cx.emit(DatabaseError { message: e });
+                }
+            });
         })
         .detach();
-    }};
-}
 
-impl DatabaseStore {
-    pub fn new(_cx: &mut Context<Self>) -> Self {
         Self {
-            conn: None,
-            pipeline: Pipeline {
-                backlog: Vec::new(),
-                queue: Vec::new(),
-            },
-            actions: Vec::new(),
-            events: Vec::new(),
-            routines: Vec::new(),
-            completions: Vec::new(),
-            initialize_task: None,
-            save_pipeline_task: None,
+            cmd_tx,
+            _worker: worker,
+            status: StoreStatus::Loading,
+            actions: vec![],
+            events: vec![],
+            routines: vec![],
         }
     }
 
-    fn conn(&self) -> Option<DatabaseConnection> {
-        self.conn.clone()
-    }
-
-    fn emit_error(cx: &mut Context<Self>, message: String) {
-        cx.emit(DatabaseError { message });
-    }
-
-    pub fn load_completions(&mut self, cx: &mut Context<Self>) {
-        db_op!(
-            self,
-            cx,
-            "load_completions",
-            |conn| fetch_all_completions(conn),
-            |this: &mut Self, cx: &mut Context<Self>, completions: Vec<ActionCompletion>| {
-                this.completions = completions;
-                cx.emit(CompletionsLoaded);
-            }
-        );
-    }
-
-    // pub fn get_completions(&self) -> &Vec<ActionCompletion> {
-    //     &self.completions
+    // pub fn initialize_global(server_url: String, cx: &mut App) -> Entity<Self> {
+    //     if cx.has_global::<GlobalStore>() {
+    //         return cx.global::<GlobalStore>().0.clone();
+    //     }
+    //     let store = cx.new(|cx| Self::new(server_url, cx));
+    //     cx.set_global(GlobalStore(store.clone()));
+    //     store
     // }
 
-    // pub fn delete_completion(&mut self, id: Uuid, cx: &mut Context<Self>) {
-    //     db_op!(
-    //         self,
-    //         cx,
-    //         "delete_completion",
-    //         move |conn| delete_action_completion(conn, id),
-    //         |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-    //             this.load_completions(cx);
-    //         }
-    //     );
+    // pub fn global(cx: &App) -> Entity<Self> {
+    //     cx.global::<GlobalStore>().0.clone()
     // }
 
-    pub fn initialize(&mut self, cx: &mut Context<Self>) {
-        let task = cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move { connect_and_migrate() })
-                .await;
+    fn upsert_action_local(&mut self, action: Action) {
+        if let Some(pos) = self.actions.iter().position(|a| a.id == action.id) {
+            self.actions[pos] = action;
+        } else {
+            self.actions.push(action);
+        }
+    }
 
-            match result {
-                Ok(conn) => {
-                    if let Err(error) = this.update(cx, |this, cx| {
-                        this.conn = Some(conn);
-                        this.load_saved_actions(cx);
-                        this.load_events(cx);
-                        this.refresh_pipeline(cx);
-                        this.load_routines(cx);
-                        this.load_completions(cx);
-                    }) {
-                        eprintln!("Failed to set connection after initialize: {error}");
-                    }
-                }
-                Err(error) => {
-                    if let Err(update_error) = this.update(cx, |_, cx| {
-                        Self::emit_error(cx, format!("Database initialization failed: {error}"));
-                    }) {
-                        eprintln!("Failed to emit initialization error: {update_error}");
-                    }
-                }
+    fn upsert_event_local(&mut self, event: Event) {
+        if let Some(pos) = self.events.iter().position(|e| e.id == event.id) {
+            self.events[pos] = event;
+        } else {
+            self.events.push(event);
+        }
+    }
+
+    fn upsert_routine_local(&mut self, routine: Routine) {
+        if let Some(pos) = self.routines.iter().position(|r| r.id == routine.id) {
+            self.routines[pos] = routine;
+        } else {
+            self.routines.push(routine);
+        }
+    }
+
+    fn dispatch<T: 'static>(
+        &self,
+        cmd: Cmd,
+        rx: flume::Receiver<Result<T, String>>,
+        cx: &mut Context<Self>,
+        apply: impl FnOnce(&mut Self, T, &mut Context<Self>) + 'static,
+    ) {
+        let _ = self.cmd_tx.send(cmd);
+        cx.spawn(async move |this, cx| match rx.recv_async().await {
+            Ok(Ok(data)) => {
+                let _ = this.update(cx, |store, cx| apply(store, data, cx));
             }
+            Ok(Err(e)) => tracing::error!("{e}"),
+            Err(_) => {}
+        })
+        .detach();
+    }
+
+    // pub fn is_ready(&self) -> bool {
+    //     self.status == StoreStatus::Ready
+    // }
+
+    pub fn actions(&self) -> Vec<Action> {
+        self.actions.clone()
+    }
+
+    pub fn get_action(&self, id: Uuid) -> Option<Action> {
+        self.actions.iter().find(|a| a.id == id).cloned()
+    }
+
+    // pub fn active_action(&self) -> Option<Action> {
+    //     let now = chrono::Utc::now();
+    //     self.actions
+    //         .iter()
+    //         .find(|a| matches!(a.state, ActionState::Queued(t) if t.time <= now))
+    //         .cloned()
+    // }
+
+    pub fn events(&self) -> Vec<Event> {
+        self.events.clone()
+    }
+
+    pub fn get_event(&self, id: Uuid) -> Option<Event> {
+        self.events.iter().find(|e| e.id == id).cloned()
+    }
+
+    pub fn sorted_queue(&self) -> Vec<AnyItem> {
+        let now = chrono::Utc::now();
+        let mut items: Vec<AnyItem> = self
+            .actions
+            .iter()
+            .filter(|a| a.is_queued())
+            .map(|a| AnyItem::Action(a.clone()))
+            .chain(
+                self.events
+                    .iter()
+                    .filter(|e| e.end_time() > now)
+                    .map(|e| AnyItem::Event(e.clone())),
+            )
+            .collect();
+        items.sort_by_key(|item| {
+            item.time()
+                .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC)
         });
-        self.initialize_task = Some(task);
+        items
     }
 
-    // ─── Saved Actions ──────────────────────────────────────────────────────────
-
-    pub fn load_saved_actions(&mut self, cx: &mut Context<Self>) {
-        db_op!(
-            self,
-            cx,
-            "load_saved_actions",
-            |conn| fetch_actions(conn),
-            |this: &mut Self, cx: &mut Context<Self>, actions: Vec<Action>| {
-                this.actions = actions;
-                cx.emit(ActionsLoaded);
-            }
-        );
+    pub fn backlogged_actions(&self) -> Vec<Action> {
+        self.actions
+            .iter()
+            .filter(|a| a.is_backlogged())
+            .cloned()
+            .collect()
     }
 
-    pub fn get_action(&self, id: Uuid) -> Option<&Action> {
-        self.actions.iter().find(|a| a.id == id)
+    pub fn routines(&self) -> Vec<Routine> {
+        self.routines.clone()
+    }
+
+    pub fn get_routine(&self, _id: Uuid) -> Option<Routine> {
+        self.routines.iter().find(|r| r.id == r.id).cloned()
     }
 
     pub fn upsert_action(&mut self, action: Action, cx: &mut Context<Self>) {
-        db_op!(
-            self,
+        self.upsert_action_local(action.clone());
+        cx.emit(ActionDataChanged);
+        cx.emit(DataChanged);
+        cx.notify();
+
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(
+            Cmd::UpsertAction(action, tx),
+            rx,
             cx,
-            "upsert_saved_action",
-            move |conn| upsert_action(conn, &action),
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.load_saved_actions(cx);
-            }
+            |_store, _result, _cx| {},
         );
     }
 
     pub fn delete_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        db_op!(
-            self,
-            cx,
-            "delete_saved_action",
-            move |conn| delete_action(conn, id),
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.load_saved_actions(cx);
-            }
-        );
-    }
+        self.actions.retain(|a| a.id != id);
+        cx.emit(ActionDataChanged);
+        cx.emit(DataChanged);
+        cx.notify();
 
-    // ─── Saved Events ────────────────────────────────────────────────────────────
-
-    pub fn load_events(&mut self, cx: &mut Context<Self>) {
-        db_op!(
-            self,
-            cx,
-            "load_saved_events",
-            |conn| fetch_events(conn),
-            |this: &mut Self, cx: &mut Context<Self>, events: Vec<Event>| {
-                this.events = events;
-                cx.emit(EventsLoaded);
-            }
-        );
-    }
-
-    pub fn get_event(&self, id: Uuid) -> Option<&Event> {
-        self.events.iter().find(|e| e.id == id)
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(Cmd::DeleteAction(id, tx), rx, cx, |_store, _, _cx| {});
     }
 
     pub fn upsert_event(&mut self, event: Event, cx: &mut Context<Self>) {
-        db_op!(
-            self,
-            cx,
-            "upsert_saved_event",
-            move |conn| upsert_event(conn, &event),
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.load_events(cx);
-            }
-        );
+        self.upsert_event_local(event.clone());
+        cx.emit(EventDataChanged);
+        cx.emit(DataChanged);
+        cx.notify();
+
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(Cmd::UpsertEvent(event, tx), rx, cx, |_store, _, _cx| {});
     }
 
     pub fn delete_event(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        db_op!(
-            self,
-            cx,
-            "delete_saved_event",
-            move |conn| delete_event(conn, id),
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.load_events(cx);
-            }
-        );
-    }
+        self.events.retain(|e| e.id != id);
+        cx.emit(EventDataChanged);
+        cx.emit(DataChanged);
+        cx.notify();
 
-    // ─── Pipeline ───────────────────────────────────────────────────────────────
-
-    // pub fn load_pipeline(&mut self, cx: &mut Context<Self>) {
-    //     db_op!(
-    //         self,
-    //         cx,
-    //         "load_pipeline",
-    //         |conn| load_pipeline(conn),
-    //         |this: &mut Self, cx: &mut Context<Self>, pipeline: Pipeline| {
-    //             this.pipeline = pipeline;
-    //             cx.emit(PipelineChanged);
-    //         }
-    //     );
-    // }
-
-    pub fn refresh_pipeline(&mut self, cx: &mut Context<Self>) {
-        db_op!(
-            self,
-            cx,
-            "refresh_pipeline",
-            |conn| refresh_pipeline(conn),
-            |this: &mut Self, cx: &mut Context<Self>, pipeline: Pipeline| {
-                this.pipeline = pipeline;
-                cx.emit(PipelineChanged);
-            }
-        );
-    }
-
-    /// Updates an existing action in the queue (matched by ID), preserving
-    /// consecutive chains and displacing conflicts. Returns overlap warnings.
-    pub fn update_queue_action(
-        &mut self,
-        action: Action,
-        cx: &mut Context<Self>,
-    ) -> Vec<OverlapWarning> {
-        let warnings = self
-            .pipeline
-            .update_queue_action(action.clone(), Utc::now());
-        let action_for_db = action;
-        db_op!(
-            self,
-            cx,
-            "update_queue_action",
-            move |conn| {
-                upsert_action(conn, &action_for_db)?;
-                Ok::<(), anyhow::Error>(())
-            },
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.save_pipeline(cx);
-                cx.emit(PipelineChanged);
-            }
-        );
-        warnings
-    }
-
-    /// Updates an existing event in the queue (matched by ID), preserving
-    /// consecutive chains and displacing conflicts. Returns overlap warnings.
-    pub fn update_queue_event(
-        &mut self,
-        event: Event,
-        cx: &mut Context<Self>,
-    ) -> Vec<OverlapWarning> {
-        let warnings = self.pipeline.update_queue_event(event.clone(), Utc::now());
-        let event_for_db = event;
-        db_op!(
-            self,
-            cx,
-            "update_queue_event",
-            move |conn| {
-                upsert_event(conn, &event_for_db)?;
-                Ok::<(), anyhow::Error>(())
-            },
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.save_pipeline(cx);
-                cx.emit(PipelineChanged);
-            }
-        );
-        warnings
-    }
-
-    pub fn expedite_actions(&mut self, cx: &mut Context<Self>) {
-        self.pipeline.expedite_actions(Utc::now());
-        self.save_pipeline(cx);
-        cx.emit(PipelineChanged);
-    }
-
-    pub fn get_queue_action(&self, id: Uuid) -> Option<&Action> {
-        self.pipeline.queue.iter().find_map(|item| {
-            if let QueueItem::Action(a) = item {
-                if a.id == id { Some(a) } else { None }
-            } else {
-                None
-            }
-        })
-    }
-
-    pub fn get_queue_event(&self, id: Uuid) -> Option<&Event> {
-        self.pipeline.queue.iter().find_map(|item| {
-            if let QueueItem::Event(e) = item {
-                if e.id == id { Some(e) } else { None }
-            } else {
-                None
-            }
-        })
-    }
-
-    pub fn get_backlog_action(&self, id: Uuid) -> Option<&Action> {
-        self.pipeline.backlog.iter().find(|a| a.id == id)
-    }
-
-    // /// Adds an action to the backlog and persists the pipeline.
-    // pub fn add_action_to_backlog(&mut self, action: Action, cx: &mut Context<Self>) {
-    //     let action_for_db = action.clone();
-    //     self.pipeline.backlog.push(action);
-    //     db_op!(
-    //         self,
-    //         cx,
-    //         "add_action_to_backlog",
-    //         move |conn| {
-    //             upsert_action(conn, &action_for_db)?;
-    //             Ok::<(), anyhow::Error>(())
-    //         },
-    //         |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-    //             this.save_pipeline(cx);
-    //             cx.emit(PipelineChanged);
-    //         }
-    //     );
-    // }
-
-    /// Adds an action to the pipeline using smart routing:
-    /// - If the action has a `naive_date` (date-only, no time), it goes to the
-    ///   backlog. The pipeline's `refresh` will promote it once the date arrives.
-    /// - If the action has a full `target` datetime, it is inserted as a static
-    ///   action; non-static actions that now conflict are displaced, and overlap
-    ///   warnings for immovable items are returned.
-    /// - If the action has neither, it is placed in the next available slot
-    ///   after consecutive non-static chains and events.
-    pub fn add_action_to_queue(
-        &mut self,
-        action: Action,
-        cx: &mut Context<Self>,
-    ) -> Vec<OverlapWarning> {
-        let id = action.id;
-        // Remove any existing copy of this item from both queue and backlog
-        // before inserting, so dragging an item that is already present (e.g.
-        // a pipeline item dropped back onto the pipeline, or a backlog item
-        // dropped onto the pipeline drop-zone) never creates a duplicate.
-        self.pipeline.queue.retain(|item| item.id() != id);
-        self.pipeline.backlog.retain(|a| a.id != id);
-
-        let warnings = if action.naive_date.is_some() {
-            // Date-only: park in the backlog; refresh will promote it.
-            self.pipeline.backlog.push(action.clone());
-            Vec::new()
-        } else if action.target.is_some() {
-            self.pipeline
-                .queue_action_static(action.clone(), Utc::now())
-        } else {
-            self.pipeline.queue_action_auto(action.clone(), Utc::now());
-            Vec::new()
-        };
-
-        let action_for_db = action;
-        db_op!(
-            self,
-            cx,
-            "add_action_to_queue",
-            move |conn| {
-                upsert_action(conn, &action_for_db)?;
-                Ok::<(), anyhow::Error>(())
-            },
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.save_pipeline(cx);
-                cx.emit(PipelineChanged);
-            }
-        );
-
-        warnings
-    }
-
-    /// Adds an event to the queue, displaces any non-static actions that
-    /// conflict with it, and returns overlap warnings for immovable items.
-    pub fn add_event_to_queue(
-        &mut self,
-        event: Event,
-        cx: &mut Context<Self>,
-    ) -> Vec<OverlapWarning> {
-        let id = event.id;
-        // Remove any existing copy of this event from the queue before
-        // inserting, so dropping a pipeline event back onto the pipeline
-        // drop-zone never creates a duplicate.
-        self.pipeline.queue.retain(|item| item.id() != id);
-
-        let warnings = self.pipeline.queue_event(event.clone(), Utc::now());
-
-        let event_for_db = event;
-        db_op!(
-            self,
-            cx,
-            "add_event_to_queue",
-            move |conn| {
-                upsert_event(conn, &event_for_db)?;
-                Ok::<(), anyhow::Error>(())
-            },
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.save_pipeline(cx);
-                cx.emit(PipelineChanged);
-            }
-        );
-
-        warnings
-    }
-
-    // /// Creates a new ephemeral action and places it in the next available
-    // /// slot in the queue.
-    // pub fn create_action(&mut self, title: String, cx: &mut Context<Self>) {
-    //     let action = Action::new(title);
-    //     self.add_action_to_queue(action, cx);
-    // }
-
-    /// Promotes a backlog action to the queue, scheduling it in the next
-    /// available slot after now (respecting consecutive actions and events).
-    pub fn promote_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        if !self.pipeline.promote_action(id, Utc::now()) {
-            tracing::warn!("promote: action {id} not found in backlog");
-            return;
-        }
-        self.save_pipeline(cx);
-        cx.emit(PipelineChanged);
-    }
-
-    /// Demotes a queue action back to the backlog.
-    pub fn demote_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        let pos = self.pipeline.queue.iter().position(|item| item.id() == id);
-        let Some(pos) = pos else {
-            tracing::warn!("demote: item {id} not found in queue");
-            return;
-        };
-        let item = self.pipeline.queue.remove(pos);
-        if let QueueItem::Action(mut action) = item {
-            action.target = None;
-            action.target_static = false;
-            self.pipeline.backlog.push(action);
-        }
-        self.save_pipeline(cx);
-        cx.emit(PipelineChanged);
-    }
-
-    /// Removes an item from whichever list it is in without deleting the underlying record.
-    pub fn remove_from_pipeline(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        self.pipeline.queue.retain(|item| item.id() != id);
-        self.pipeline.backlog.retain(|a| a.id != id);
-        self.save_pipeline(cx);
-        cx.emit(PipelineChanged);
-    }
-
-    /// Removes an action from the pipeline and permanently deletes its DB record.
-    pub fn delete_queue_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        self.pipeline.queue.retain(|item| item.id() != id);
-        self.pipeline.backlog.retain(|a| a.id != id);
-        db_op!(
-            self,
-            cx,
-            "delete_queue_action",
-            move |conn| delete_action(conn, id),
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.save_pipeline(cx);
-                this.load_saved_actions(cx);
-                cx.emit(PipelineChanged);
-            }
-        );
-    }
-
-    /// Completes a queue action: records a completion, removes from pipeline,
-    /// and if the action has recurrence schedules the next instance.
-    pub fn complete_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        let pos = self.pipeline.queue.iter().position(|item| item.id() == id);
-        let Some(pos) = pos else {
-            tracing::warn!("complete_action: action {id} not found in queue");
-            return;
-        };
-
-        let item = self.pipeline.queue.remove(pos);
-        let QueueItem::Action(action) = item else {
-            tracing::warn!("complete_action: item {id} is not an action");
-            return;
-        };
-
-        let completion = ActionCompletion::new(&action);
-        let mut action = action;
-        action.completed_at = Some(completion.completed_at);
-        let next = action.next_recurrence();
-
-        if let Some(next_action) = next.clone() {
-            self.pipeline
-                .queue
-                .push(QueueItem::Action(next_action.clone()));
-            self.pipeline
-                .queue
-                .sort_by_key(|item| item.time().unwrap_or(DateTime::<Utc>::MAX_UTC));
-        }
-
-        db_op!(
-            self,
-            cx,
-            "complete_action",
-            move |conn| {
-                upsert_action(conn, &action)?;
-                insert_action_completion(conn, &completion)?;
-                if let Some(next_action) = &next {
-                    upsert_action(conn, next_action)?;
-                }
-                Ok::<(), anyhow::Error>(())
-            },
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.save_pipeline(cx);
-                this.load_completions(cx);
-                cx.emit(PipelineChanged);
-            }
-        );
-    }
-
-    /// Instantiates all steps of a routine as ephemeral actions and adds them to the queue.
-    pub fn instantiate_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        let routine = match self.routines.iter().find(|r| r.id == id) {
-            Some(r) => r.clone(),
-            None => {
-                tracing::warn!("run_routine: no routine found with id {id}");
-                return;
-            }
-        };
-
-        let now = Utc::now();
-        let actions: Vec<Action> = routine
-            .steps
-            .iter()
-            .enumerate()
-            .map(|(i, step)| {
-                let offset = routine
-                    .steps
-                    .iter()
-                    .take(i)
-                    .fold(chrono::Duration::zero(), |acc, s| {
-                        acc + s.duration.unwrap_or(chrono::Duration::zero())
-                    });
-                Action::new(step.title.clone())
-                    .with_target(now + offset, true)
-                    .with_origin_routine(routine.id)
-                    .with_duration(step.duration.unwrap_or(chrono::Duration::minutes(15)))
-            })
-            .collect();
-
-        for action in &actions {
-            self.pipeline.queue.push(QueueItem::Action(action.clone()));
-        }
-        self.pipeline
-            .queue
-            .sort_by_key(|item| item.time().unwrap_or(DateTime::<Utc>::MAX_UTC));
-
-        let actions_for_db = actions.clone();
-        db_op!(
-            self,
-            cx,
-            "run_routine",
-            move |conn| {
-                for action in &actions_for_db {
-                    upsert_action(conn, action)?;
-                }
-                Ok::<(), anyhow::Error>(())
-            },
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.save_pipeline(cx);
-                cx.emit(PipelineChanged);
-            }
-        );
-    }
-
-    fn save_pipeline(&mut self, cx: &mut Context<Self>) {
-        let pipeline = self.pipeline.clone();
-        let Some(conn) = self.conn() else {
-            return;
-        };
-        let task = cx.background_executor().spawn(async move {
-            let connection = lock_db!(conn);
-            if let Err(error) = save_pipeline(&connection, &pipeline) {
-                tracing::error!("Failed to save pipeline: {error}");
-            }
-        });
-        self.save_pipeline_task = Some(task);
-    }
-
-    // ─── Routines ────────────────────────────────────────────────────────────────
-
-    pub fn load_routines(&mut self, cx: &mut Context<Self>) {
-        db_op!(
-            self,
-            cx,
-            "load_routines",
-            |conn| fetch_routines(conn),
-            |this: &mut Self, cx: &mut Context<Self>, routines: Vec<Routine>| {
-                this.routines = routines;
-                cx.emit(RoutinesLoaded);
-            }
-        );
-    }
-
-    pub fn get_routine(&self, id: Uuid) -> Option<&Routine> {
-        self.routines.iter().find(|r| r.id == id)
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(Cmd::DeleteEvent(id, tx), rx, cx, |_store, _, _cx| {});
     }
 
     pub fn upsert_routine(&mut self, routine: Routine, cx: &mut Context<Self>) {
-        db_op!(
-            self,
-            cx,
-            "upsert_routine",
-            move |conn| upsert_routine(conn, &routine),
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.load_routines(cx);
-            }
-        );
+        self.upsert_routine_local(routine.clone());
+        cx.emit(RoutineDataChanged);
+        cx.emit(DataChanged);
+        cx.notify();
+
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(Cmd::UpsertRoutine(routine, tx), rx, cx, |_store, _, _cx| {});
     }
 
     pub fn delete_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        db_op!(
-            self,
+        self.routines.retain(|r| r.id != id);
+        cx.emit(RoutineDataChanged);
+        cx.emit(DataChanged);
+        cx.notify();
+
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(Cmd::DeleteRoutine(id, tx), rx, cx, |_store, _, _cx| {});
+    }
+
+    // pub fn upsert_and_queue_action(&mut self, action: Action, cx: &mut Context<Self>) {
+    //     let optimistic = if action.is_queued() {
+    //         action.clone()
+    //     } else {
+    //         let slot = next_queue_slot(&self.actions, &self.events, chrono::Utc::now());
+    //         action.clone().with_state(ActionState::queued(slot, false))
+    //     };
+    //     self.upsert_action_local(optimistic);
+    //     cx.emit(ActionDataChanged);
+    //     cx.emit(DataChanged);
+    //     cx.notify();
+
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(
+    //         Cmd::UpsertAndQueueAction(action, tx),
+    //         rx,
+    //         cx,
+    //         |store, changed: Vec<Action>, cx| {
+    //             for a in changed {
+    //                 store.upsert_action_local(a);
+    //             }
+    //             cx.emit(ActionDataChanged);
+    //             cx.emit(DataChanged);
+    //             cx.notify();
+    //         },
+    //     );
+    // }
+
+    // pub fn upsert_and_schedule_event(&mut self, event: Event, cx: &mut Context<Self>) {
+    //     self.upsert_event_local(event.clone());
+    //     cx.emit(EventDataChanged);
+    //     cx.emit(DataChanged);
+    //     cx.notify();
+
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(
+    //         Cmd::UpsertAndScheduleEvent(event, tx),
+    //         rx,
+    //         cx,
+    //         |store, event: Event, cx| {
+    //             store.upsert_event_local(event);
+    //             cx.emit(EventDataChanged);
+    //             cx.emit(DataChanged);
+    //             cx.notify();
+    //         },
+    //     );
+    // }
+
+    // pub fn upsert_and_instantiate_routine(&mut self, routine: Routine, cx: &mut Context<Self>) {
+    //     self.upsert_routine_local(routine.clone());
+    //     cx.emit(RoutineDataChanged);
+    //     cx.emit(DataChanged);
+    //     cx.notify();
+
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(
+    //         Cmd::UpsertAndInstantiateRoutine(routine, tx),
+    //         rx,
+    //         cx,
+    //         |store, actions: Vec<Action>, cx| {
+    //             for a in actions {
+    //                 store.upsert_action_local(a);
+    //             }
+    //             cx.emit(ActionDataChanged);
+    //             cx.emit(DataChanged);
+    //             cx.notify();
+    //         },
+    //     );
+    // }
+
+    pub fn complete_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(
+            Cmd::CompleteAction(id, tx),
+            rx,
             cx,
-            "delete_routine",
-            move |conn| delete_routine(conn, id),
-            |this: &mut Self, cx: &mut Context<Self>, _: ()| {
-                this.load_routines(cx);
-            }
+            |store, result: CompleteResult, cx| {
+                store.upsert_action_local(result.completed);
+                if let Some(next) = result.next {
+                    store.upsert_action_local(next);
+                }
+                cx.emit(ActionDataChanged);
+                cx.emit(DataChanged);
+                cx.notify();
+            },
+        );
+    }
+
+    pub fn auto_queue_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(
+            Cmd::QueueAction(id, tx),
+            rx,
+            cx,
+            |store, changed: Vec<Action>, cx| {
+                for action in changed {
+                    store.upsert_action_local(action);
+                }
+                cx.emit(ActionDataChanged);
+                cx.emit(DataChanged);
+                cx.notify();
+            },
+        );
+    }
+
+    pub fn backlog_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(
+            Cmd::BacklogAction(id, tx),
+            rx,
+            cx,
+            |store, action: Action, cx| {
+                store.upsert_action_local(action);
+                cx.emit(ActionDataChanged);
+                cx.emit(DataChanged);
+                cx.notify();
+            },
+        );
+    }
+
+    pub fn refresh_pipeline(&mut self, cx: &mut Context<Self>) {
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(
+            Cmd::RefreshPipeline(tx),
+            rx,
+            cx,
+            |store, changed: Vec<Action>, cx| {
+                for action in changed {
+                    store.upsert_action_local(action);
+                }
+                cx.emit(ActionDataChanged);
+                cx.emit(DataChanged);
+                cx.notify();
+            },
+        );
+    }
+
+    pub fn expedite_actions(&mut self, cx: &mut Context<Self>) {
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(
+            Cmd::ExpeditePipeline(tx),
+            rx,
+            cx,
+            |store, changed: Vec<Action>, cx| {
+                for action in changed {
+                    store.upsert_action_local(action);
+                }
+                cx.emit(ActionDataChanged);
+                cx.emit(DataChanged);
+                cx.notify();
+            },
+        );
+    }
+
+    pub fn instantiate_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(
+            Cmd::InstantiateRoutine(id, tx),
+            rx,
+            cx,
+            |store, actions: Vec<Action>, cx| {
+                for action in actions {
+                    store.upsert_action_local(action);
+                }
+                cx.emit(ActionDataChanged);
+                cx.emit(DataChanged);
+                cx.notify();
+            },
         );
     }
 }
 
-impl EventEmitter<DatabaseError> for DatabaseStore {}
-impl EventEmitter<PipelineChanged> for DatabaseStore {}
-impl EventEmitter<ActionsLoaded> for DatabaseStore {}
-impl EventEmitter<EventsLoaded> for DatabaseStore {}
-impl EventEmitter<RoutinesLoaded> for DatabaseStore {}
-impl EventEmitter<CompletionsLoaded> for DatabaseStore {}
+impl EventEmitter<DatabaseError> for AppDatabaseStore {}
+impl EventEmitter<DataChanged> for AppDatabaseStore {}
+impl EventEmitter<ActionDataChanged> for AppDatabaseStore {}
+impl EventEmitter<EventDataChanged> for AppDatabaseStore {}
+impl EventEmitter<RoutineDataChanged> for AppDatabaseStore {}
+
+// struct GlobalStore(Entity<AppDatabaseStore>);
+// impl Global for GlobalStore {}
+
+async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
+    match cmd {
+        Cmd::FetchAll(tx) => {
+            let result = client
+                .get(format!("{base}/api/data"))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| e.to_string());
+            let result = match result {
+                Ok(resp) => resp.json::<AllData>().await.map_err(|e| e.to_string()),
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(result);
+        }
+
+        Cmd::UpsertAction(action, tx) => {
+            let result = client
+                .put(format!("{base}/api/actions/{}", action.id))
+                .json(&action)
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        }
+
+        Cmd::DeleteAction(id, tx) => {
+            let result = client
+                .delete(format!("{base}/api/actions/{id}"))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        }
+
+        // Cmd::UpsertAndQueueAction(action, tx) => {
+        //     let id = action.id;
+        //     let put = client
+        //         .put(format!("{base}/api/actions/{id}"))
+        //         .json(&action)
+        //         .send()
+        //         .await
+        //         .and_then(|r| r.error_for_status())
+        //         .map_err(|e| e.to_string());
+
+        //     let result = match put {
+        //         Err(e) => Err(e),
+        //         Ok(_) if action.is_queued() => Ok(vec![action]),
+        //         Ok(_) => {
+        //             let r = client
+        //                 .post(format!("{base}/api/actions/{id}/queue"))
+        //                 .send()
+        //                 .await
+        //                 .and_then(|r| r.error_for_status())
+        //                 .map_err(|e| e.to_string());
+        //             match r {
+        //                 Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
+        //                 Err(e) => Err(e),
+        //             }
+        //         }
+        //     };
+        //     let _ = tx.send(result);
+        // }
+
+        // Cmd::UpsertAndScheduleEvent(event, tx) => {
+        //     let result = client
+        //         .put(format!("{base}/api/events/{}", event.id))
+        //         .json(&event)
+        //         .send()
+        //         .await
+        //         .and_then(|r| r.error_for_status())
+        //         .map_err(|e| e.to_string());
+        //     let result = match result {
+        //         Ok(_) => Ok(event),
+        //         Err(e) => Err(e),
+        //     };
+        //     let _ = tx.send(result);
+        // }
+
+        // Cmd::UpsertAndInstantiateRoutine(routine, tx) => {
+        //     let id = routine.id;
+        //     let put = client
+        //         .put(format!("{base}/api/routines/{id}"))
+        //         .json(&routine)
+        //         .send()
+        //         .await
+        //         .and_then(|r| r.error_for_status())
+        //         .map_err(|e| e.to_string());
+
+        //     let result = match put {
+        //         Err(e) => Err(e),
+        //         Ok(_) => {
+        //             let r = client
+        //                 .post(format!("{base}/api/routines/{id}/instantiate"))
+        //                 .send()
+        //                 .await
+        //                 .and_then(|r| r.error_for_status())
+        //                 .map_err(|e| e.to_string());
+        //             match r {
+        //                 Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
+        //                 Err(e) => Err(e),
+        //             }
+        //         }
+        //     };
+        //     let _ = tx.send(result);
+        // }
+        Cmd::CompleteAction(id, tx) => {
+            let result = client
+                .post(format!("{base}/api/actions/{id}/complete"))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| e.to_string());
+            let result = match result {
+                Ok(resp) => resp
+                    .json::<CompleteResult>()
+                    .await
+                    .map_err(|e| e.to_string()),
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(result);
+        }
+
+        Cmd::QueueAction(id, tx) => {
+            let result = client
+                .post(format!("{base}/api/actions/{id}/queue"))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| e.to_string());
+            let result = match result {
+                Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(result);
+        }
+
+        Cmd::BacklogAction(id, tx) => {
+            let result = client
+                .post(format!("{base}/api/actions/{id}/backlog"))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| e.to_string());
+            let result = match result {
+                Ok(resp) => resp.json::<Action>().await.map_err(|e| e.to_string()),
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(result);
+        }
+
+        Cmd::UpsertEvent(event, tx) => {
+            let result = client
+                .put(format!("{base}/api/events/{}", event.id))
+                .json(&event)
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        }
+
+        Cmd::DeleteEvent(id, tx) => {
+            let result = client
+                .delete(format!("{base}/api/events/{id}"))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        }
+
+        Cmd::UpsertRoutine(routine, tx) => {
+            let result = client
+                .put(format!("{base}/api/routines/{}", routine.id))
+                .json(&routine)
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        }
+
+        Cmd::DeleteRoutine(id, tx) => {
+            let result = client
+                .delete(format!("{base}/api/routines/{id}"))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        }
+
+        Cmd::InstantiateRoutine(id, tx) => {
+            let result = client
+                .post(format!("{base}/api/routines/{id}/instantiate"))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| e.to_string());
+            let result = match result {
+                Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(result);
+        }
+
+        Cmd::RefreshPipeline(tx) => {
+            let result = client
+                .post(format!("{base}/api/pipeline/refresh"))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| e.to_string());
+            let result = match result {
+                Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(result);
+        }
+
+        Cmd::ExpeditePipeline(tx) => {
+            let result = client
+                .post(format!("{base}/api/pipeline/expedite"))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| e.to_string());
+            let result = match result {
+                Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(result);
+        }
+    }
+}

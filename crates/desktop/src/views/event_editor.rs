@@ -19,9 +19,11 @@ use simple_core::Event;
 use uuid::Uuid;
 
 use crate::components::popover::popover;
-use crate::stores::DatabaseStore;
+use crate::stores::AppDatabaseStore;
 // use crate::stores::database_store::EventsLoaded;
-use crate::utils::{format_datetime_local, format_duration, parse_datetime_local, parse_duration};
+use crate::utils::{
+    format_datetime_local, format_duration, format_recurrence, parse_datetime_local, parse_duration,
+};
 
 pub struct StartEventEditor {
     pub event_id: Option<Uuid>,
@@ -29,7 +31,7 @@ pub struct StartEventEditor {
 
 pub struct EventEditor {
     pub focus_handle: FocusHandle,
-    database_store: Entity<DatabaseStore>,
+    database_store: Entity<AppDatabaseStore>,
 
     /// The event being edited, if any.
     event: Option<Event>,
@@ -59,7 +61,7 @@ impl Focusable for EventEditor {
 
 impl EventEditor {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -96,7 +98,7 @@ impl EventEditor {
     }
 
     pub fn load_event(&mut self, event_id: Uuid, cx: &mut Context<Self>) {
-        let event = self.database_store.read(cx).get_event(event_id).cloned();
+        let event = self.database_store.read(cx).get_event(event_id);
 
         if let Some(event) = event {
             self.pending_title = Some(event.title.clone());
@@ -112,11 +114,7 @@ impl EventEditor {
     /// Load an event that is live in the queue. The save button will call
     /// `update_queue_event` rather than adding a new entry.
     pub fn load_queue_event(&mut self, event_id: Uuid, cx: &mut Context<Self>) {
-        let event = self
-            .database_store
-            .read(cx)
-            .get_queue_event(event_id)
-            .cloned();
+        let event = self.database_store.read(cx).get_event(event_id);
 
         if let Some(event) = event {
             self.pending_title = Some(event.title.clone());
@@ -242,11 +240,11 @@ impl EventEditor {
             return;
         };
 
-        let warnings = self
+        let _warnings = self
             .database_store
-            .update(cx, |store, cx| store.update_queue_event(event, cx));
+            .update(cx, |store, cx| store.upsert_event(event, cx));
 
-        self.push_overlap_warnings(warnings, window, cx);
+        // self.push_overlap_warnings(warnings, window, cx);
         window.push_notification((NotificationType::Success, "Event updated"), cx);
     }
 
@@ -280,33 +278,33 @@ impl EventEditor {
             return;
         };
 
-        let warnings = self
+        let _warnings = self
             .database_store
-            .update(cx, |store, cx| store.add_event_to_queue(event, cx));
+            .update(cx, |store, cx| store.upsert_event(event, cx));
 
-        self.push_overlap_warnings(warnings, window, cx);
+        // self.push_overlap_warnings(warnings, window, cx);
         window.push_notification((NotificationType::Success, "Event added to queue"), cx);
     }
 
-    fn push_overlap_warnings(
-        &self,
-        warnings: Vec<simple_core::OverlapWarning>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        for warning in warnings {
-            window.push_notification(
-                (
-                    NotificationType::Warning,
-                    SharedString::from(format!(
-                        "\"{}\" overlaps with \"{}\"",
-                        warning.inserted_title, warning.conflicting_title
-                    )),
-                ),
-                cx,
-            );
-        }
-    }
+    // fn push_overlap_warnings(
+    //     &self,
+    //     warnings: Vec<simple_core::OverlapWarning>,
+    //     window: &mut Window,
+    //     cx: &mut Context<Self>,
+    // ) {
+    //     for warning in warnings {
+    //         window.push_notification(
+    //             (
+    //                 NotificationType::Warning,
+    //                 SharedString::from(format!(
+    //                     "\"{}\" overlaps with \"{}\"",
+    //                     warning.inserted_title, warning.conflicting_title
+    //                 )),
+    //             ),
+    //             cx,
+    //         );
+    //     }
+    // }
 
     fn save_template(&mut self, cx: &mut Context<Self>) {
         let Some(event) = self.build_event(cx) else {
@@ -421,11 +419,11 @@ impl EventEditor {
             Some(e) => vec![
                 ("id", e.id.to_string()),
                 ("lineage_id", e.lineage_id.to_string()),
-                ("ephemeral", e.ephemeral.to_string()),
+                ("saved", e.saved.to_string()),
                 (
                     "recurrence",
                     e.recurrence
-                        .map(|d| format_duration(d))
+                        .map(|d| format_recurrence(d))
                         .unwrap_or_else(|| "—".to_string()),
                 ),
             ],
@@ -528,7 +526,7 @@ impl Render for EventEditor {
             .text_color(theme.group_box_foreground)
             .border_1()
             .border_color(theme.border)
-            .rounded_lg()
+            .rounded_xl()
             .shadow_xl()
             .track_focus(&self.focus_handle)
             .on_any_mouse_down(|_event, _window, cx| {

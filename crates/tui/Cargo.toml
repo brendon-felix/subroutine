@@ -21,7 +21,7 @@ tui-widget-list = "0.15.2"
 tui-input = { version = "0.15", features = ["crossterm"] }
 
 uuid = { workspace = true }
+reqwest = { workspace = true }
 
 simple-core = { path = "../simple-core" }
-simple-db = { path = "../simple-db" }
 simple-parser = { path = "../simple-parser" }

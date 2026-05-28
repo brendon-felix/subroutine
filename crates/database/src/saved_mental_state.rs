@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use app_core::{SavedMentalState, starter_states};
+use app_core::{starter_states, SavedMentalState};
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -69,7 +69,7 @@ pub fn insert_saved_mental_state(conn: &Connection, state: &SavedMentalState) ->
                 id, name, description,
                 attention_mode, sensory_tolerance, emotional_regulation, social_battery
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 description = excluded.description,
@@ -127,7 +127,7 @@ pub fn fetch_saved_mental_state_by_id(
             SELECT id, name, description,
                    attention_mode, sensory_tolerance, emotional_regulation, social_battery
             FROM saved_mental_states
-            WHERE id = ?1
+            WHERE id = $1
             "#,
         )
         .context("Failed to prepare saved mental state fetch by id query")?;
@@ -142,7 +142,7 @@ pub fn fetch_saved_mental_state_by_id(
 
 pub fn delete_saved_mental_state(conn: &Connection, id: Uuid) -> Result<()> {
     conn.execute(
-        "DELETE FROM saved_mental_states WHERE id = ?1",
+        "DELETE FROM saved_mental_states WHERE id = $1",
         [id.to_string()],
     )
     .with_context(|| format!("Failed to delete saved mental state '{}'", id))?;
@@ -156,7 +156,7 @@ pub fn seed_starter_mental_states(conn: &Connection) -> Result<()> {
     for state in starter_states::all() {
         let already_exists = conn
             .query_row(
-                "SELECT COUNT(*) FROM saved_mental_states WHERE id = ?1",
+                "SELECT COUNT(*) FROM saved_mental_states WHERE id = $1",
                 [state.id.to_string()],
                 |row| row.get::<_, i64>(0),
             )

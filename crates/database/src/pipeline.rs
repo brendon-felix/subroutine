@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use app_core::{Pipeline, PipelineEntry};
 use rusqlite::Connection;
 use uuid::Uuid;
@@ -37,7 +37,7 @@ fn insert_pipeline_entry(
     conn.execute(
         r#"
         INSERT INTO pipeline_entries (id, entry_type, entry_id, list, position)
-        VALUES (?1, ?2, ?3, ?4, ?5)
+        VALUES ($1, $2, $3, $4, $5)
         "#,
         rusqlite::params![
             Uuid::new_v4().to_string(),

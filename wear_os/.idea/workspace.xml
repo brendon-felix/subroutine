@@ -10,30 +10,484 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="76759533-4dac-4543-8f2f-fd2e203bc3d9" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.gradle/config.properties" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/build.gradle.kts" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/gradle.properties" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/gradle/libs.versions.toml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/gradle/wrapper/gradle-wrapper.jar" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/gradle/wrapper/gradle-wrapper.properties" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/gradlew" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/gradlew.bat" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/local.properties" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/settings.gradle.kts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/../.rules" beforeDir="false" afterPath="$PROJECT_DIR$/../.rules" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/build.gradle.kts" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/proguard-rules.pro" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/androidTest/java/com/example/subroutine_simple/ExampleInstrumentedTest.kt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/AndroidManifest.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/java/com/example/subroutine_simple/MainActivity.kt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/java/com/example/subroutine_simple/ui/theme/Color.kt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/java/com/example/subroutine_simple/ui/theme/Theme.kt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/java/com/example/subroutine_simple/ui/theme/Type.kt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/drawable/ic_launcher_background.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/drawable/ic_launcher_foreground.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/mipmap-anydpi/ic_launcher.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/mipmap-anydpi/ic_launcher_round.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/mipmap-hdpi/ic_launcher.webp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/mipmap-hdpi/ic_launcher_round.webp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/mipmap-mdpi/ic_launcher.webp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/mipmap-mdpi/ic_launcher_round.webp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/mipmap-xhdpi/ic_launcher.webp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/mipmap-xhdpi/ic_launcher_round.webp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/mipmap-xxhdpi/ic_launcher.webp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.webp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.webp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/values/colors.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/values/strings.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/values/themes.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/xml/backup_rules.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/main/res/xml/data_extraction_rules.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/app/src/test/java/com/example/subroutine_simple/ExampleUnitTest.kt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/../subroutinesimple/gradle/libs.versions.toml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../Cargo.lock" beforeDir="false" afterPath="$PROJECT_DIR$/../Cargo.lock" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/../Cargo.toml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/../crates/app-core/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/app-core/Cargo.toml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/../crates/app-core/DESIGN.md" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/app-core/DESIGN.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/../crates/app-core/src/action.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/app-core/src/action.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/../crates/app-core/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/app-core/src/lib.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/../crates/database/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/database/src/lib.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../DESIGN.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../android/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/../android/.idea/vcs.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/LICENSES" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_anthropic.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_bedrock.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_claude.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_deep_seek.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_edit.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_gemini.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_google.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_lm_studio.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_mistral.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_ollama.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_open_ai.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_open_ai_compat.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_open_router.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_v_zero.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_x_ai.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ai_zed.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/arrow_circle.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/arrow_down.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/arrow_down10.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/arrow_down_right.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/arrow_left.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/arrow_right.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/arrow_right_left.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/arrow_up.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/arrow_up_right.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/at_sign.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/attach.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/audio_off.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/audio_on.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/backspace.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/bell.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/bell_dot.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/bell_off.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/bell_ring.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/binary.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/blocks.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/bolt_filled.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/bolt_outlined.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/book.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/book_copy.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/box.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/case_sensitive.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/chat.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/check.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/check_circle.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/check_double.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/chevron_down.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/chevron_down_up.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/chevron_left.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/chevron_right.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/chevron_up.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/chevron_up_down.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/circle.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/circle_check.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/circle_help.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/close.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/cloud_download.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/code.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/cog.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/command.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/control.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/copilot.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/copilot_disabled.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/copilot_error.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/copilot_init.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/copy.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/countdown_timer.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/crosshair.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/cursor_i_beam.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/dash.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/database_zap.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/debug.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/debug_breakpoint.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/debug_continue.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/debug_detach.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/debug_disabled_breakpoint.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/debug_disabled_log_breakpoint.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/debug_ignore_breakpoints.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/debug_log_breakpoint.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/debug_pause.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/debug_step_into.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/debug_step_out.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/debug_step_over.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/diff.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/disconnected.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/download.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/editor_atom.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/editor_cursor.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/editor_emacs.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/editor_jet_brains.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/editor_sublime.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/editor_vs_code.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ellipsis.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/ellipsis_vertical.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/envelope.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/eraser.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/escape.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/exit.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/expand_down.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/expand_up.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/expand_vertical.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/eye.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_code.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_diff.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_doc.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_generic.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_git.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/ai.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/archive.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/astro.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/audio.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/book.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/bun.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/c.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/cairo.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/camera.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/chevron_down.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/chevron_left.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/chevron_right.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/chevron_up.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/code.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/coffeescript.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/conversations.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/cpp.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/css.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/dart.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/database.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/diff.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/docker.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/elixir.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/elm.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/erlang.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/eslint.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/file.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/folder.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/folder_open.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/font.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/fsharp.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/git.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/gleam.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/go.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/graphql.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/hash.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/haskell.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/hcl.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/heroku.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/html.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/image.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/info.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/java.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/javascript.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/julia.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/kdl.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/kotlin.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/lock.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/lua.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/luau.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/magnifying_glass.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/metal.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/nim.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/nix.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/notebook.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/ocaml.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/odin.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/package.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/phoenix.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/php.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/plus.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/prettier.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/prisma.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/project.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/puppet.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/python.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/r.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/react.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/replace.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/replace_all.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/replace_next.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/roc.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/ruby.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/rust.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/sass.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/scala.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/settings.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/surrealql.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/swift.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/tcl.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/terminal.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/terraform.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/toml.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/typescript.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/v.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/video.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/vue.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/vyper.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/wgsl.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_icons/zig.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_lock.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_markdown.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_rust.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_text_filled.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_text_outlined.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_toml.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/file_tree.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/filter.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/flame.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/folder.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/folder_open.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/folder_search.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/font.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/font_size.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/font_weight.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/forward_arrow.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/generic_close.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/generic_maximize.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/generic_minimize.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/generic_restore.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/git_branch.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/git_branch_alt.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/git_branch_plus.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/github.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/hash.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/history_rerun.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/image.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/inception.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/indicator.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/info.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/json.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/keyboard.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/knockouts/dot_bg.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/knockouts/dot_fg.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/knockouts/triangle_bg.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/knockouts/triangle_fg.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/knockouts/x_bg.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/knockouts/x_fg.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/library.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/line_height.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/link.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/linux.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/list_collapse.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/list_filter.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/list_todo.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/list_tree.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/list_x.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/load_circle.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/location_edit.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/lock_outlined.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/magnifying_glass.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/maximize.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/menu.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/menu_alt.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/menu_alt_temp.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/mic.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/mic_mute.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/minimize.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/notepad.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/option.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/page_down.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/page_up.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/paperclip.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/pencil.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/pencil_unavailable.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/person.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/pin.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/play_filled.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/play_outlined.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/plus.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/power.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/public.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/pull_request.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/quote.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/reader.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/refresh_title.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/regex.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/repl_neutral.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/repl_off.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/repl_pause.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/repl_play.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/replace.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/replace_all.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/replace_next.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/reply_arrow_right.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/rerun.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/return.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/rotate_ccw.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/rotate_cw.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/scissors.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/screen.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/select_all.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/send.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/server.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/settings.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/shield_check.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/shift.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/slash.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/sliders.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/space.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/sparkle.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/split.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/split_alt.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/square_dot.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/square_minus.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/square_plus.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/star.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/star_filled.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/stop.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/supermaven.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/supermaven_disabled.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/supermaven_error.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/supermaven_init.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/swatch_book.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/sweep_ai.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tab.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/terminal.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/terminal_alt.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/terminal_ghost.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/text_snippet.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/text_thread.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/thread.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/thread_from_summary.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/thumbs_down.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/thumbs_up.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/todo_complete.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/todo_pending.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/todo_progress.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tool_copy.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tool_delete_file.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tool_diagnostics.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tool_folder.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tool_hammer.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tool_notification.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tool_pencil.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tool_read.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tool_regex.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tool_search.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tool_terminal.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tool_think.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/tool_web.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/trash.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/triangle.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/triangle_right.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/undo.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/unpin.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/user_check.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/user_group.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/user_round_pen.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/warning.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/whole_word.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/x_circle.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/x_circle_filled.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/zed_agent.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/zed_agent_two.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/zed_assistant.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/zed_burn_mode.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/zed_burn_mode_on.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/zed_predict.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/zed_predict_disabled.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/zed_predict_down.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/zed_predict_error.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/zed_predict_up.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/zed_src_custom.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../assets/zed_icons/zed_src_extension.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/cli/DESIGN.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/database/DESIGN.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/database/src/action.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/database/src/action.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/database/src/event.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/database/src/event.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/database/src/pipeline.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/database/src/pipeline.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/database/src/routine.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/database/src/routine.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/database/src/saved_action.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/database/src/saved_action.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/database/src/saved_event.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/database/src/saved_event.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/database/src/saved_mental_state.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/database/src/saved_mental_state.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../crates/desktop/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/DESIGN.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/PLAN.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/app.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/app.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/components/action_creator/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/components/action_creator/mod.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/components/checkbox.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/components/checkbox.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/components/command_palette/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/components/command_palette/mod.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/components/drag_drop.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/components/drag_drop.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/components/event_creator/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/components/event_creator/mod.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/components/picker/list.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/components/picker/list.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/components/picker/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/components/picker/mod.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/icons.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/icons.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../crates/desktop/src/stores/database_store.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/stores/database_store.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/stores/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/stores/mod.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/themes.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/themes.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/utils.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/utils.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/action_editor.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/action_editor.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/action_list_view.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/action_list_view.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/pipeline.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/pipeline.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/backlog.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/backlog.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/event_editor.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/event_editor.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/focus_view.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/focus_view.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/left_sidebar.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/left_sidebar.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/main_view.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/main_view.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/mod.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/pipeline.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/right_sidebar.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/right_sidebar.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/root_view.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/root_view.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/routines_view.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/routines_view.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/saved_actions.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/saved_actions.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/desktop/src/views/saved_events.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/desktop/src/views/saved_events.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-cli/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-cli/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-cli/seed.json" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-cli/seed.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-cli/src/actions.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-cli/src/actions.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-cli/src/events.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-cli/src/events.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-cli/src/export_import.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-cli/src/export_import.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-cli/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-cli/src/main.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-cli/src/pipeline.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-cli/src/pipeline.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-cli/src/routines.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-cli/src/routines.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-core/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-core/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-core/src/action.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-core/src/action.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-core/src/event.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-core/src/event.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-core/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-core/src/lib.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-core/src/pipeline/mod.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-core/src/pipeline/queue.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-core/src/pipeline/schedule.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-core/src/routine.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-core/src/routine.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-db/Cargo.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-db/migrations/postgres_schema.sql" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-db/migrations/sqlite_schema.sql" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-db/src/action.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-db/src/event.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-db/src/lib.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-db/src/pipeline.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-db/src/routine.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-db/src/sync.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-parser/src/build.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-parser/src/build.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-parser/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-parser/src/lib.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/simple-parser/src/tests.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/simple-parser/src/tests.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/tui/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/tui/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/tui/REFERENCE.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/tui/src/app.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/tui/src/app.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/tui/src/ui/views/pipeline_view.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/tui/src/ui/views/pipeline_view.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/tui/src/ui/views/pipeline_view/action_editor_view.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/tui/src/ui/views/pipeline_view/action_editor_view.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../crates/tui/src/ui/views/pipeline_view/event_editor_view.rs" beforeDir="false" afterPath="$PROJECT_DIR$/../crates/tui/src/ui/views/pipeline_view/event_editor_view.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gradle/9.1.0/checksums/checksums.lock" beforeDir="false" afterPath="$PROJECT_DIR$/.gradle/9.1.0/checksums/checksums.lock" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gradle/9.1.0/checksums/md5-checksums.bin" beforeDir="false" afterPath="$PROJECT_DIR$/.gradle/9.1.0/checksums/md5-checksums.bin" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gradle/9.1.0/checksums/sha1-checksums.bin" beforeDir="false" afterPath="$PROJECT_DIR$/.gradle/9.1.0/checksums/sha1-checksums.bin" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gradle/9.1.0/executionHistory/executionHistory.lock" beforeDir="false" afterPath="$PROJECT_DIR$/.gradle/9.1.0/executionHistory/executionHistory.lock" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gradle/9.1.0/fileHashes/fileHashes.lock" beforeDir="false" afterPath="$PROJECT_DIR$/.gradle/9.1.0/fileHashes/fileHashes.lock" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gradle/buildOutputCleanup/buildOutputCleanup.lock" beforeDir="false" afterPath="$PROJECT_DIR$/.gradle/buildOutputCleanup/buildOutputCleanup.lock" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/build/reports/problems/problems-report.html" beforeDir="false" afterPath="$PROJECT_DIR$/build/reports/problems/problems-report.html" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -43,7 +497,7 @@
   <component name="ClangdSettings">
     <option name="formatViaClangd" value="false" />
   </component>
-  <component name="ExecutionTargetManager" SELECTED_TARGET="device_and_snapshot_combo_box_target[PhysicalDevice::serial=5C021WRBNW40GT]" />
+  <component name="ExecutionTargetManager" SELECTED_TARGET="device_and_snapshot_combo_box_target[]" />
   <component name="ExternalProjectsData">
     <projectState path="$PROJECT_DIR$">
       <ProjectState />
@@ -77,6 +531,7 @@
     "RunOnceActivity.cidr.known.project.marker": "true",
     "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.readMode.enableVisualFormatting": "true",
+    "android.gradle.sync.needed": "true",
     "cf.first.check.clang-format": "false",
     "cidr.known.project.marker": "true",
     "git-widget-placeholder": "main",

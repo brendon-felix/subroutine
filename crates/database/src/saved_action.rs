@@ -212,7 +212,7 @@ pub fn insert_saved_action(conn: &Connection, saved: &SavedAction) -> Result<()>
                 recurrence_auto_reschedule
             )
             VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
             )
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
@@ -300,7 +300,7 @@ pub fn fetch_saved_action_by_id(conn: &Connection, id: Uuid) -> Result<Option<Sa
                 recurrence_min_interval_secs, recurrence_max_interval_secs,
                 recurrence_auto_reschedule
             FROM saved_actions
-            WHERE id = ?1
+            WHERE id = $1
             "#,
         )
         .context("Failed to prepare saved action fetch by id query")?;
@@ -314,7 +314,7 @@ pub fn fetch_saved_action_by_id(conn: &Connection, id: Uuid) -> Result<Option<Sa
 }
 
 pub fn delete_saved_action(conn: &Connection, id: Uuid) -> Result<()> {
-    conn.execute("DELETE FROM saved_actions WHERE id = ?1", [id.to_string()])
+    conn.execute("DELETE FROM saved_actions WHERE id = $1", [id.to_string()])
         .with_context(|| format!("Failed to delete saved action '{}'", id))?;
     Ok(())
 }

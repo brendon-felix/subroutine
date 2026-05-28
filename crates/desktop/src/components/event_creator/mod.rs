@@ -21,7 +21,7 @@ use simple_parser::{
 
 use crate::{
     components::popover::{CloseOverlay, popover},
-    stores::DatabaseStore,
+    stores::AppDatabaseStore,
 };
 
 /// Format a [`RecurrenceSpec`] as a short human-readable string.
@@ -89,7 +89,7 @@ fn format_weekday_set(set: &WeekdaySet) -> String {
 
 pub struct EventCreator {
     pub focus_handle: FocusHandle,
-    database_store: Entity<DatabaseStore>,
+    database_store: Entity<AppDatabaseStore>,
 
     title_input: Entity<InputState>,
     content_input: Entity<InputState>,
@@ -111,7 +111,7 @@ pub struct EventCreator {
 
 impl EventCreator {
     pub fn new(
-        database_store: Entity<DatabaseStore>,
+        database_store: Entity<AppDatabaseStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -209,7 +209,7 @@ impl EventCreator {
 
         // The `save` checkbox controls ephemerality regardless of what the
         // parser inferred.
-        event.ephemeral = !self.save;
+        event.saved = self.save;
 
         // An explicit description always takes precedence over the parsed one.
         if !self.current_content.is_empty() {
@@ -250,22 +250,21 @@ impl EventCreator {
         }
 
         // Add to the pipeline and show overlap warnings.
-        let overlap_warnings = self
-            .database_store
-            .update(cx, |store, cx| store.add_event_to_queue(event, cx));
+        self.database_store
+            .update(cx, |store, cx| store.upsert_event(event, cx));
 
-        for warning in overlap_warnings {
-            window.push_notification(
-                (
-                    NotificationType::Warning,
-                    SharedString::from(format!(
-                        "\"{}\" overlaps with \"{}\"",
-                        warning.inserted_title, warning.conflicting_title
-                    )),
-                ),
-                cx,
-            );
-        }
+        // for warning in overlap_warnings {
+        //     window.push_notification(
+        //         (
+        //             NotificationType::Warning,
+        //             SharedString::from(format!(
+        //                 "\"{}\" overlaps with \"{}\"",
+        //                 warning.inserted_title, warning.conflicting_title
+        //             )),
+        //         ),
+        //         cx,
+        //     );
+        // }
 
         if !self.batch_mode {
             window.dispatch_action(Box::new(CloseOverlay), cx);
@@ -368,7 +367,7 @@ impl Render for EventCreator {
                 .text_color(theme.group_box_foreground)
                 .border_1()
                 .border_color(theme.border)
-                .rounded_lg()
+                .rounded_xl()
                 .shadow_xl()
                 .on_any_mouse_down(|_event, _window, cx| {
                     cx.stop_propagation();

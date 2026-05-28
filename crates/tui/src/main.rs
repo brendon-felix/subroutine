@@ -1,5 +1,6 @@
 mod app;
 mod debug;
+mod store;
 mod term;
 mod ui;
 
