@@ -210,7 +210,7 @@ impl<T: Clone + Debug + 'static> ParentElement for Draggable<T> {
 }
 
 impl<T: Clone + Debug + 'static> RenderOnce for Draggable<T> {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let drag_data = self.drag_data.clone();
         let user_style = self.style;
 

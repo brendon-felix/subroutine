@@ -9,7 +9,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Local, Timelike};
 use gpui::{
     App, AsyncApp, Bounds, Context, DragMoveEvent, ElementId, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, KeyBinding, ParentElement, PinchEvent, Pixels,
-    Point, Render, Size, Styled, Subscription, Window, actions, anchored, deferred, div,
+    Point, Render, Size, Styled, Subscription, Window, actions, anchored, deferred,
     prelude::FluentBuilder, px,
 };
 use gpui_component::input::InputState;
@@ -20,7 +20,6 @@ use uuid::Uuid;
 
 use crate::{
     components::{DragData, DropZone},
-    stores::{AppDatabaseStore, DataChanged},
     utils::ZoomState,
     views::DeleteItem,
 };

@@ -20,9 +20,8 @@ use crate::components::Divider;
 
 pub(super) const DEFAULT_HOUR_HEIGHT: Pixels = px(128.);
 pub const HOUR_DIVIDER_HEIGHT: Pixels = px(32.);
-const ZOOM_DURATION: Duration = Duration::from_millis(100);
-const SCROLL_DURATION: Duration = Duration::from_millis(200);
-const SCROLL_DURATION_SLOW: Duration = Duration::from_millis(500);
+const ZOOM_DURATION: Duration = Duration::from_millis(150);
+const SCROLL_DURATION: Duration = Duration::from_millis(150);
 
 /// A single interpolation target for a zoom step.
 /// Combining hour_height and scroll into one value guarantees they are evaluated
@@ -84,7 +83,7 @@ fn timeline_context_menu(
             .item(
                 PopupMenuItem::new("New action")
                     // .icon(AppIcon::ListPlus)
-                    .on_click(move |_event, _window, cx: &mut App| {
+                    .on_click(move |_event, _window, _cx: &mut App| {
                         // let db_store = AppDatabaseStore::global(cx);
                         // db_store.update(cx, |store, cx| {
                         //     store.complete_action(action_id, cx);
@@ -94,7 +93,7 @@ fn timeline_context_menu(
             .item(
                 PopupMenuItem::new("New event")
                     // .icon(AppIcon::CalendarPlus)
-                    .on_click(move |event, _window, cx: &mut App| {
+                    .on_click(move |_event, _window, _cx: &mut App| {
                         // let db_store = AppDatabaseStore::global(cx);
                         // db_store.update(cx, |store, cx| {
                         //     store.backlog_action(action_id, cx);
@@ -154,15 +153,15 @@ impl HourDivision {
         }
     }
 
-    fn label(&self) -> &'static str {
-        match self {
-            HourDivision::Hour => "hour",
-            HourDivision::HalfHour => "30 min",
-            HourDivision::QuarterHour => "15 min",
-            HourDivision::TenMinutes => "10 min",
-            HourDivision::FiveMinutes => "5 min",
-        }
-    }
+    // fn label(&self) -> &'static str {
+    //     match self {
+    //         HourDivision::Hour => "hour",
+    //         HourDivision::HalfHour => "30 min",
+    //         HourDivision::QuarterHour => "15 min",
+    //         HourDivision::TenMinutes => "10 min",
+    //         HourDivision::FiveMinutes => "5 min",
+    //     }
+    // }
 
     /// Floor a datetime to the nearest division boundary (toward the past).
     pub(super) fn floor_division(&self, time: DateTime<Local>) -> DateTime<Local> {

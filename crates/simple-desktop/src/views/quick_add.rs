@@ -1,15 +1,10 @@
 use std::time::Duration;
 
 use gpui::{
-    Context, DefiniteLength, InteractiveElement, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, div, percentage, prelude::FluentBuilder, px,
+    Context, InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement,
+    Styled, Window, div, prelude::FluentBuilder, px,
 };
-use gpui_component::{
-    ActiveTheme, Icon, StyledExt,
-    animation::{ease_in_cubic, ease_in_out_cubic, ease_out_cubic},
-    h_flex,
-    input::{self, Input},
-};
+use gpui_component::{ActiveTheme, Icon, animation::ease_out_cubic, h_flex};
 use gpui_transitions::WindowUseTransition;
 
 use crate::{

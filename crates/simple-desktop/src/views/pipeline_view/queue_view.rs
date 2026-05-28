@@ -6,7 +6,7 @@ use gpui::{
 };
 use gpui_component::{
     ActiveTheme, Colorize, VirtualListScrollHandle, checkbox::Checkbox, h_flex,
-    menu::ContextMenuExt, scroll::ScrollableElement, v_virtual_list,
+    menu::ContextMenuExt, v_virtual_list,
 };
 use simple_core::AnyItem;
 use uuid::Uuid;
@@ -88,7 +88,7 @@ impl Focusable for QueueView {
 }
 
 impl Render for QueueView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let completing_items = self.completing_items.clone();
 
         div()

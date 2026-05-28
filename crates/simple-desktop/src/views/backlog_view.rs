@@ -1,9 +1,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    Along, App, Axis, Context, DragMoveEvent, FocusHandle, Focusable, Hsla, InteractiveElement,
-    IntoElement, ParentElement, Pixels, Render, SharedString, Size, Styled, Window, div, point,
-    prelude::FluentBuilder, px,
+    Context, DragMoveEvent, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels, Render,
+    SharedString, Size, Styled, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{ActiveTheme, VirtualListScrollHandle, h_flex, label::Label, v_virtual_list};
 use simple_core::{Action, AnyItem};
@@ -87,12 +86,12 @@ impl BacklogView {
         self.item_sizes = item_sizes;
     }
 
-    fn scroll_offset(&self) -> Pixels {
-        self.scroll_handle
-            .offset()
-            .along(Axis::Vertical)
-            .min(px(0.))
-    }
+    // fn scroll_offset(&self) -> Pixels {
+    //     self.scroll_handle
+    //         .offset()
+    //         .along(Axis::Vertical)
+    //         .min(px(0.))
+    // }
 
     fn drop_zone(
         &self,

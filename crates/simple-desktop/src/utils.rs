@@ -1,11 +1,8 @@
-use std::{
-    ops::{Mul, RangeInclusive},
-    time::Duration,
-};
+use std::ops::{Mul, RangeInclusive};
 
 use gpui::{
-    App, DefiniteLength, Div, Hsla, InteractiveElement, Stateful, StatefulInteractiveElement,
-    Styled, prelude::FluentBuilder, transparent_white,
+    App, Div, Hsla, InteractiveElement, Stateful, StatefulInteractiveElement, Styled,
+    prelude::FluentBuilder, transparent_white,
 };
 use gpui_component::{ActiveTheme, Colorize};
 
@@ -19,13 +16,13 @@ use gpui_component::{ActiveTheme, Colorize};
 //     }
 // }
 
-pub trait AppAnimation {
-    fn duration(&self) -> Duration;
-}
+// pub trait AppAnimation {
+//     fn duration(&self) -> Duration;
+// }
 
-pub fn fraction(f: f32) -> DefiniteLength {
-    DefiniteLength::Fraction(f)
-}
+// pub fn fraction(f: f32) -> DefiniteLength {
+//     DefiniteLength::Fraction(f)
+// }
 
 #[derive(Clone, Copy)]
 pub struct ButtonColors {

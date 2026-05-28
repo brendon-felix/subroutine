@@ -1,6 +1,6 @@
 use gpui::{
-    App, AppContext, Context, DragMoveEvent, Entity, InteractiveElement, IntoElement,
-    ParentElement, Render, Styled, Window, div, prelude::FluentBuilder,
+    App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
+    Styled, Window, div, prelude::FluentBuilder,
 };
 use gpui_component::{
     ActiveTheme,
@@ -17,7 +17,7 @@ use timeline_view::*;
 use uuid::Uuid;
 
 pub struct DeleteItem {
-    pub item: AnyItem,
+    pub _item: AnyItem,
 }
 
 use crate::{
@@ -70,7 +70,7 @@ fn event_context_menu(
         menu.item(
             PopupMenuItem::new("Reschedule")
                 .icon(AppIcon::CalendarClock)
-                .on_click(|_, _, cx| {}),
+                .on_click(|_, _, _cx| {}),
         )
         .separator()
         .item(
@@ -140,7 +140,7 @@ impl PipelineView {
 }
 
 impl Render for PipelineView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .gap_2()

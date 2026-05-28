@@ -1,4 +1,4 @@
-use std::{cell::Cell, rc::Rc, time::Duration};
+use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, ClickEvent, Corners, Div, Edges, ElementId, Hsla, InteractiveElement,
@@ -12,7 +12,6 @@ use gpui_component::{
     Disableable,
     Icon,
     IconName,
-    Root,
     Selectable,
     Sizable,
     Size,
@@ -20,9 +19,7 @@ use gpui_component::{
     StyledExt,
     // button::ButtonIcon,
     h_flex,
-    tooltip::{Tooltip, TooltipOverlay},
 };
-use gpui_transitions::WindowUseTransition;
 
 use crate::{AppIcon, components::FocusableExt};
 
@@ -51,6 +48,7 @@ pub struct ButtonCustomVariant {
     active: Hsla,
 }
 
+#[allow(dead_code)]
 pub trait ButtonVariants: Sized {
     fn with_variant(self, variant: ButtonVariant) -> Self;
 
@@ -105,6 +103,7 @@ pub trait ButtonVariants: Sized {
     }
 }
 
+#[allow(dead_code)]
 impl ButtonCustomVariant {
     pub fn new(cx: &App) -> Self {
         Self {
@@ -164,6 +163,7 @@ pub enum ButtonVariant {
     Custom(ButtonCustomVariant),
 }
 
+#[allow(dead_code)]
 impl ButtonVariant {
     #[inline]
     pub fn is_link(&self) -> bool {
@@ -214,7 +214,7 @@ pub struct Button {
         SharedString,
         Option<(Rc<Box<dyn gpui::Action>>, Option<SharedString>)>,
     )>,
-    tooltip_builder: Option<Rc<dyn Fn(&mut Window, &mut App) -> gpui::AnyView>>,
+    // tooltip_builder: Option<Rc<dyn Fn(&mut Window, &mut App) -> gpui::AnyView>>,
     on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     on_hover: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
     loading: bool,
@@ -230,6 +230,7 @@ impl From<Button> for AnyElement {
     }
 }
 
+#[allow(dead_code)]
 impl Button {
     pub fn new(id: impl Into<ElementId>) -> Self {
         let id = id.into();
@@ -255,7 +256,7 @@ impl Button {
             border_edges: Edges::all(true),
             size: Size::Medium,
             tooltip: None,
-            tooltip_builder: None,
+            // tooltip_builder: None,
             on_click: None,
             on_hover: None,
             loading: false,
@@ -453,10 +454,10 @@ impl RenderOnce for Button {
         let is_disabled = self.disabled;
         let hoverable = self.hoverable();
         let normal_style = style.normal(self.outline, cx);
-        let icon_size = match self.size {
-            Size::Size(v) => Size::Size(v * 0.75),
-            _ => self.size,
-        };
+        // let icon_size = match self.size {
+        //     Size::Size(v) => Size::Size(v * 0.75),
+        //     _ => self.size,
+        // };
 
         let focus_handle = window
             .use_keyed_state(self.id.clone(), cx, |_, cx| cx.focus_handle())

@@ -4,7 +4,7 @@ use gpui::{
     prelude::*, px, rems,
 };
 use gpui_component::{
-    ActiveTheme, Disableable, Sizable, StyledExt, WindowExt,
+    ActiveTheme, Disableable, Sizable, WindowExt,
     checkbox::Checkbox,
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -13,7 +13,7 @@ use gpui_component::{
     switch::Switch,
     v_flex,
 };
-use simple_core::{Action, ActionState, ActionTarget};
+use simple_core::Action;
 use simple_parser::{
     BuildTarget, BuiltEntity, ParseDraft, RecurrenceSpec, WeekdaySet, build_entity,
     parse_action_input,

@@ -16,7 +16,7 @@ pub enum StoreStatus {
 }
 
 pub struct DatabaseError {
-    pub message: String,
+    pub _message: String,
 }
 
 pub struct DataChanged;
@@ -54,17 +54,17 @@ enum Cmd {
     DeleteAction(Uuid, Reply<()>),
     UpsertEvent(Event, Reply<()>),
     DeleteEvent(Uuid, Reply<()>),
-    UpsertRoutine(Routine, Reply<()>),
-    DeleteRoutine(Uuid, Reply<()>),
+    // UpsertRoutine(Routine, Reply<()>),
+    // DeleteRoutine(Uuid, Reply<()>),
     // Combined create + follow-up, sequenced atomically in the worker
     UpsertAndQueueAction(Action, Reply<Vec<Action>>),
     UpsertAndScheduleEvent(Event, Reply<Event>),
-    UpsertAndInstantiateRoutine(Routine, Reply<Vec<Action>>),
+    // UpsertAndInstantiateRoutine(Routine, Reply<Vec<Action>>),
     // State transitions
     CompleteAction(Uuid, Reply<CompleteResult>),
     QueueAction(Uuid, Reply<Vec<Action>>),
     BacklogAction(Uuid, Reply<Action>),
-    InstantiateRoutine(Uuid, Reply<Vec<Action>>),
+    // InstantiateRoutine(Uuid, Reply<Vec<Action>>),
     RefreshPipeline(Reply<Vec<Action>>),
     ExpeditePipeline(Reply<Vec<Action>>),
 }
@@ -126,7 +126,7 @@ impl AppDatabaseStore {
                 Err(e) => {
                     tracing::error!(error = %e, "initial fetch failed");
                     store.status = StoreStatus::Error(e.clone());
-                    cx.emit(DatabaseError { message: e });
+                    cx.emit(DatabaseError { _message: e });
                 }
             });
         })
@@ -173,13 +173,13 @@ impl AppDatabaseStore {
         }
     }
 
-    fn upsert_routine_local(&mut self, routine: Routine) {
-        if let Some(pos) = self.routines.iter().position(|r| r.id == routine.id) {
-            self.routines[pos] = routine;
-        } else {
-            self.routines.push(routine);
-        }
-    }
+    // fn upsert_routine_local(&mut self, routine: Routine) {
+    //     if let Some(pos) = self.routines.iter().position(|r| r.id == routine.id) {
+    //         self.routines[pos] = routine;
+    //     } else {
+    //         self.routines.push(routine);
+    //     }
+    // }
 
     // Sends a command and spawns a smol task that awaits the reply, then calls
     // `apply` on the entity.  Used for operations where the server response
@@ -218,13 +218,13 @@ impl AppDatabaseStore {
         self.actions.iter().find(|a| a.id == id).cloned()
     }
 
-    pub fn active_action(&self) -> Option<Action> {
-        let now = chrono::Utc::now();
-        self.actions
-            .iter()
-            .find(|a| matches!(a.state, ActionState::Queued(t) if t.time <= now))
-            .cloned()
-    }
+    // pub fn active_action(&self) -> Option<Action> {
+    //     let now = chrono::Utc::now();
+    //     self.actions
+    //         .iter()
+    //         .find(|a| matches!(a.state, ActionState::Queued(t) if t.time <= now))
+    //         .cloned()
+    // }
 
     pub fn events(&self) -> Vec<Event> {
         self.events.clone()
@@ -263,13 +263,13 @@ impl AppDatabaseStore {
             .collect()
     }
 
-    pub fn routines(&self) -> Vec<Routine> {
-        self.routines.clone()
-    }
+    // pub fn routines(&self) -> Vec<Routine> {
+    //     self.routines.clone()
+    // }
 
-    pub fn get_routine(&self, id: Uuid) -> Option<Routine> {
-        self.routines.iter().find(|r| r.id == id).cloned()
-    }
+    // pub fn get_routine(&self, id: Uuid) -> Option<Routine> {
+    //     self.routines.iter().find(|r| r.id == id).cloned()
+    // }
 
     // ── Write API — simple CRUD (optimistic) ──────────────────────────────────
     // Update local state immediately so the UI is responsive, then fire-and-
@@ -320,25 +320,25 @@ impl AppDatabaseStore {
         self.dispatch(Cmd::DeleteEvent(id, tx), rx, cx, |_store, _, _cx| {});
     }
 
-    pub fn upsert_routine(&mut self, routine: Routine, cx: &mut Context<Self>) {
-        self.upsert_routine_local(routine.clone());
-        cx.emit(RoutineDataChanged);
-        cx.emit(DataChanged);
-        cx.notify();
+    // pub fn upsert_routine(&mut self, routine: Routine, cx: &mut Context<Self>) {
+    //     self.upsert_routine_local(routine.clone());
+    //     cx.emit(RoutineDataChanged);
+    //     cx.emit(DataChanged);
+    //     cx.notify();
 
-        let (tx, rx) = flume::bounded(1);
-        self.dispatch(Cmd::UpsertRoutine(routine, tx), rx, cx, |_store, _, _cx| {});
-    }
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(Cmd::UpsertRoutine(routine, tx), rx, cx, |_store, _, _cx| {});
+    // }
 
-    pub fn delete_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        self.routines.retain(|r| r.id != id);
-        cx.emit(RoutineDataChanged);
-        cx.emit(DataChanged);
-        cx.notify();
+    // pub fn delete_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
+    //     self.routines.retain(|r| r.id != id);
+    //     cx.emit(RoutineDataChanged);
+    //     cx.emit(DataChanged);
+    //     cx.notify();
 
-        let (tx, rx) = flume::bounded(1);
-        self.dispatch(Cmd::DeleteRoutine(id, tx), rx, cx, |_store, _, _cx| {});
-    }
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(Cmd::DeleteRoutine(id, tx), rx, cx, |_store, _, _cx| {});
+    // }
 
     // ── Write API — combined create + follow-up ───────────────────────────────
     // These are for callers that create an item and immediately want a
@@ -403,29 +403,29 @@ impl AppDatabaseStore {
         );
     }
 
-    /// Persist a new routine and immediately instantiate it (create one action
-    /// per step). Returns the created actions so the queue updates in one shot.
-    pub fn upsert_and_instantiate_routine(&mut self, routine: Routine, cx: &mut Context<Self>) {
-        self.upsert_routine_local(routine.clone());
-        cx.emit(RoutineDataChanged);
-        cx.emit(DataChanged);
-        cx.notify();
+    // /// Persist a new routine and immediately instantiate it (create one action
+    // /// per step). Returns the created actions so the queue updates in one shot.
+    // pub fn upsert_and_instantiate_routine(&mut self, routine: Routine, cx: &mut Context<Self>) {
+    //     self.upsert_routine_local(routine.clone());
+    //     cx.emit(RoutineDataChanged);
+    //     cx.emit(DataChanged);
+    //     cx.notify();
 
-        let (tx, rx) = flume::bounded(1);
-        self.dispatch(
-            Cmd::UpsertAndInstantiateRoutine(routine, tx),
-            rx,
-            cx,
-            |store, actions: Vec<Action>, cx| {
-                for a in actions {
-                    store.upsert_action_local(a);
-                }
-                cx.emit(ActionDataChanged);
-                cx.emit(DataChanged);
-                cx.notify();
-            },
-        );
-    }
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(
+    //         Cmd::UpsertAndInstantiateRoutine(routine, tx),
+    //         rx,
+    //         cx,
+    //         |store, actions: Vec<Action>, cx| {
+    //             for a in actions {
+    //                 store.upsert_action_local(a);
+    //             }
+    //             cx.emit(ActionDataChanged);
+    //             cx.emit(DataChanged);
+    //             cx.notify();
+    //         },
+    //     );
+    // }
 
     // ── Write API — server-response ops ──────────────────────────────────────
     // These wait for the server before updating local state, because the
@@ -516,22 +516,22 @@ impl AppDatabaseStore {
         );
     }
 
-    pub fn instantiate_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        let (tx, rx) = flume::bounded(1);
-        self.dispatch(
-            Cmd::InstantiateRoutine(id, tx),
-            rx,
-            cx,
-            |store, actions: Vec<Action>, cx| {
-                for action in actions {
-                    store.upsert_action_local(action);
-                }
-                cx.emit(ActionDataChanged);
-                cx.emit(DataChanged);
-                cx.notify();
-            },
-        );
-    }
+    // pub fn instantiate_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(
+    //         Cmd::InstantiateRoutine(id, tx),
+    //         rx,
+    //         cx,
+    //         |store, actions: Vec<Action>, cx| {
+    //             for action in actions {
+    //                 store.upsert_action_local(action);
+    //             }
+    //             cx.emit(ActionDataChanged);
+    //             cx.emit(DataChanged);
+    //             cx.notify();
+    //         },
+    //     );
+    // }
 }
 
 // ── EventEmitter ──────────────────────────────────────────────────────────────
@@ -642,35 +642,34 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
             let _ = tx.send(result);
         }
 
-        Cmd::UpsertAndInstantiateRoutine(routine, tx) => {
-            let id = routine.id;
-            // PUT the routine first, then instantiate it.
-            let put = client
-                .put(format!("{base}/api/routines/{id}"))
-                .json(&routine)
-                .send()
-                .await
-                .and_then(|r| r.error_for_status())
-                .map_err(|e| e.to_string());
+        // Cmd::UpsertAndInstantiateRoutine(routine, tx) => {
+        //     let id = routine.id;
+        //     // PUT the routine first, then instantiate it.
+        //     let put = client
+        //         .put(format!("{base}/api/routines/{id}"))
+        //         .json(&routine)
+        //         .send()
+        //         .await
+        //         .and_then(|r| r.error_for_status())
+        //         .map_err(|e| e.to_string());
 
-            let result = match put {
-                Err(e) => Err(e),
-                Ok(_) => {
-                    let r = client
-                        .post(format!("{base}/api/routines/{id}/instantiate"))
-                        .send()
-                        .await
-                        .and_then(|r| r.error_for_status())
-                        .map_err(|e| e.to_string());
-                    match r {
-                        Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
-                        Err(e) => Err(e),
-                    }
-                }
-            };
-            let _ = tx.send(result);
-        }
-
+        //     let result = match put {
+        //         Err(e) => Err(e),
+        //         Ok(_) => {
+        //             let r = client
+        //                 .post(format!("{base}/api/routines/{id}/instantiate"))
+        //                 .send()
+        //                 .await
+        //                 .and_then(|r| r.error_for_status())
+        //                 .map_err(|e| e.to_string());
+        //             match r {
+        //                 Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
+        //                 Err(e) => Err(e),
+        //             }
+        //         }
+        //     };
+        //     let _ = tx.send(result);
+        // }
         Cmd::CompleteAction(id, tx) => {
             let result = client
                 .post(format!("{base}/api/actions/{id}/complete"))
@@ -739,43 +738,42 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
             let _ = tx.send(result);
         }
 
-        Cmd::UpsertRoutine(routine, tx) => {
-            let result = client
-                .put(format!("{base}/api/routines/{}", routine.id))
-                .json(&routine)
-                .send()
-                .await
-                .and_then(|r| r.error_for_status())
-                .map(|_| ())
-                .map_err(|e| e.to_string());
-            let _ = tx.send(result);
-        }
+        // Cmd::UpsertRoutine(routine, tx) => {
+        //     let result = client
+        //         .put(format!("{base}/api/routines/{}", routine.id))
+        //         .json(&routine)
+        //         .send()
+        //         .await
+        //         .and_then(|r| r.error_for_status())
+        //         .map(|_| ())
+        //         .map_err(|e| e.to_string());
+        //     let _ = tx.send(result);
+        // }
 
-        Cmd::DeleteRoutine(id, tx) => {
-            let result = client
-                .delete(format!("{base}/api/routines/{id}"))
-                .send()
-                .await
-                .and_then(|r| r.error_for_status())
-                .map(|_| ())
-                .map_err(|e| e.to_string());
-            let _ = tx.send(result);
-        }
+        // Cmd::DeleteRoutine(id, tx) => {
+        //     let result = client
+        //         .delete(format!("{base}/api/routines/{id}"))
+        //         .send()
+        //         .await
+        //         .and_then(|r| r.error_for_status())
+        //         .map(|_| ())
+        //         .map_err(|e| e.to_string());
+        //     let _ = tx.send(result);
+        // }
 
-        Cmd::InstantiateRoutine(id, tx) => {
-            let result = client
-                .post(format!("{base}/api/routines/{id}/instantiate"))
-                .send()
-                .await
-                .and_then(|r| r.error_for_status())
-                .map_err(|e| e.to_string());
-            let result = match result {
-                Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
-                Err(e) => Err(e),
-            };
-            let _ = tx.send(result);
-        }
-
+        // Cmd::InstantiateRoutine(id, tx) => {
+        //     let result = client
+        //         .post(format!("{base}/api/routines/{id}/instantiate"))
+        //         .send()
+        //         .await
+        //         .and_then(|r| r.error_for_status())
+        //         .map_err(|e| e.to_string());
+        //     let result = match result {
+        //         Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
+        //         Err(e) => Err(e),
+        //     };
+        //     let _ = tx.send(result);
+        // }
         Cmd::RefreshPipeline(tx) => {
             let result = client
                 .post(format!("{base}/api/pipeline/refresh"))

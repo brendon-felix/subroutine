@@ -1,5 +1,5 @@
 use gpui::{App, KeyBinding, MouseButton, Pixels, actions, div, prelude::*};
-use gpui_component::{ActiveTheme, v_flex};
+use gpui_component::v_flex;
 
 actions!(overlay, [CloseOverlay]);
 
@@ -29,12 +29,12 @@ pub fn init(cx: &mut App) {
 /// let inner = /* build dialog card as element */;
 /// crate::components::overlay::shell(theme, inner)
 /// ```
-pub fn overlay<T: IntoElement>(inner: T, top: Pixels, cx: &mut App) -> impl IntoElement {
-    let bg_color = cx
-        .theme()
-        .background
-        .blend(gpui::black().opacity(0.15))
-        .opacity(0.4);
+pub fn overlay<T: IntoElement>(inner: T, top: Pixels, _cx: &mut App) -> impl IntoElement {
+    // let bg_color = cx
+    //     .theme()
+    //     .background
+    //     .blend(gpui::black().opacity(0.15))
+    //     .opacity(0.4);
 
     v_flex()
         // .bg(bg_color)

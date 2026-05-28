@@ -1,27 +1,17 @@
 use std::time::Duration;
 
 use gpui::{
-    AppContext, Context, DragMoveEvent, Entity, EventEmitter, FocusHandle, FocusId,
-    InteractiveElement, IntoElement, KeyBinding, ParentElement, Render, StatefulInteractiveElement,
-    Styled, Window, actions, div, prelude::FluentBuilder, px,
+    AppContext, Context, DragMoveEvent, Entity, EventEmitter, FocusHandle, InteractiveElement,
+    IntoElement, KeyBinding, ParentElement, Render, StatefulInteractiveElement, Styled, Window,
+    actions, div, prelude::FluentBuilder, px,
 };
-use gpui_component::{
-    ActiveTheme, Icon, IconName, Root, Sizable, StyledExt,
-    animation::ease_out_cubic,
-    button, h_flex,
-    tab::{Tab, TabBar},
-    v_flex,
-};
+use gpui_component::{ActiveTheme, Root, animation::ease_out_cubic, h_flex, v_flex};
 use gpui_transitions::WindowUseTransition;
 use simple_core::AnyItem;
 
 use crate::{
-    AppIcon,
-    components::{
-        Button, ButtonCustomVariant, ButtonVariant, ButtonVariants, CloseOverlay, DragData,
-    },
-    utils::{ButtonColorizeExt, ButtonColors},
-    views::{ActionCreator, BacklogView, EventCreator, PipelineView, QuickAdd},
+    components::{CloseOverlay, DragData},
+    views::{ActionCreator, BacklogView, EventCreator, PipelineView},
 };
 
 actions!(
@@ -47,21 +37,17 @@ pub enum CurrentOverlay {
 }
 
 pub struct RootView {
-    quick_add: Entity<QuickAdd>,
     pipeline_view: Entity<PipelineView>,
     backlog_view: Entity<BacklogView>,
     backlog_hover: Option<bool>,
-    backlog_open: bool,
     current_overlay: Option<(CurrentOverlay, Option<FocusHandle>)>,
 }
 
 impl RootView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let quick_add = cx.new(|cx| QuickAdd::new(cx));
         let pipeline_view = cx.new(|cx| PipelineView::new(window, cx));
         let backlog_view = cx.new(|cx| BacklogView::new(cx));
         let backlog_hover = None;
-        let backlog_open = false;
         let current_overlay = None;
 
         cx.bind_keys([
@@ -70,11 +56,9 @@ impl RootView {
         ]);
 
         Self {
-            quick_add,
             pipeline_view,
             backlog_view,
             backlog_hover,
-            backlog_open,
             current_overlay,
         }
     }
@@ -90,30 +74,21 @@ impl Render for RootView {
             })
             .with_easing(ease_out_cubic);
 
-        let entity = cx.entity();
-
-        let cloned1 = backlog_transition.clone();
-        let cloned2 = backlog_transition.clone();
-
         let backlog_width = *backlog_transition.evaluate(window, cx);
-        // let backlog_open = backlog_width > px(32.);
-        let mut button_colors = ButtonColors::outline(cx.theme().secondary, cx);
-        button_colors.border = None;
+        // let mut button_colors = ButtonColors::outline(cx.theme().secondary, cx);
+        // button_colors.border = None;
 
         if let Some(hovered) = self.backlog_hover.take() {
-            // if backlog_hover {
-            //     button_colors.bg = cx.theme().hover;
-            // }
-            backlog_transition.update(cx, |value, cx| {
+            backlog_transition.update(cx, |value, _cx| {
                 *value = if hovered { px(256.) } else { px(48.) }
             });
             window.request_animation_frame();
         }
 
-        let variant = ButtonCustomVariant::new(cx)
-            .color(button_colors.bg)
-            .active(button_colors.active)
-            .hover(button_colors.hover);
+        // let variant = ButtonCustomVariant::new(cx)
+        //     .color(button_colors.bg)
+        //     .active(button_colors.active)
+        //     .hover(button_colors.hover);
 
         v_flex()
             .absolute()
@@ -165,7 +140,7 @@ impl Render for RootView {
                                     .border_color(cx.theme().border)
                                     .rounded_xl()
                                     .justify_between()
-                                    .on_hover(cx.listener(move |view, hovered, window, cx| {
+                                    .on_hover(cx.listener(move |view, hovered, _window, cx| {
                                         // backlog_transition.update(cx, |value, cx| {
                                         //     *value = if *hovered { px(256.) } else { px(32.) }
                                         // });
@@ -190,82 +165,6 @@ impl Render for RootView {
                                             .overflow_hidden()
                                             .child(self.backlog_view.clone()),
                                     )
-                                    // .when(backlog_open, |this| {
-                                    //     this.child(
-                                    //         div()
-                                    //             .h_full()
-                                    //             .flex_1()
-                                    //             .overflow_hidden()
-                                    //             .child(self.backlog_view.clone()),
-                                    //     )
-                                    // })
-                                    // .child(
-                                    //     div()
-                                    //         .when_else(
-                                    //             backlog_open,
-                                    //             |this| this.rounded_xl(),
-                                    //             |this| this.rounded_r_xl(),
-                                    //         )
-                                    //         .h_full()
-                                    //         .w_8()
-                                    //         .button_colors(button_colors)
-                                    //         .border_0()
-                                    //         .border_l_1()
-                                    //         .border_color(cx.theme().border)
-                                    //         .on_click(cx.listener(move |view, _, window, cx| {
-                                    //             view.backlog_open = false;
-                                    //             cloned1.update(cx, |value, cx| *value = px(32.0));
-                                    //         })), // .icon(IconName::ChevronRight),
-                                    // )
-                                    // .when_else(
-                                    //     backlog_open,
-                                    //     |this| {
-                                    //         this.justify_between()
-                                    //             .child(
-                                    //                 div()
-                                    //                     .h_full()
-                                    //                     .flex_1()
-                                    //                     .overflow_hidden()
-                                    //                     .child(self.backlog_view.clone()),
-                                    //             )
-                                    //             .child(
-                                    //                 div()
-                                    //                     .rounded_r_xl()
-                                    //                     .id("collapse-backlog")
-                                    //                     .h_full()
-                                    //                     .w_8()
-                                    //                     .button_colors(button_colors)
-                                    //                     .border_0()
-                                    //                     .border_l_1()
-                                    //                     .border_color(cx.theme().border)
-                                    //                     .on_click(cx.listener(
-                                    //                         move |view, _, window, cx| {
-                                    //                             view.backlog_open = false;
-                                    //                             cloned1.update(cx, |value, cx| {
-                                    //                                 *value = px(32.0)
-                                    //                             });
-                                    //                         },
-                                    //                     )), // .icon(IconName::ChevronRight),
-                                    //             )
-                                    //     },
-                                    //     |this| {
-                                    //         this.justify_center().child(
-                                    //             div()
-                                    //                 .rounded_xl()
-                                    //                 .id("expand-backlog")
-                                    //                 .size_full()
-                                    //                 .button_colors(button_colors)
-                                    //                 .on_click(cx.listener(
-                                    //                     move |view, _, window, cx| {
-                                    //                         view.backlog_open = true;
-                                    //                         cloned2.update(cx, |value, cx| {
-                                    //                             *value = px(256.0)
-                                    //                         });
-                                    //                     },
-                                    //                 )), // .icon(IconName::ChevronLeft),
-                                    //         )
-                                    //     },
-                                    // )
                                     .border_1()
                                     .border_color(cx.theme().border)
                                     .rounded_xl(),
