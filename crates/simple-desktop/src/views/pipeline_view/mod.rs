@@ -1,6 +1,7 @@
+use chrono::{DateTime, Duration as ChronoDuration, Local};
 use gpui::{
     App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
-    Styled, Window, div, prelude::FluentBuilder,
+    SharedString, Styled, Window, div, prelude::FluentBuilder,
 };
 use gpui_component::{
     ActiveTheme,
@@ -9,6 +10,41 @@ use gpui_component::{
     v_flex,
 };
 use simple_core::AnyItem;
+
+/// Format a scheduled time compactly: "9:30am", "12pm", "1:45pm".
+pub(super) fn format_item_time(t: DateTime<Local>) -> String {
+    t.format("%-I:%M%P").to_string().replace(":00", "")
+}
+
+/// Format a duration compactly: "30m", "1h", "1h 30m".
+pub(super) fn format_item_duration(d: ChronoDuration) -> String {
+    let total_mins = d.num_minutes();
+    if total_mins <= 0 {
+        return String::new();
+    }
+    if total_mins % 60 == 0 {
+        format!("{}h", total_mins / 60)
+    } else if total_mins >= 60 {
+        format!("{}h {}m", total_mins / 60, total_mins % 60)
+    } else {
+        format!("{}m", total_mins)
+    }
+}
+
+/// Build a compact metadata string for an item, e.g. "9:30am · 30m".
+pub(super) fn format_item_meta(item: &AnyItem) -> Option<SharedString> {
+    let time_str = item.time_local().map(format_item_time);
+    let dur_str = item
+        .duration()
+        .map(format_item_duration)
+        .filter(|s| !s.is_empty());
+    match (time_str, dur_str) {
+        (Some(t), Some(d)) => Some(format!("{t} · {d}").into()),
+        (Some(t), None) => Some(t.into()),
+        (None, Some(d)) => Some(d.into()),
+        (None, None) => None,
+    }
+}
 
 mod queue_view;
 mod timeline_view;

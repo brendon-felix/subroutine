@@ -10,8 +10,8 @@ use gpui::{
     SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
-    ActiveTheme, animation::ease_out_cubic, checkbox::Checkbox, h_flex, label::Label,
-    menu::ContextMenuExt, skeleton::Skeleton,
+    ActiveTheme, Icon, IconName, StyledExt, animation::ease_out_cubic, checkbox::Checkbox, h_flex,
+    label::Label, menu::ContextMenuExt, skeleton::Skeleton, v_flex,
 };
 use gpui_component::{
     Colorize,
@@ -39,6 +39,8 @@ const ITEMS_RIGHT_GAP: Pixels = px(16. * 4.);
 const SLOT_GAP: Pixels = px(3.);
 const STICKY_TITLE_HEIGHT: Pixels = px(28.);
 const STICKY_TITLE_PADDING: Pixels = px(2.);
+/// Height of the secondary metadata row (time · duration) shown in tall items.
+const META_ROW_HEIGHT: Pixels = px(18.);
 
 /// Animatable representation of an attached item's layout in timeline-relative,
 /// viewport-independent coordinates.
@@ -733,9 +735,19 @@ impl TimelineView {
         let too_short = false;
         let is_editing = self.editing_items.contains(&item_id);
 
+        // Compute metadata: time and/or duration shown in a secondary row.
+        let meta_text = super::super::format_item_meta(&any_item);
+        // Only show the meta row when the item is tall enough to fit both rows.
+        let show_meta = meta_text.is_some() && h >= STICKY_TITLE_HEIGHT + META_ROW_HEIGHT + px(6.);
+        let title_block_h = if show_meta {
+            STICKY_TITLE_HEIGHT + META_ROW_HEIGHT
+        } else {
+            STICKY_TITLE_HEIGHT
+        };
+
         let title_y = (y + STICKY_TITLE_PADDING)
             .max(STICKY_TITLE_PADDING)
-            .min(y + h - STICKY_TITLE_HEIGHT - STICKY_TITLE_PADDING);
+            .min(y + h - title_block_h - STICKY_TITLE_PADDING);
         let title_rel_y = title_y - y;
 
         let is_action = matches!(any_item, AnyItem::Action(_));
@@ -747,32 +759,57 @@ impl TimelineView {
             .button_colors(colors)
             .overflow_hidden()
             .child(
-                h_flex()
+                v_flex()
                     .absolute()
                     .top(title_rel_y)
                     .left(px(0.))
                     .w_full()
-                    .h(STICKY_TITLE_HEIGHT)
-                    .px_2()
-                    .gap_2()
+                    .h(title_block_h)
                     .overflow_hidden()
-                    .when(!too_short && is_action, |this| {
-                        let action_id = item_id;
-                        this.child(
-                            Checkbox::new(("complete", item_id.as_u128() as u64))
-                                .checked(is_completing)
-                                .occlude()
-                                .on_click(cx.listener(move |this, _, _window, cx| {
-                                    this.begin_complete_item(action_id, cx);
-                                })),
-                        )
-                    })
-                    .when(!too_short, |this| {
-                        this.child(self.render_title_input(
-                            item_id,
-                            title_input.clone(),
-                            window,
-                            cx,
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .h(STICKY_TITLE_HEIGHT)
+                            .px_2()
+                            .gap_2()
+                            .when(!too_short && is_action, |this| {
+                                let action_id = item_id;
+                                this.child(
+                                    Checkbox::new(("complete", item_id.as_u128() as u64))
+                                        .checked(is_completing)
+                                        .occlude()
+                                        .on_click(cx.listener(move |this, _, _window, cx| {
+                                            this.begin_complete_item(action_id, cx);
+                                        })),
+                                )
+                            })
+                            .when(!too_short && !is_action, |this| {
+                                this.child(
+                                    Icon::new(IconName::Calendar)
+                                        .size_4()
+                                        .flex_shrink_0()
+                                        .text_color(cx.theme().muted_foreground),
+                                )
+                            })
+                            .when(!too_short, |this| {
+                                this.child(self.render_title_input(
+                                    item_id,
+                                    title_input.clone(),
+                                    window,
+                                    cx,
+                                ))
+                            }),
+                    )
+                    .when(show_meta, |this| {
+                        this.child(h_flex().w_full().h(META_ROW_HEIGHT).px_3().when_some(
+                            meta_text,
+                            |this, meta| {
+                                this.child(
+                                    Label::new(meta)
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground),
+                                )
+                            },
                         ))
                     }),
             );
@@ -1212,21 +1249,58 @@ impl TimelineView {
         let area_w = self.item_area_width();
         let col_w = area_w * (1.0 / drop_info.total_columns as f32);
         let col_x = col_w * drop_info.column_index as f32;
+        let outline_left = ATTACHED_ITEM_LEFT + col_x + half_gap;
+        let color = cx.theme().drag_border;
+        let label_text = drop_info.drop_time.format("%-I:%M").to_string();
         div()
             .absolute()
             .top(y)
             .h(h)
-            .left(ATTACHED_ITEM_LEFT + col_x + half_gap)
-            .w(col_w - SLOT_GAP)
+            .left(px(0.))
+            .w_full()
+            // time label in the left margin
+            .child(
+                // div()
+                //     // .mx_1()
+                //     .px(px(7.))
+                //     .border_1()
+                //     .border_color(cx.theme().border)
+                //     .bg(cx.theme().background.alpha(0.8))
+                //     .rounded_xl()
+                //     .child(time_label(now, cx).text_sm().text_color(color)),
+                div()
+                    .absolute()
+                    .top(px(0.))
+                    .left(px(0.))
+                    .w(outline_left)
+                    .h_full()
+                    .flex()
+                    .items_start()
+                    .justify_center()
+                    .child(
+                        div()
+                            .px(px(7.))
+                            // .border_1()
+                            // .border_color(color)
+                            .bg(cx.theme().background.alpha(0.8))
+                            .rounded_lg()
+                            .child(label_text)
+                            .text_sm()
+                            .text_color(color),
+                    ),
+            )
+            // dashed outline
             .child(
                 div()
-                    .w_full()
+                    .absolute()
+                    .top(px(0.))
+                    .left(outline_left)
+                    .w(col_w - SLOT_GAP)
                     .h_full()
                     .rounded_lg()
                     .border_1()
-                    // .border(px(1.5))
                     .border_dashed()
-                    .border_color(cx.theme().drag_border),
+                    .border_color(color),
             )
     }
 }
