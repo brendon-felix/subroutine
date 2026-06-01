@@ -1,16 +1,13 @@
 use chrono::Local;
 use gpui::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable, SharedString, Window,
-    prelude::*, px, rems,
+    App, AppContext as _, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString,
+    Window, actions, prelude::*, px, rems,
 };
 use gpui_component::{
-    ActiveTheme, Disableable, Sizable, WindowExt,
-    checkbox::Checkbox,
-    h_flex,
+    ActiveTheme, Colorize, Icon, IconName, Sizable, WindowExt, h_flex,
     input::{Input, InputEvent, InputState},
     label::Label,
     notification::NotificationType,
-    switch::Switch,
     v_flex,
 };
 use simple_core::Action;
@@ -20,10 +17,11 @@ use simple_parser::{
 };
 
 use crate::{
-    components::{Button, ButtonVariants},
-    components::{CloseOverlay, overlay},
+    components::{CloseOverlay, OverlayPosition, overlay},
     stores::AppDatabaseStore,
 };
+
+actions!([ToggleBatchMode]);
 
 /// Format a day number as an ordinal string: 1 → "1st", 2 → "2nd", etc.
 fn ordinal(n: u32) -> String {
@@ -113,11 +111,13 @@ impl ActionCreator {
         let db_store = AppDatabaseStore::global(cx);
 
         let title_input = cx.new(|cx| {
-            let state = InputState::new(window, cx).placeholder("Action name");
+            let state = InputState::new(window, cx).placeholder("Action Name");
             state.focus(window, cx);
             state
         });
         let content_input = cx.new(|cx| InputState::new(window, cx).placeholder("Description"));
+
+        cx.bind_keys([KeyBinding::new("cmd-b", ToggleBatchMode, None)]);
 
         let mut subscriptions = Vec::new();
 
@@ -178,7 +178,7 @@ impl ActionCreator {
     ///   4. Apply the `save` toggle (ephemeral vs. saved).
     ///   5. Return the action together with any parser warnings so the caller
     ///      can surface them as notifications.
-    fn build_action(&self) -> (Action, Vec<String>) {
+    fn build(&self) -> (Action, Vec<String>) {
         // Fast path: if we already have a fresh draft use it, otherwise
         // attempt a parse right now (covers the edge case where the draft
         // was never set, e.g. the user pasted text without triggering Change).
@@ -230,7 +230,7 @@ impl ActionCreator {
             return;
         }
 
-        let (action, parse_warnings) = self.build_action();
+        let (action, parse_warnings) = self.build();
 
         // Surface any parse warnings first.
         for warning in &parse_warnings {
@@ -289,7 +289,7 @@ impl Focusable for ActionCreator {
 impl Render for ActionCreator {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let can_submit = !self.current_title.is_empty();
+        // let can_submit = !self.current_title.is_empty();
 
         // Build a one-line preview string from the current draft so the user
         // can see at a glance what the parser understood.
@@ -309,178 +309,165 @@ impl Render for ActionCreator {
                         } else {
                             time_str
                         };
-                        parts.push(format!(
-                            "🕐 {}",
-                            local.format(&format!("%a %b %-d {time_str}"))
-                        ));
+                        parts.push(local.format(&format!("%a %b %-d {time_str}")).to_string());
                     }
                     WhenSpec::NaiveDate(date) => {
                         // Date-only — no time component yet (floating backlog date).
-                        parts.push(format!("📅 {}", date.format("%a %b %-d")));
+                        parts.push(date.format("%a %b %-d").to_string());
                     }
                 }
             }
             if let Some(dur) = draft.duration {
                 let total_mins = dur.num_minutes();
                 if total_mins % 60 == 0 {
-                    parts.push(format!("⏱ {}h", total_mins / 60));
+                    parts.push(format!("{}h", total_mins / 60));
                 } else if total_mins >= 60 {
-                    parts.push(format!("⏱ {}h {}m", total_mins / 60, total_mins % 60));
+                    parts.push(format!("{}h {}m", total_mins / 60, total_mins % 60));
                 } else {
-                    parts.push(format!("⏱ {}m", total_mins));
+                    parts.push(format!("{}m", total_mins));
                 }
             }
             if let Some(rec) = &draft.recurrence {
-                parts.push(format!("🔁 {}", format_recurrence(rec)));
+                parts.push(format_recurrence(rec));
             }
             if let Some(loc) = &draft.location {
-                parts.push(format!("📍 {loc}"));
+                parts.push(loc.clone());
             }
             if !draft.tags.is_empty() {
-                parts.push(format!("🏷 {}", draft.tags.join(", ")));
+                parts.push(format!("{}", draft.tags.join(", ")));
             }
             if !draft.people.is_empty() {
-                parts.push(format!("👤 {}", draft.people.join(", ")));
+                parts.push(format!("{}", draft.people.join(", ")));
             }
             if let Some(pri) = &draft.priority {
-                parts.push(format!("❗ {pri:?}"));
+                parts.push(format!("{pri:?}"));
             }
 
             if parts.is_empty() {
                 SharedString::from("")
             } else {
-                SharedString::from(parts.join("  ·  "))
+                // SharedString::from(parts.join("  ·  "))
+                SharedString::from(parts.join(" "))
             }
         });
 
-        let inner = v_flex().h_full().w_128().pt_8().child(
+        let inner = v_flex().w(px(144. * 4.)).child(
             v_flex()
                 .track_focus(&self.focus_handle)
-                .bg(theme.group_box)
-                .text_color(theme.group_box_foreground)
+                .bg(theme.background.mix_oklab(gpui::black(), 0.95).alpha(0.9))
+                .text_color(theme.foreground)
                 .border_1()
                 .border_color(theme.border)
-                .rounded_xl()
-                .shadow_xl()
+                // .rounded_xl()
+                .rounded_full()
+                .shadow_md()
                 .on_any_mouse_down(|_event, _window, cx| {
                     cx.stop_propagation();
                 })
+                .on_action(cx.listener(|view, _: &ToggleBatchMode, _, cx| {
+                    view.batch_mode = !view.batch_mode;
+                    cx.notify();
+                }))
                 // Title input row
                 .child(
                     h_flex()
                         .w_full()
-                        .gap_2()
+                        .px_4()
+                        // .gap_2()
                         .items_center()
-                        .pr_3()
+                        .child(Icon::new(IconName::Check).large())
                         .child(
                             Input::new(&self.title_input)
                                 .h_12()
                                 .w_full()
                                 .text_size(rems(1.5))
-                                .line_height(rems(1.75))
+                                .line_height(rems(2.0))
                                 .focus_bordered(true)
                                 .appearance(false),
                         )
-                        .child(
-                            Checkbox::new("save")
-                                .label("Save action")
-                                .checked(self.save)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.save = !this.save;
-                                    cx.notify();
-                                })),
-                        ),
-                )
-                // Live parse preview (only shown when there is something to show)
-                .when(
-                    preview_text
-                        .as_ref()
-                        .map(|s| !s.is_empty())
-                        .unwrap_or(false),
-                    |el| {
-                        el.child(
-                            h_flex()
-                                .px_3()
-                                .py_2()
-                                .w_full()
-                                .border_t_1()
-                                .border_color(theme.border)
-                                .child(
-                                    Label::new(preview_text.unwrap_or_default())
-                                        .text_xs()
-                                        .text_color(theme.muted_foreground),
-                                ),
+                        // .child(
+                        //     Checkbox::new("save")
+                        //         .label("Save action")
+                        //         .checked(self.save)
+                        //         .on_click(cx.listener(|this, _, _, cx| {
+                        //             this.save = !this.save;
+                        //             cx.notify();
+                        //         })),
+                        // ),
+                        // Live parse preview (only shown when there is something to show)
+                        .when(
+                            preview_text
+                                .as_ref()
+                                .map(|s| !s.is_empty())
+                                .unwrap_or(false),
+                            |el| {
+                                el.child(
+                                    h_flex()
+                                        // .px_4()
+                                        // .pb_4()
+                                        // .py_2()
+                                        // .w_full()
+                                        // .border_t_1()
+                                        // .border_color(theme.border)
+                                        // .justify_center()
+                                        .child(
+                                            Label::new(preview_text.unwrap_or_default())
+                                                .text_xs()
+                                                .text_color(theme.muted_foreground),
+                                        ),
+                                )
+                            },
                         )
-                    },
+                        .when(self.batch_mode, |this| {
+                            this.child(Label::new("Batch Mode").text_xs().line_height(rems(1.)))
+                        })
+                        .when(false, |this| this),
                 )
-                // // Description input
-                // .child(
-                //     Input::new(&self.content_input)
-                //         .w_full()
-                //         .py_0()
-                //         .px_4()
-                //         .text_size(rems(0.75))
-                //         .line_height(rems(0.75))
-                //         .focus_bordered(true)
-                //         .appearance(false),
-                // )
-                // // Options label row
                 // .child(
                 //     h_flex()
                 //         .w_full()
-                //         .gap_3()
-                //         .items_center()
-                //         .px(px(16.0))
-                //         .py(px(10.0))
+                //         .p_3()
                 //         .border_t_1()
                 //         .border_color(theme.border)
+                //         .justify_between()
+                //         .items_center()
                 //         .child(
-                //             Label::new("Options")
-                //                 .text_xs()
-                //                 .font_semibold()
-                //                 .text_color(theme.muted_foreground),
-                //         ),
-                // )
-                // Footer row: batch mode + buttons
-                .child(
-                    h_flex()
-                        .w_full()
-                        .p_3()
-                        .border_t_1()
-                        .border_color(theme.border)
-                        .justify_between()
-                        .items_center()
-                        .child(
-                            Switch::new("batch-mode")
-                                .label("Batch mode")
-                                .checked(self.batch_mode)
-                                .on_click(cx.listener(|this, checked, _, cx| {
-                                    this.batch_mode = *checked;
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(Button::new("cancel").small().label("Cancel").on_click(
-                                    |_, window, cx| {
-                                        window.dispatch_action(Box::new(CloseOverlay), cx);
-                                    },
-                                ))
-                                .child(
-                                    Button::new("submit")
-                                        .small()
-                                        .primary()
-                                        .label("Add action")
-                                        .disabled(!can_submit)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.submit(window, cx);
-                                        })),
-                                ),
-                        ),
-                ),
+                //             Switch::new("batch-mode")
+                //                 .label("Batch mode")
+                //                 .checked(self.batch_mode)
+                //                 .on_click(cx.listener(|this, checked, _, cx| {
+                //                     this.batch_mode = *checked;
+                //                     cx.notify();
+                //                 })),
+                //         )
+                //         // .child(
+                //         //     h_flex()
+                //         //         .gap_2()
+                //         //         .child(Button::new("cancel").small().label("Cancel").on_click(
+                //         //             |_, window, cx| {
+                //         //                 window.dispatch_action(Box::new(CloseOverlay), cx);
+                //         //             },
+                //         //         ))
+                //         //         .child(
+                //         //             Button::new("submit")
+                //         //                 .small()
+                //         //                 .primary()
+                //         //                 .label("Add action")
+                //         //                 .disabled(!can_submit)
+                //         //                 .on_click(cx.listener(|this, _, window, cx| {
+                //         //                     this.submit(window, cx);
+                //         //                 })),
+                //         //         ),
+                //         // ),
+                // ),
+                .when(false, |this| this),
         );
 
-        overlay(inner, px(240.), cx)
+        overlay(
+            inner,
+            // OverlayPosition::Top(DefiniteLength::Fraction(0.25).into()),
+            OverlayPosition::Center,
+            cx,
+        )
     }
 }

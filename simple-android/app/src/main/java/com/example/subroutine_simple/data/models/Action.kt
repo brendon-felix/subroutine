@@ -5,8 +5,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 @Serializable
 data class Action(
@@ -15,27 +13,36 @@ data class Action(
     @SerialName("origin_routine_id") val originRoutineId: String? = null,
     val title: String,
     val content: String? = null,
-    val duration: JsonElement? = null,
+    @SerialName("duration_secs") val durationSecs: Long? = null,
     val recurrence: JsonElement? = null,
     val saved: Boolean = false,
     val state: JsonElement,
 )
 
 val Action.isQueued: Boolean
-    get() = state is JsonObject && (state as JsonObject).containsKey("Queued")
+    get() {
+        val obj = state as? JsonObject ?: return false
+        return (obj["type"] as? JsonPrimitive)?.content == "queued"
+    }
 
 val Action.isBacklogged: Boolean
-    get() = state is JsonObject && (state as JsonObject).containsKey("Backlogged")
+    get() {
+        val obj = state as? JsonObject ?: return false
+        return (obj["type"] as? JsonPrimitive)?.content == "backlogged"
+    }
 
 val Action.isCompleted: Boolean
-    get() = state is JsonObject && (state as JsonObject).containsKey("Completed")
+    get() {
+        val obj = state as? JsonObject ?: return false
+        return (obj["type"] as? JsonPrimitive)?.content == "completed"
+    }
 
 /** ISO-8601 UTC string if the action is queued, null otherwise. */
 val Action.scheduledTimeIso: String?
     get() {
         val obj = state as? JsonObject ?: return null
-        val queued = obj["Queued"] as? JsonObject ?: return null
-        return (queued["time"] as? JsonPrimitive)?.content
+        if ((obj["type"] as? JsonPrimitive)?.content != "queued") return null
+        return (obj["time"] as? JsonPrimitive)?.content
     }
 
 @Serializable

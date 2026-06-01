@@ -8,10 +8,14 @@ import com.example.subroutine_simple.data.models.QueueItem
 import com.example.subroutine_simple.data.models.isBacklogged
 import com.example.subroutine_simple.data.models.isNotFullyPassed
 import com.example.subroutine_simple.data.models.isQueued
+import com.example.subroutine_simple.data.network.RetrofitClient
+import com.example.subroutine_simple.data.network.SseManager
 import com.example.subroutine_simple.data.repository.SubroutineRepository
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.launch
 
 sealed interface ActionsUiState {
@@ -26,6 +30,13 @@ sealed interface ActionsUiState {
 class MainViewModel : ViewModel() {
 
     private val repository = SubroutineRepository()
+    private val sseManager = SseManager(baseUrl = RetrofitClient.BASE_URL)
+
+    // Cache the last-known action and event objects by ID. This ensures that
+    // saveAction/saveEvent can still construct the PUT body even when _uiState
+    // is transiently Loading (due to a concurrent SSE-triggered reload).
+    private val actionCache = mutableMapOf<String, Action>()
+    private val eventCache = mutableMapOf<String, Event>()
 
     private val _uiState = MutableStateFlow<ActionsUiState>(ActionsUiState.Loading)
     val uiState: StateFlow<ActionsUiState> = _uiState.asStateFlow()
@@ -42,6 +53,30 @@ class MainViewModel : ViewModel() {
 
     init {
         loadActions()
+        observeServerChanges()
+    }
+
+    /**
+     * Subscribes to the server's SSE change stream for the lifetime of this
+     * ViewModel. On each event, triggers a full data reload. Uses exponential
+     * backoff (up to 30 s) to reconnect after failures or server-side closes.
+     */
+    private fun observeServerChanges() {
+        viewModelScope.launch {
+            sseManager.changeEvents()
+                .retryWhen { cause, attempt ->
+                    val delayMs = minOf(1_000L * (attempt + 1), 30_000L)
+                    android.util.Log.w(
+                        "MainViewModel",
+                        "SSE disconnected (${cause.message}), retrying in ${delayMs}ms"
+                    )
+                    delay(delayMs)
+                    true // always retry
+                }
+                .collect {
+                    loadActions()
+                }
+        }
     }
 
     fun loadActions() {
@@ -49,6 +84,9 @@ class MainViewModel : ViewModel() {
             _uiState.value = ActionsUiState.Loading
             runCatching { repository.fetchAll() }
                 .onSuccess { (actions, events) ->
+                    // Keep caches fresh so saves survive transient Loading states.
+                    actions.forEach { actionCache[it.id] = it }
+                    events.forEach { eventCache[it.id] = it }
                     val queuedActions = actions
                         .filter { it.isQueued }
                         .map { QueueItem.ActionItem(it) }
@@ -93,7 +131,7 @@ class MainViewModel : ViewModel() {
      * Saves edits for [actionId]. The action is looked up from the current loaded state.
      */
     fun saveAction(actionId: String, title: String, content: String?, onSuccess: () -> Unit) {
-        val action = resolveAction(_uiState.value, actionId) ?: return
+        val action = resolveAction(_uiState.value, actionId) ?: actionCache[actionId] ?: return
         saveActionObject(action, title, content, onSuccess)
     }
 
@@ -157,7 +195,7 @@ class MainViewModel : ViewModel() {
     }
 
     fun saveEvent(eventId: String, title: String, content: String?, onSuccess: () -> Unit) {
-        val event = resolveEvent(_uiState.value, eventId) ?: return
+        val event = resolveEvent(_uiState.value, eventId) ?: eventCache[eventId] ?: return
         viewModelScope.launch {
             _saving.value = true
             runCatching { repository.updateEvent(event, title, content) }

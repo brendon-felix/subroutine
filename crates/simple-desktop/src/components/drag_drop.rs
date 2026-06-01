@@ -7,6 +7,10 @@ pub struct DragData<T: Clone + Debug> {
     pub data: T,
     pub label: Option<SharedString>,
     pub preview_factory: Option<Rc<dyn Fn() -> AnyElement>>,
+    /// The size of the preview element. When provided, the cursor grab-point is
+    /// clamped to lie within the preview bounds so the preview always touches
+    /// the cursor, even when the drag originates from a much wider/taller item.
+    pub preview_size: Option<Size<Pixels>>,
     pub position: Point<Pixels>,
 }
 
@@ -16,6 +20,7 @@ impl<T: Clone + Debug> Clone for DragData<T> {
             data: self.data.clone(),
             label: self.label.clone(),
             preview_factory: self.preview_factory.clone(),
+            preview_size: self.preview_size,
             position: self.position.clone(),
         }
     }
@@ -27,6 +32,7 @@ impl<T: Clone + Debug> Debug for DragData<T> {
             .field("data", &self.data)
             .field("label", &self.label)
             .field("preview_factory", &self.preview_factory.is_some())
+            .field("preview_size", &self.preview_size)
             .field("position", &self.position)
             .finish()
     }
@@ -38,6 +44,7 @@ impl<T: Clone + Debug> DragData<T> {
             data,
             label: None,
             preview_factory: None,
+            preview_size: None,
             position: Point::default(),
         }
     }
@@ -56,6 +63,16 @@ impl<T: Clone + Debug> DragData<T> {
         self
     }
 
+    /// Provide the pixel dimensions of the preview element so that the cursor
+    /// grab-point can be clamped to always lie within the preview. Without
+    /// this, clicking far from a drag item's origin causes the preview to
+    /// appear far from the cursor.
+    #[allow(dead_code)]
+    pub fn with_preview_size(mut self, size: Size<Pixels>) -> Self {
+        self.preview_size = Some(size);
+        self
+    }
+
     pub fn with_position(mut self, position: Point<Pixels>) -> Self {
         self.position = position;
         self
@@ -68,10 +85,37 @@ impl<T: Clone + Debug + 'static> Render for DragData<T> {
 
         if let Some(factory) = &self.preview_factory {
             let preview = factory();
+
+            // `self.position` is the cursor offset from the dragged element's
+            // origin (set by GPUI's on_drag callback). GPUI positions the drag
+            // overlay at `mouse_pos - cursor_offset`, so adding `cursor_offset`
+            // back via `.left/.top` places the preview's top-left at the cursor.
+            //
+            // When the preview is smaller than the dragged element, a raw
+            // cursor_offset that exceeds the preview dimensions would place the
+            // cursor outside the preview bounds. We clamp the grab-point so the
+            // cursor always lands within the preview.
+            let edge_margin = px(16.0);
+            let (grab_x, grab_y) = if let Some(preview_size) = self.preview_size {
+                let gx = self
+                    .position
+                    .x
+                    .min(preview_size.width - edge_margin)
+                    .max(px(0.0));
+                let gy = self
+                    .position
+                    .y
+                    .min(preview_size.height - edge_margin)
+                    .max(px(0.0));
+                (gx, gy)
+            } else {
+                (self.position.x, self.position.y)
+            };
+
             return div()
                 .absolute()
-                .left(self.position.x)
-                .top(self.position.y)
+                .left(self.position.x - grab_x)
+                .top(self.position.y - grab_y)
                 .child(preview);
         }
 
@@ -252,6 +296,7 @@ pub struct DropZone<T: Clone + Debug + 'static> {
     children: Vec<AnyElement>,
     user_style: StyleRefinement,
     insertion_indicator: Option<DropIndicator>,
+    inactive_border: bool,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -267,6 +312,7 @@ impl<T: Clone + Debug + 'static> DropZone<T> {
             children: Vec::new(),
             user_style: StyleRefinement::default(),
             insertion_indicator: None,
+            inactive_border: false,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -278,6 +324,11 @@ impl<T: Clone + Debug + 'static> DropZone<T> {
 
     pub fn active(mut self, active: bool) -> Self {
         self.active = active;
+        self
+    }
+
+    pub fn inactive_border(mut self, inactive_border: bool) -> Self {
+        self.inactive_border = inactive_border;
         self
     }
 
@@ -356,7 +407,11 @@ impl<T: Clone + Debug + 'static> RenderOnce for DropZone<T> {
         let border_color = if self.active {
             theme.drag_border
         } else {
-            gpui::transparent_black()
+            if self.inactive_border {
+                theme.border
+            } else {
+                gpui::transparent_black()
+            }
         };
         let bg_color = theme.background;
 

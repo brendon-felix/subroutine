@@ -9,7 +9,7 @@ import retrofit2.Retrofit
 
 object RetrofitClient {
 
-    private const val BASE_URL = "http://100.112.215.8:3000/"
+    const val BASE_URL = "http://100.112.215.8:3000/"
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 

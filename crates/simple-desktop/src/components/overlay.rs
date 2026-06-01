@@ -1,40 +1,38 @@
-use gpui::{App, KeyBinding, MouseButton, Pixels, actions, div, prelude::*};
+use gpui::{
+    App, InteractiveElement, IntoElement, KeyBinding, Length, MouseButton, ParentElement, Styled,
+    actions, div, prelude::FluentBuilder,
+};
 use gpui_component::v_flex;
 
 actions!(overlay, [CloseOverlay]);
 
-/// Initialize overlay-related global bindings.
-///
-/// Binds `escape` to `CloseOverlay` in the `"Overlay"` key context.
-/// Call this once at application startup (where other `init` functions are called).
 pub fn init(cx: &mut App) {
     let context: Option<&str> = Some("Overlay");
     cx.bind_keys([KeyBinding::new("escape", CloseOverlay, context)]);
 }
 
-/// Reusable overlay chrome.
-///
-/// - Adds dimmed backdrop
-/// - Positions absolutely and occludes underlying content
-/// - Sets the key context to `"Overlay"` so shared overlay key bindings apply
-/// - Dispatches `CloseOverlay` on backdrop click
-///
-/// The `inner` element should call `cx.stop_propagation()` on its mouse handlers
-/// (or use `.on_any_mouse_down(|_,_,cx| cx.stop_propagation())`) so clicks inside
-/// the dialog do not close the overlay.
-///
-/// Example usage from an overlay's `render`:
-/// ```ignore
-/// let theme = cx.theme();
-/// let inner = /* build dialog card as element */;
-/// crate::components::overlay::shell(theme, inner)
-/// ```
-pub fn overlay<T: IntoElement>(inner: T, top: Pixels, _cx: &mut App) -> impl IntoElement {
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[allow(unused)]
+pub enum OverlayPosition {
+    Top(Length),
+    Center,
+}
+
+pub fn overlay<T: IntoElement>(
+    inner: T,
+    position: OverlayPosition,
+    _cx: &mut App,
+) -> impl IntoElement {
     // let bg_color = cx
     //     .theme()
     //     .background
     //     .blend(gpui::black().opacity(0.15))
     //     .opacity(0.4);
+
+    let spacer_height = match position {
+        OverlayPosition::Top(top) => Some(top),
+        OverlayPosition::Center => None,
+    };
 
     v_flex()
         // .bg(bg_color)
@@ -47,7 +45,10 @@ pub fn overlay<T: IntoElement>(inner: T, top: Pixels, _cx: &mut App) -> impl Int
             window.dispatch_action(Box::new(CloseOverlay), cx);
         })
         .items_center()
-        .opacity(0.8)
-        .child(div().w_full().h(top))
+        // .opacity(0.8)
+        .when(position == OverlayPosition::Center, |this| {
+            this.justify_center()
+        })
+        .when_some(spacer_height, |this, top| this.child(div().w_full().h(top)))
         .child(inner)
 }

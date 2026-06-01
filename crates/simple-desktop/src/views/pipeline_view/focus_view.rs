@@ -24,7 +24,7 @@ use crate::{
 
 const COMPLETE_CHECKBOX_DURATION: Duration = Duration::from_millis(250);
 
-pub struct QueueView {
+pub struct FocusView {
     focus_handle: FocusHandle,
     scroll_handle: VirtualListScrollHandle,
     items: Vec<AnyItem>,
@@ -35,7 +35,7 @@ pub struct QueueView {
     drop_active: bool,
 }
 
-impl QueueView {
+impl FocusView {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         let scroll_handle = VirtualListScrollHandle::new();
@@ -70,7 +70,7 @@ impl QueueView {
 
         self.list_item_sizes = Rc::new(
             (0..self.items.len())
-                .map(|_| size(px(0.), px(64.)))
+                .map(|_| size(px(0.), px(64. * 4.)))
                 .collect(),
         );
 
@@ -87,7 +87,7 @@ impl QueueView {
         cx: &mut Context<Self>,
     ) -> DropZone<DragData<AnyItem>> {
         let mouse_position = window.mouse_position();
-        DropZone::new("queue-drop")
+        DropZone::new("focus-drop")
             .size_full()
             .active(self.drop_active)
             .rounded_none()
@@ -157,13 +157,13 @@ impl QueueView {
     }
 }
 
-impl Focusable for QueueView {
+impl Focusable for FocusView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Render for QueueView {
+impl Render for FocusView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let completing_items = self.completing_items.clone();
         let ring_color = cx.theme().ring;
@@ -171,10 +171,12 @@ impl Render for QueueView {
         self.drop_zone(window, cx)
             .track_focus(&self.focus_handle)
             .pt_8()
+            .items_center()
+            .justify_center()
             .child(
                 v_virtual_list(
                     cx.entity(),
-                    "queue-view-list",
+                    "focus-view-list",
                     self.list_item_sizes.clone(),
                     move |view, visible_range, window, cx| {
                         visible_range
@@ -230,7 +232,7 @@ impl Render for QueueView {
 
                                 div().size_full().px_2().py_1().child(
                                     Draggable::new(
-                                        ("queue-view-draggable", item_id.as_u128() as u64),
+                                        ("focus-view-draggable", item_id.as_u128() as u64),
                                         drag_data,
                                     )
                                     .size_full()
@@ -246,7 +248,7 @@ impl Render for QueueView {
                                     )
                                     .child(
                                         div()
-                                            .id(("queue-view-item", item_id.as_u128() as u64))
+                                            .id(("focus-view-item", item_id.as_u128() as u64))
                                             .track_focus(&item_focus_handle.tab_stop(true))
                                             .size_full()
                                             .button_colors(button_colors)
@@ -324,7 +326,7 @@ impl Render for QueueView {
                                                             .when(is_action, |this| {
                                                                 this.child(
                                                                 Checkbox::new((
-                                                                    "queue-complete",
+                                                                    "focus-complete",
                                                                     item_id.as_u128() as u64,
                                                                 ))
                                                                 .checked(is_completing)
@@ -372,7 +374,8 @@ impl Render for QueueView {
                             .collect()
                     },
                 )
-                .min_w(px(64. * 4. - 4.))
+                // .min_w(px(64. * 4. - 4.))
+                .w_1_2()
                 .my_1()
                 .track_scroll(&self.scroll_handle),
             )

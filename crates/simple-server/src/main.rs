@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
     let pool = db::connect(&database_url).await?;
     db::migrate(&pool).await?;
 
-    let state = AppState { pool };
+    let state = AppState::new(pool);
 
     let app = axum::Router::new()
         .nest("/api", routes::router())

@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/android-bridge",
-    "crates/desktop",
     "crates/parser-cli",
     "crates/simple-cli",
     "crates/simple-core", "crates/simple-desktop",

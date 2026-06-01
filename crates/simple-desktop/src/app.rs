@@ -90,7 +90,7 @@ pub fn init(cx: &mut App) {
     titlebar_options.appears_transparent = true;
     titlebar_options.traffic_light_position = Some(point(px(10.), px(10.)));
 
-    let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
+    let bounds = Bounds::centered(None, size(px(900.0), px(600.0)), cx);
     let window_options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(titlebar_options),

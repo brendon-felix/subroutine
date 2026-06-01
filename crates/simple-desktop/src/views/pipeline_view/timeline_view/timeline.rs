@@ -7,9 +7,10 @@ use gpui::{
     div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
-    ActiveTheme, Colorize,
+    ActiveTheme, Colorize, InteractiveElementExt,
     animation::ease_out_cubic,
     h_flex,
+    label::Label,
     menu::{PopupMenu, PopupMenuItem},
     v_virtual_list,
 };
@@ -76,6 +77,7 @@ fn time_label(datetime: DateTime<Local>, _cx: &App) -> Div {
 
 fn timeline_context_menu(
     time: DateTime<Local>,
+    view: Entity<TimelineView>,
 ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
     move |menu, _window, _cx| {
         let label = time.format("%-I:%M %p").to_string();
@@ -83,34 +85,27 @@ fn timeline_context_menu(
             .item(
                 PopupMenuItem::new("New action")
                     // .icon(AppIcon::ListPlus)
-                    .on_click(move |_event, _window, _cx: &mut App| {
-                        // let db_store = AppDatabaseStore::global(cx);
-                        // db_store.update(cx, |store, cx| {
-                        //     store.complete_action(action_id, cx);
-                        // });
+                    .on_click({
+                        let view = view.clone();
+                        move |_event, window, cx: &mut App| {
+                            view.update(cx, |this, cx| {
+                                this.add_draft_action(time, window, cx);
+                            });
+                        }
                     }),
             )
             .item(
                 PopupMenuItem::new("New event")
                     // .icon(AppIcon::CalendarPlus)
-                    .on_click(move |_event, _window, _cx: &mut App| {
-                        // let db_store = AppDatabaseStore::global(cx);
-                        // db_store.update(cx, |store, cx| {
-                        //     store.backlog_action(action_id, cx);
-                        // });
+                    .on_click({
+                        let view = view.clone();
+                        move |_event, window, cx: &mut App| {
+                            view.update(cx, |this, cx| {
+                                this.add_draft_event(time, window, cx);
+                            });
+                        }
                     }),
             )
-        // .separator()
-        // .item(
-        //     PopupMenuItem::new("Delete action")
-        //         .icon(AppIcon::Trash)
-        //         .on_click(move |_event, _window, cx: &mut App| {
-        //             let db_store = AppDatabaseStore::global(cx);
-        //             db_store.update(cx, |store, cx| {
-        //                 store.delete_action(action_id, cx);
-        //             });
-        //         }),
-        // )
     }
 }
 
@@ -123,6 +118,7 @@ pub enum HourDivision {
 }
 
 impl HourDivision {
+    /// Number of divisions per hour (e.g. 4 for QuarterHour)
     fn n_divisions(&self) -> usize {
         match self {
             HourDivision::Hour => 1,
@@ -133,6 +129,7 @@ impl HourDivision {
         }
     }
 
+    /// Number of seconds per division (e.g. 900 for QuarterHour)
     fn to_seconds(&self) -> i64 {
         match self {
             HourDivision::Hour => 3600,
@@ -143,6 +140,7 @@ impl HourDivision {
         }
     }
 
+    /// Convert to `chrono::Duration`
     pub(super) fn to_duration(&self) -> ChronoDuration {
         match self {
             HourDivision::Hour => ChronoDuration::hours(1),
@@ -153,17 +151,7 @@ impl HourDivision {
         }
     }
 
-    // fn label(&self) -> &'static str {
-    //     match self {
-    //         HourDivision::Hour => "hour",
-    //         HourDivision::HalfHour => "30 min",
-    //         HourDivision::QuarterHour => "15 min",
-    //         HourDivision::TenMinutes => "10 min",
-    //         HourDivision::FiveMinutes => "5 min",
-    //     }
-    // }
-
-    /// Floor a datetime to the nearest division boundary (toward the past).
+    /// Floor a datetime to the nearest division boundary in the past
     pub(super) fn floor_division(&self, time: DateTime<Local>) -> DateTime<Local> {
         let secs = self.to_seconds();
         let hour_start = time
@@ -176,8 +164,7 @@ impl HourDivision {
         hour_start + ChronoDuration::seconds(floored_secs)
     }
 
-    /// Ceil a datetime to the nearest division boundary (toward the future).
-    /// Returns `time` unchanged if it already lands exactly on a boundary.
+    /// Ceil a datetime to the nearest division boundary in the future
     pub(super) fn ceil_division(&self, time: DateTime<Local>) -> DateTime<Local> {
         let floor = self.floor_division(time);
         if floor == time {
@@ -187,6 +174,7 @@ impl HourDivision {
         }
     }
 
+    /// Round a datetime to the nearest division boundary
     fn nearest_division(&self, time: DateTime<Local>) -> DateTime<Local> {
         let hour_start = time
             .with_minute(0)
@@ -201,17 +189,17 @@ impl HourDivision {
 }
 
 impl TimelineView {
-    fn refresh_item_sizes(&mut self, height: Pixels) {
-        let needed = (self.past_hours + self.future_hours) as usize;
+    /// Ensure the hour list has the right number of entries, and that all entries have the specified height
+    fn update_hour_list_heights(&mut self, height: Pixels) {
+        let n_hours = (self.past_hours + self.future_hours) as usize;
         let new_size = Size::new(Pixels::default(), height);
-        // Mutate in place when we have exclusive ownership, otherwise reallocate.
         if let Some(vec) = Rc::get_mut(&mut self.hour_list_sizes) {
-            vec.resize(needed, new_size);
+            vec.resize(n_hours, new_size);
             if vec.iter().any(|s| s.height != height) {
                 vec.fill(new_size);
             }
         } else {
-            self.hour_list_sizes = Rc::new(vec![new_size; needed]);
+            self.hour_list_sizes = Rc::new(vec![new_size; n_hours]);
         }
     }
 
@@ -248,14 +236,18 @@ impl TimelineView {
         self.current_hour_division().nearest_division(time)
     }
 
+    pub(super) fn floor_time(&self, time: DateTime<Local>) -> DateTime<Local> {
+        self.current_hour_division().floor_division(time)
+    }
+
     fn day_height(&self) -> Pixels {
         self.hour_height * 24.
     }
 
-    /// The screen-Y position (in local/bounds-relative coordinates) used as the
-    /// fixed anchor point during zoom. Content at this Y stays in place visually.
-    fn zoom_anchor_y(&self) -> Pixels {
-        self.bounds.map(|b| b.size.height / 2.0).unwrap_or(px(0.))
+    pub(super) fn center_relative(&self) -> Point<Pixels> {
+        self.bounds
+            .map(|b| b.center() - b.origin)
+            .unwrap_or_default()
     }
 
     // fn hour_height(&self) -> Pixels {
@@ -296,7 +288,8 @@ impl TimelineView {
 
     pub(super) fn scroll_next_day(&mut self, cx: &mut Context<Self>) {
         let base = self.scroll_target.unwrap_or_else(|| self.scroll_offset());
-        let new_offset = (base / self.day_height()).round() * self.day_height() - self.day_height();
+        // let new_offset = (base / self.day_height()).round() * self.day_height() - self.day_height();
+        let new_offset = base - self.day_height();
         self.scroll_target = Some(new_offset);
         self.pending_scroll_transition = Some(new_offset);
         cx.notify();
@@ -304,7 +297,8 @@ impl TimelineView {
 
     pub(super) fn scroll_previous_day(&mut self, cx: &mut Context<Self>) {
         let base = self.scroll_target.unwrap_or_else(|| self.scroll_offset());
-        let new_offset = (base / self.day_height()).round() * self.day_height() + self.day_height();
+        // let new_offset = (base / self.day_height()).round() * self.day_height() + self.day_height();
+        let new_offset = base + self.day_height();
         self.scroll_target = Some(new_offset);
         self.pending_scroll_transition = Some(new_offset);
         cx.notify();
@@ -320,7 +314,7 @@ impl TimelineView {
             let base = self
                 .zoom_scroll_target
                 .unwrap_or_else(|| self.scroll_offset());
-            let a = self.zoom_anchor_y();
+            let a = self.center_relative().y;
             let d = HOUR_DIVIDER_HEIGHT / 2.0;
             let offset = a - d - (a - base - d) * self.zoom_state.zoom_factor;
             self.zoom_scroll_target = Some(offset);
@@ -336,7 +330,7 @@ impl TimelineView {
             let base = self
                 .zoom_scroll_target
                 .unwrap_or_else(|| self.scroll_offset());
-            let a = self.zoom_anchor_y();
+            let a = self.center_relative().y;
             let d = HOUR_DIVIDER_HEIGHT / 2.0;
             let offset = a - d - (a - base - d) / self.zoom_state.zoom_factor;
             self.zoom_scroll_target = Some(offset);
@@ -351,7 +345,7 @@ impl TimelineView {
             let base = self
                 .zoom_scroll_target
                 .unwrap_or_else(|| self.scroll_offset());
-            let a = self.zoom_anchor_y();
+            let a = self.center_relative().y;
             let d = HOUR_DIVIDER_HEIGHT / 2.0;
             // h1/h = DEFAULT_HOUR_HEIGHT / current_value = 1/zoom
             let offset = a - d - (a - base - d) / self.zoom_state.zoom;
@@ -363,6 +357,26 @@ impl TimelineView {
         }
     }
 
+    /// compute scroll speed from distance to the top/bottom edge
+    pub(super) fn compute_edge_scroll_speed(local_y: Pixels, height: Pixels) -> Option<f32> {
+        const ZONE: Pixels = px(80.0);
+        const MAX_SPEED: f32 = 18.0;
+        let y = local_y;
+        let h = height;
+        if y < ZONE {
+            // Near top → scroll up (positive offset delta)
+            let t = 1.0 - (y / ZONE).clamp(0.0, 1.0);
+            Some(t * t * MAX_SPEED)
+        } else if y > h - ZONE {
+            // Near bottom → scroll down (negative offset delta)
+            let t = 1.0 - ((h - y) / ZONE).clamp(0.0, 1.0);
+            Some(-(t * t * MAX_SPEED))
+        } else {
+            None
+        }
+    }
+
+    /// update hour list and scroll position based on zoom animation and edge-scroll
     pub(super) fn update_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let zoom_transition = window
             .use_keyed_transition("zoom", cx, ZOOM_DURATION, |_, _| ZoomFrame {
@@ -373,8 +387,6 @@ impl TimelineView {
 
         if let Some((zoom, offset, animated, needs_jump)) = self.pending_zoom_transition.take() {
             if animated {
-                // When no zoom was running the scroll handle may have moved independently
-                // (user scrolled), so sync the transition's starting point to reality first.
                 if needs_jump {
                     zoom_transition.jump_to(
                         ZoomFrame {
@@ -389,7 +401,6 @@ impl TimelineView {
                     frame.scroll = offset;
                 });
             } else {
-                // Instant (e.g. pinch): snap with no animation.
                 zoom_transition.jump_to(
                     ZoomFrame {
                         hour_height: zoom.current_value(),
@@ -404,7 +415,7 @@ impl TimelineView {
 
         let frame = zoom_transition.evaluate(window, cx).clone();
 
-        self.refresh_item_sizes(frame.hour_height);
+        self.update_hour_list_heights(frame.hour_height);
         // Drive the scroll handle on every frame a zoom is active, *including* the
         // completion frame. Stopping one frame early (the old else-branch) left the
         // scroll handle at a sub-pixel offset while item sizes had already snapped to
@@ -416,6 +427,13 @@ impl TimelineView {
             }
         }
         self.hour_height = frame.hour_height;
+
+        // Apply continuous edge-scroll while dragging near the top/bottom border.
+        if let Some(speed) = self.edge_scroll_speed {
+            let new_offset = self.scroll_offset() + px(speed);
+            self.scroll_to(new_offset);
+            cx.notify();
+        }
     }
 
     pub(super) fn render_hour_list(
@@ -436,6 +454,11 @@ impl TimelineView {
                 *offset = new_offset;
             });
         }
+        // While edge-scrolling, snap any in-flight transition so it doesn't
+        // fight the per-frame position updates and cause re-entrancy loops.
+        if self.edge_scroll_speed.is_some() {
+            scroll_transition.jump_to(self.scroll_offset(), cx);
+        }
         if scroll_transition.evaluate_delta(cx) != 1.0 {
             let scroll_offset = *scroll_transition.evaluate(window, cx);
             self.scroll_to(scroll_offset);
@@ -451,12 +474,34 @@ impl TimelineView {
                 view.visible_range = visible_range.clone();
                 if visible_range.end > view.future_hours - 24 {
                     view.future_hours += 24;
-                    view.refresh_item_sizes(view.zoom_state.current_value());
+                    view.update_hour_list_heights(view.zoom_state.current_value());
                 }
                 let start_hour = view.start.hour() as usize;
                 // view.visible_date = (start_hour + visible_range.start) / 24;
                 let n_ticks = view.current_hour_division().n_divisions();
                 let spacing = hour_height / n_ticks as f32;
+
+                // Compute which midnight row (if any) is currently claimed by
+                // the sticky date label so we can suppress its in-list label.
+                let sticky_midnight_h: Option<usize> = {
+                    let scroll = view.scroll_offset();
+                    let hh = view.hour_height;
+                    let sh = view.start.hour() as i64;
+                    let h_first = (24 - sh) % 24;
+                    let hours_at_top = (-scroll / hh) as i64;
+                    let d = (hours_at_top - h_first).div_euclid(24);
+                    if d >= 0 {
+                        let h = (h_first + d * 24) as usize;
+                        let midnight_vp_y = hh * h as f32 + scroll;
+                        if midnight_vp_y < px(0.) {
+                            Some(h)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
 
                 visible_range
                     .map(|h| {
@@ -468,7 +513,7 @@ impl TimelineView {
                             .id(("hour", h))
                             .size_full()
                             .items_start()
-                            //
+                            // hour label and divider
                             .child(
                                 h_flex()
                                     .w_full()
@@ -476,11 +521,39 @@ impl TimelineView {
                                     .gap_2()
                                     .child(Divider::horizontal().w_2().stroke(px(2.)))
                                     .child(hour_label(hour, cx))
-                                    .child(Divider::horizontal().flex_1().when_else(
-                                        hour == 0,
-                                        |this| this.stroke(px(2.)),
-                                        |this| this.dashed(),
-                                    )),
+                                    .when_else(
+                                        hour != 0 || sticky_midnight_h == Some(absolute_h),
+                                        |this| {
+                                            if sticky_midnight_h == Some(absolute_h) {
+                                                this.child(
+                                                    Divider::horizontal().flex_1().stroke(px(2.)),
+                                                )
+                                            } else {
+                                                this.child(Divider::horizontal().flex_1().dashed())
+                                            }
+                                        },
+                                        |this| {
+                                            let date = view.start
+                                                + chrono::Duration::hours(absolute_h as i64);
+                                            // let label = date.format("%b %-d").to_string();
+                                            let label = date.format("%a %-d").to_string();
+                                            // let label = match h {
+                                            //     0 => "yesterday".to_string(),
+                                            //     24 => "today".to_string(),
+                                            //     48 => "tomorrow".to_string(),
+                                            //     h => format!("day {}", (h - 48) / 24),
+                                            // };
+                                            this.child(
+                                                Divider::horizontal().flex_1().stroke(px(2.)),
+                                            )
+                                            .child(
+                                                Label::new(label)
+                                                    .text_color(cx.theme().muted_foreground),
+                                            )
+                                            .child(div())
+                                            // .child(Divider::horizontal().w_2().stroke(px(2.)))
+                                        },
+                                    ),
                             )
                             // intra-hour tick marks
                             .children((0..n_ticks).filter_map(|i| {
@@ -501,6 +574,17 @@ impl TimelineView {
                             // .on_any_mouse_down(|_, window, cx| {
                             //     window.dispatch_action(Box::new(ClosedViewedItem), cx);
                             // })
+                            .on_double_click(cx.listener(|view, e: &ClickEvent, window, cx| {
+                                let click_position = e.position();
+                                if let Some(position) = view
+                                    .bounds
+                                    .and_then(|bounds| bounds.localize(&click_position))
+                                {
+                                    let time = view.position_to_time(position);
+                                    let floor = view.floor_time(time);
+                                    view.add_draft_action(floor, window, cx);
+                                }
+                            }))
                             .on_aux_click(cx.listener(|view, e: &ClickEvent, window, cx| {
                                 let click_position = e.position();
                                 if let Some(position) = view
@@ -508,12 +592,13 @@ impl TimelineView {
                                     .and_then(|bounds| bounds.localize(&click_position))
                                 {
                                     let time = view.position_to_time(position);
-                                    let nearest = view.nearest_time(time);
+                                    let floor = view.floor_time(time);
                                     view.context_menu_position = click_position;
+                                    let view_entity = cx.entity();
                                     let menu = PopupMenu::build(
                                         window,
                                         cx,
-                                        timeline_context_menu(nearest),
+                                        timeline_context_menu(floor, view_entity),
                                     );
                                     let subscription = cx.subscribe(
                                         &menu,
@@ -538,6 +623,58 @@ impl TimelineView {
         .track_scroll(&self.scroll_handle)
     }
 
+    pub(super) fn render_sticky_date(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+        let scroll = self.scroll_offset();
+        let hour_height = self.hour_height;
+
+        let start_hour = self.start.hour() as i64;
+        let h_first_midnight = (24 - start_hour) % 24;
+
+        // Which hour index sits at the top of the viewport right now?
+        // Pixels / Pixels → f32 in GPUI.
+        let hours_at_top = (-scroll / hour_height) as i64;
+
+        // Most recent midnight that has scrolled past (or to) the top.
+        let d = (hours_at_top - h_first_midnight).div_euclid(24);
+        if d < 0 {
+            return None;
+        }
+
+        let sticky_h = h_first_midnight + d * 24;
+
+        // If the current day's midnight row is still visible, the in-list label
+        // is showing — no sticky needed yet.
+        let current_midnight_viewport_y = hour_height * sticky_h as f32 + scroll;
+        if current_midnight_viewport_y >= px(0.) {
+            return None;
+        }
+
+        let date = self.start + ChronoDuration::hours(sticky_h);
+        // let label = date.format("%b %-d").to_string();
+        let label = date.format("%a %-d").to_string();
+
+        // Viewport-relative position (Pixels) of the *next* day's midnight divider.
+        let next_midnight_viewport_y = hour_height * (sticky_h + 24) as f32 + scroll;
+        // Push the sticky label up as the next one slides in from below.
+        let sticky_top = if next_midnight_viewport_y < HOUR_DIVIDER_HEIGHT {
+            next_midnight_viewport_y - HOUR_DIVIDER_HEIGHT
+        } else {
+            px(0.)
+        };
+
+        Some(
+            h_flex()
+                .absolute()
+                .top(sticky_top)
+                .right(px(0.))
+                .h(HOUR_DIVIDER_HEIGHT)
+                .pr_2()
+                // .gap_2()
+                // .child(Divider::horizontal().w_2().stroke(px(2.)))
+                .child(Label::new(label).text_color(cx.theme().muted_foreground)),
+        )
+    }
+
     pub(super) fn render_now_cursor(&self, cx: &Context<Self>) -> impl IntoElement {
         let now = Local::now();
         // let color = cx.theme().red_light.mix_oklab(cx.theme().foreground, 0.8);
@@ -560,5 +697,303 @@ impl TimelineView {
                     .child(time_label(now, cx).text_sm().text_color(color)),
             )
             .child(Divider::horizontal().color(color).flex_1())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Local;
+
+    // -------------------------------------------------------------------------
+    // HourDivision::n_divisions
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_hour_division_n_divisions() {
+        assert_eq!(HourDivision::Hour.n_divisions(), 1);
+        assert_eq!(HourDivision::HalfHour.n_divisions(), 2);
+        assert_eq!(HourDivision::QuarterHour.n_divisions(), 4);
+        assert_eq!(HourDivision::TenMinutes.n_divisions(), 6);
+        assert_eq!(HourDivision::FiveMinutes.n_divisions(), 12);
+    }
+
+    // -------------------------------------------------------------------------
+    // HourDivision::to_seconds
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_hour_division_to_seconds() {
+        assert_eq!(HourDivision::Hour.to_seconds(), 3600);
+        assert_eq!(HourDivision::HalfHour.to_seconds(), 1800);
+        assert_eq!(HourDivision::QuarterHour.to_seconds(), 900);
+        assert_eq!(HourDivision::TenMinutes.to_seconds(), 600);
+        assert_eq!(HourDivision::FiveMinutes.to_seconds(), 300);
+    }
+
+    /// n_divisions * to_seconds must always equal one hour (3600 s).
+    #[test]
+    fn test_hour_division_invariant() {
+        for div in [
+            HourDivision::Hour,
+            HourDivision::HalfHour,
+            HourDivision::QuarterHour,
+            HourDivision::TenMinutes,
+            HourDivision::FiveMinutes,
+        ] {
+            assert_eq!(
+                div.n_divisions() as i64 * div.to_seconds(),
+                3600,
+                "invariant failed for a HourDivision variant"
+            );
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // HourDivision::to_duration
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_hour_division_to_duration() {
+        assert_eq!(HourDivision::Hour.to_duration(), ChronoDuration::hours(1));
+        assert_eq!(
+            HourDivision::HalfHour.to_duration(),
+            ChronoDuration::minutes(30)
+        );
+        assert_eq!(
+            HourDivision::QuarterHour.to_duration(),
+            ChronoDuration::minutes(15)
+        );
+        assert_eq!(
+            HourDivision::TenMinutes.to_duration(),
+            ChronoDuration::minutes(10)
+        );
+        assert_eq!(
+            HourDivision::FiveMinutes.to_duration(),
+            ChronoDuration::minutes(5)
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // HourDivision::floor_division
+    // -------------------------------------------------------------------------
+
+    fn local_hms(h: u32, m: u32, s: u32) -> DateTime<Local> {
+        Local::now()
+            .with_hour(h)
+            .and_then(|t| t.with_minute(m))
+            .and_then(|t| t.with_second(s))
+            .and_then(|t| t.with_nanosecond(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn test_floor_division_hour_on_boundary() {
+        let t = local_hms(10, 0, 0);
+        assert_eq!(HourDivision::Hour.floor_division(t), t);
+    }
+
+    #[test]
+    fn test_floor_division_hour_mid_hour() {
+        let t = local_hms(10, 37, 0);
+        let expected = local_hms(10, 0, 0);
+        assert_eq!(HourDivision::Hour.floor_division(t), expected);
+    }
+
+    #[test]
+    fn test_floor_division_half_hour_before_midpoint() {
+        let t = local_hms(10, 20, 0);
+        let expected = local_hms(10, 0, 0);
+        assert_eq!(HourDivision::HalfHour.floor_division(t), expected);
+    }
+
+    #[test]
+    fn test_floor_division_half_hour_after_midpoint() {
+        let t = local_hms(10, 45, 0);
+        let expected = local_hms(10, 30, 0);
+        assert_eq!(HourDivision::HalfHour.floor_division(t), expected);
+    }
+
+    #[test]
+    fn test_floor_division_quarter_hour() {
+        let t = local_hms(10, 17, 0);
+        let expected = local_hms(10, 15, 0);
+        assert_eq!(HourDivision::QuarterHour.floor_division(t), expected);
+    }
+
+    #[test]
+    fn test_floor_division_five_minutes() {
+        let t = local_hms(10, 22, 0);
+        let expected = local_hms(10, 20, 0);
+        assert_eq!(HourDivision::FiveMinutes.floor_division(t), expected);
+    }
+
+    #[test]
+    fn test_floor_division_ten_minutes() {
+        let t = local_hms(10, 37, 0);
+        let expected = local_hms(10, 30, 0);
+        assert_eq!(HourDivision::TenMinutes.floor_division(t), expected);
+    }
+
+    // -------------------------------------------------------------------------
+    // HourDivision::ceil_division
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_ceil_division_on_boundary_is_identity() {
+        // When already on a boundary, ceil should return the same time.
+        let t = local_hms(10, 15, 0);
+        assert_eq!(HourDivision::QuarterHour.ceil_division(t), t);
+    }
+
+    #[test]
+    fn test_ceil_division_quarter_hour() {
+        let t = local_hms(10, 7, 0);
+        let expected = local_hms(10, 15, 0);
+        assert_eq!(HourDivision::QuarterHour.ceil_division(t), expected);
+    }
+
+    #[test]
+    fn test_ceil_division_half_hour() {
+        let t = local_hms(10, 31, 0);
+        let expected = local_hms(11, 0, 0);
+        assert_eq!(HourDivision::HalfHour.ceil_division(t), expected);
+    }
+
+    #[test]
+    fn test_ceil_division_five_minutes() {
+        let t = local_hms(10, 1, 0);
+        let expected = local_hms(10, 5, 0);
+        assert_eq!(HourDivision::FiveMinutes.ceil_division(t), expected);
+    }
+
+    // -------------------------------------------------------------------------
+    // HourDivision::nearest_division
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_nearest_division_rounds_down() {
+        // 10:07 is closer to 10:05 than 10:10
+        let t = local_hms(10, 7, 0);
+        let expected = local_hms(10, 5, 0);
+        assert_eq!(HourDivision::FiveMinutes.nearest_division(t), expected);
+    }
+
+    #[test]
+    fn test_nearest_division_rounds_up() {
+        // 10:08 is closer to 10:10 than 10:05
+        let t = local_hms(10, 8, 0);
+        let expected = local_hms(10, 10, 0);
+        assert_eq!(HourDivision::FiveMinutes.nearest_division(t), expected);
+    }
+
+    #[test]
+    fn test_nearest_division_quarter_hour_midpoint() {
+        // 10:22:30 is the exact midpoint between 10:15 and 10:30; rounds to 10:30
+        let t = local_hms(10, 22, 30);
+        let expected = local_hms(10, 30, 0);
+        assert_eq!(HourDivision::QuarterHour.nearest_division(t), expected);
+    }
+
+    // -------------------------------------------------------------------------
+    // TimelineView::compute_edge_scroll_speed
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_edge_scroll_speed_center_returns_none() {
+        let height = px(600.0);
+        assert!(TimelineView::compute_edge_scroll_speed(px(300.0), height).is_none());
+    }
+
+    #[test]
+    fn test_edge_scroll_speed_top_edge_positive() {
+        let height = px(600.0);
+        // y=0 is at the very top — max upward speed
+        let speed = TimelineView::compute_edge_scroll_speed(px(0.0), height);
+        assert!(speed.is_some());
+        let speed = speed.unwrap();
+        assert!(speed > 0.0, "top-edge scroll should be positive (upward)");
+        // t=1 → speed should equal MAX_SPEED (18.0)
+        assert!((speed - 18.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_edge_scroll_speed_bottom_edge_negative() {
+        let height = px(600.0);
+        // y == height is at the very bottom — max downward speed
+        let speed = TimelineView::compute_edge_scroll_speed(height, height);
+        assert!(speed.is_some());
+        let speed = speed.unwrap();
+        assert!(
+            speed < 0.0,
+            "bottom-edge scroll should be negative (downward)"
+        );
+        assert!((speed + 18.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_edge_scroll_speed_just_inside_zone_boundary() {
+        let height = px(600.0);
+        // y = 80.0 is exactly at the zone boundary — should return None
+        assert!(TimelineView::compute_edge_scroll_speed(px(80.0), height).is_none());
+        // y = 79.9 is just inside the top zone — should return Some
+        assert!(TimelineView::compute_edge_scroll_speed(px(79.9), height).is_some());
+    }
+
+    #[test]
+    fn test_edge_scroll_speed_top_partial() {
+        let height = px(600.0);
+        // y = 40 is halfway into the 80-px zone → t = 0.5 → speed = 0.25 * 18 = 4.5
+        let speed = TimelineView::compute_edge_scroll_speed(px(40.0), height).unwrap();
+        assert!((speed - 4.5).abs() < 1e-3);
+    }
+
+    // -------------------------------------------------------------------------
+    // ZoomFrame::lerp
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_zoom_frame_lerp_identity() {
+        let a = ZoomFrame {
+            hour_height: px(128.0),
+            scroll: px(-256.0),
+        };
+        let b = ZoomFrame {
+            hour_height: px(256.0),
+            scroll: px(-512.0),
+        };
+        let result = a.lerp(&b, 0.0);
+        assert_eq!(result.hour_height, px(128.0));
+        assert_eq!(result.scroll, px(-256.0));
+    }
+
+    #[test]
+    fn test_zoom_frame_lerp_full() {
+        let a = ZoomFrame {
+            hour_height: px(128.0),
+            scroll: px(-256.0),
+        };
+        let b = ZoomFrame {
+            hour_height: px(256.0),
+            scroll: px(-512.0),
+        };
+        let result = a.lerp(&b, 1.0);
+        assert_eq!(result.hour_height, px(256.0));
+        assert_eq!(result.scroll, px(-512.0));
+    }
+
+    #[test]
+    fn test_zoom_frame_lerp_midpoint() {
+        let a = ZoomFrame {
+            hour_height: px(0.0),
+            scroll: px(0.0),
+        };
+        let b = ZoomFrame {
+            hour_height: px(200.0),
+            scroll: px(-400.0),
+        };
+        let result = a.lerp(&b, 0.5);
+        assert_eq!(result.hour_height, px(100.0));
+        assert_eq!(result.scroll, px(-200.0));
     }
 }

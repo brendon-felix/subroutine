@@ -1,11 +1,13 @@
 use gpui::{App, Corners, ParentElement, Pixels, StyleRefinement, Styled, Window, div, px};
 
 mod button;
+mod checkbox;
 mod divider;
 mod drag_drop;
 mod overlay;
 
-pub use button::*;
+// pub use button::*;
+pub use checkbox::*;
 pub use divider::*;
 pub use drag_drop::*;
 use gpui_component::{ActiveTheme, Edges, StyledExt};

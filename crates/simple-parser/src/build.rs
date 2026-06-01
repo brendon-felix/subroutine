@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 use serde::Serialize;
-use simple_core::{Action, ActionState, ActionTarget, Event, RecurrenceRule};
+use simple_core::{Action, ActionState, ActionTarget, Event, RecurrenceRule, RoutineStep};
 
 use crate::ast::{ParseDraft, RecurrenceSpec, WhenSpec};
 
@@ -8,6 +8,7 @@ use crate::ast::{ParseDraft, RecurrenceSpec, WhenSpec};
 pub enum BuildTarget {
     Action,
     Event,
+    RoutineStep,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -15,12 +16,14 @@ pub enum BuildTarget {
 pub enum BuiltEntity {
     Action(Action),
     Event(Event),
+    RoutineStep(RoutineStep),
 }
 
 pub fn build_entity(draft: &ParseDraft, target: BuildTarget) -> Result<BuiltEntity> {
     match target {
         BuildTarget::Action => Ok(BuiltEntity::Action(build_action(draft))),
         BuildTarget::Event => Ok(BuiltEntity::Event(build_event(draft)?)),
+        BuildTarget::RoutineStep => Ok(BuiltEntity::RoutineStep(build_routine_step(draft))),
     }
 }
 
@@ -91,6 +94,16 @@ fn build_event(draft: &ParseDraft) -> Result<Event> {
     }
 
     Ok(event)
+}
+
+fn build_routine_step(draft: &ParseDraft) -> RoutineStep {
+    let mut step = RoutineStep::new(&draft.title);
+
+    if let Some(duration) = draft.duration {
+        step = step.with_duration(duration);
+    }
+
+    step
 }
 
 /// Convert a [`RecurrenceSpec`] into a [`RecurrenceRule`] for use with

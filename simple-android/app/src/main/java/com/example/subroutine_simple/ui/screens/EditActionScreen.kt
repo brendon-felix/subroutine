@@ -68,8 +68,10 @@ fun EditActionScreen(
         else -> null
     }
 
-    if (action == null && !saving) {
-        // Still loading or action no longer exists — go back.
+    // Only navigate away when data is fully loaded and the action genuinely
+    // no longer exists (e.g. deleted by another client). Transient Loading
+    // states from SSE-triggered reloads should not interrupt an active edit.
+    if (uiState is ActionsUiState.Success && action == null && !saving) {
         onBack()
         return
     }

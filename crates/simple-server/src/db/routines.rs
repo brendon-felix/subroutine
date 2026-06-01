@@ -180,11 +180,14 @@ pub(crate) async fn fetch_by_id(pool: &PgPool, id: Uuid) -> anyhow::Result<Optio
     }
 }
 
-pub(crate) async fn soft_delete(pool: &PgPool, id: Uuid) -> anyhow::Result<()> {
-    sqlx::query("UPDATE routines SET deleted = TRUE, updated_at = NOW() WHERE id = $1")
-        .bind(id)
-        .execute(pool)
-        .await
-        .context("soft delete routine")?;
-    Ok(())
+pub(crate) async fn soft_delete(pool: &PgPool, id: Uuid) -> anyhow::Result<bool> {
+    let rows = sqlx::query(
+        "UPDATE routines SET deleted = TRUE, updated_at = NOW() WHERE id = $1 AND deleted = FALSE",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .context("soft delete routine")?
+    .rows_affected();
+    Ok(rows > 0)
 }

@@ -65,7 +65,10 @@ fun EditEventScreen(
         else -> null
     }
 
-    if (event == null && !saving) {
+    // Only navigate away when data is fully loaded and the event genuinely
+    // no longer exists (e.g. deleted by another client). Transient Loading
+    // states from SSE-triggered reloads should not interrupt an active edit.
+    if (uiState is ActionsUiState.Success && event == null && !saving) {
         onBack()
         return
     }

@@ -1,12 +1,14 @@
 use axum::{Json, Router, extract::State, routing::get};
 use serde::Serialize;
-use simple_core::{Action, Event, Routine};
+use simple_core::{Event, Routine};
 
 use crate::{db, error::Result, state::AppState};
 
+use super::dto::ActionDto;
+
 #[derive(Serialize)]
 pub struct AllData {
-    pub actions: Vec<Action>,
+    pub actions: Vec<ActionDto>,
     pub events: Vec<Event>,
     pub routines: Vec<Routine>,
 }
@@ -22,7 +24,7 @@ async fn get_all_data(State(state): State<AppState>) -> Result<Json<AllData>> {
         db::routines::fetch_all(&state.pool),
     )?;
     Ok(Json(AllData {
-        actions,
+        actions: actions.into_iter().map(ActionDto::from).collect(),
         events,
         routines,
     }))

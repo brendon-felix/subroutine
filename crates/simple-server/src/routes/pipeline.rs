@@ -1,9 +1,11 @@
 use axum::{Json, Router, extract::State, routing::post};
 use chrono::Utc;
 
-use simple_core::{Action, EXPEDITE_HORIZON};
+use simple_core::ChangeEvent;
 
 use crate::{db, error::Result, state::AppState};
+
+use super::dto::ActionDto;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -11,7 +13,7 @@ pub fn router() -> Router<AppState> {
         .route("/pipeline/expedite", post(expedite_pipeline))
 }
 
-async fn refresh_pipeline(State(state): State<AppState>) -> Result<Json<Vec<Action>>> {
+async fn refresh_pipeline(State(state): State<AppState>) -> Result<Json<Vec<ActionDto>>> {
     let now = Utc::now();
     let actions = db::actions::fetch_all(&state.pool).await?;
     let events = db::events::fetch_all(&state.pool).await?;
@@ -21,12 +23,13 @@ async fn refresh_pipeline(State(state): State<AppState>) -> Result<Json<Vec<Acti
         db::actions::upsert(&state.pool, action).await?;
     }
 
-    Ok(Json(updated))
+    let _ = state.changes.send(ChangeEvent::PipelineChanged);
+    Ok(Json(updated.into_iter().map(ActionDto::from).collect()))
 }
 
-async fn expedite_pipeline(State(state): State<AppState>) -> Result<Json<Vec<Action>>> {
+async fn expedite_pipeline(State(state): State<AppState>) -> Result<Json<Vec<ActionDto>>> {
     let now = Utc::now();
-    let horizon = now + EXPEDITE_HORIZON;
+    let horizon = now + simple_core::EXPEDITE_HORIZON;
     let actions = db::actions::fetch_all(&state.pool).await?;
     let events = db::events::fetch_all(&state.pool).await?;
 
@@ -35,5 +38,6 @@ async fn expedite_pipeline(State(state): State<AppState>) -> Result<Json<Vec<Act
         db::actions::upsert(&state.pool, action).await?;
     }
 
-    Ok(Json(updated))
+    let _ = state.changes.send(ChangeEvent::PipelineChanged);
+    Ok(Json(updated.into_iter().map(ActionDto::from).collect()))
 }

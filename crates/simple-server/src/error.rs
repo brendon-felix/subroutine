@@ -3,18 +3,48 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-pub struct AppError(anyhow::Error);
+pub struct AppError {
+    status: StatusCode,
+    source: anyhow::Error,
+}
+
+impl AppError {
+    pub fn not_found(msg: String) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            source: anyhow::anyhow!(msg),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn internal(source: impl Into<anyhow::Error>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            source: source.into(),
+        }
+    }
+}
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        tracing::error!("handler error: {:?}", self.0);
-        (StatusCode::INTERNAL_SERVER_ERROR, self.0.to_string()).into_response()
+        match self.status {
+            StatusCode::NOT_FOUND => {
+                tracing::warn!("not found: {:?}", self.source);
+            }
+            _ => {
+                tracing::error!("handler error: {:?}", self.source);
+            }
+        }
+        (self.status, self.source.to_string()).into_response()
     }
 }
 
 impl<E: Into<anyhow::Error>> From<E> for AppError {
     fn from(e: E) -> Self {
-        Self(e.into())
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            source: e.into(),
+        }
     }
 }
 

@@ -17,6 +17,7 @@ pub enum AppIcon {
     Plus,
     Minus,
     Trash,
+    Repeat,
     Close,
 }
 
@@ -31,6 +32,7 @@ impl IconNamed for AppIcon {
             Self::Plus => "icons/custom/plus.svg",
             Self::Minus => "icons/custom/minus.svg",
             Self::Trash => "icons/custom/trash.svg",
+            Self::Repeat => "icons/custom/repeat.svg",
             Self::Close => "icons/custom/close.svg",
         }
         .into()

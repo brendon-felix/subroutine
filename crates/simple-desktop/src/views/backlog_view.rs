@@ -1,19 +1,21 @@
-use std::rc::Rc;
+use std::{collections::HashSet, rc::Rc, time::Duration};
 
 use gpui::{
-    Context, DragMoveEvent, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels, Render,
-    SharedString, Size, Styled, Window, div, prelude::FluentBuilder, px,
+    AsyncApp, Context, DragMoveEvent, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels,
+    Render, SharedString, Size, Styled, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{ActiveTheme, VirtualListScrollHandle, h_flex, label::Label, v_virtual_list};
 use simple_core::{Action, AnyItem};
+use uuid::Uuid;
 
 use crate::{
-    components::{DragData, Draggable, DropZone},
+    components::{Checkbox, DragData, Draggable, DropZone},
     stores::{AppDatabaseStore, DataChanged},
     utils::{ButtonColorizeExt, ButtonColors},
 };
 
 const ITEM_HEIGHT: Pixels = px(80.);
+const COMPLETE_CHECKBOX_DURATION: Duration = Duration::from_millis(250);
 
 fn render_backlog_item_preview(
     colors: ButtonColors,
@@ -39,6 +41,7 @@ pub struct BacklogView {
     scroll_handle: VirtualListScrollHandle,
     item_sizes: Rc<Vec<Size<Pixels>>>,
     backlog: Vec<Action>,
+    completing_items: HashSet<Uuid>,
     drop_active: bool,
 }
 
@@ -72,6 +75,7 @@ impl BacklogView {
             scroll_handle,
             item_sizes,
             backlog,
+            completing_items: HashSet::new(),
             drop_active: false,
         }
     }
@@ -84,6 +88,24 @@ impl BacklogView {
                 .collect(),
         );
         self.item_sizes = item_sizes;
+    }
+
+    fn begin_complete_item(&mut self, action_id: Uuid, cx: &mut Context<Self>) {
+        self.completing_items.insert(action_id);
+        cx.notify();
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            cx.background_executor()
+                .timer(COMPLETE_CHECKBOX_DURATION)
+                .await;
+            let _ = this.update(cx, |view, cx| {
+                view.completing_items.remove(&action_id);
+                let store = AppDatabaseStore::global(cx);
+                store.update(cx, |store, cx| {
+                    store.complete_action(action_id, cx);
+                });
+            });
+        })
+        .detach();
     }
 
     // fn scroll_offset(&self) -> Pixels {
@@ -102,7 +124,11 @@ impl BacklogView {
         DropZone::new("backlog-drop")
             .size_full()
             .active(self.drop_active)
-            .rounded_xl()
+            // .inactive_border(true)
+            // .rounded_xl()
+            .border_t_0()
+            .rounded_none()
+            .rounded_br_2xl()
             .on_drag_move(cx.listener(
                 move |this, event: &DragMoveEvent<DragData<AnyItem>>, _window, cx| {
                     // let item_opt: Option<&Action> = event.dragged_item().downcast_ref();
@@ -132,6 +158,7 @@ impl BacklogView {
 
     fn render_items(&self, cx: &Context<Self>) -> impl IntoElement {
         let muted_fg = cx.theme().muted_foreground;
+        let completing_items = self.completing_items.clone();
         v_virtual_list(
             cx.entity(),
             "timeline",
@@ -140,11 +167,13 @@ impl BacklogView {
                 visible_range
                     .filter_map(|i| {
                         view.backlog.get(i).cloned().map(|action| {
+                            let action_id = action.id;
                             let item = AnyItem::Action(action);
                             let title: SharedString = item.title().into();
                             let colors = ButtonColors::normal(cx.theme().button_primary, cx);
                             let preview_title = title.clone();
                             let preview_colors = colors;
+                            let is_completing = completing_items.contains(&action_id);
                             let drag_data = DragData::new(item)
                                 .with_label(title.clone())
                                 .with_preview(move || {
@@ -156,7 +185,8 @@ impl BacklogView {
                                         muted_fg,
                                     )
                                     .into_any_element()
-                                });
+                                })
+                                .with_preview_size(gpui::size(px(64. * 4.), ITEM_HEIGHT));
                             div().size_full().px_2().py_1().child(
                                 Draggable::new(("backlog-draggable", i as u32), drag_data)
                                     .size_full()
@@ -168,9 +198,34 @@ impl BacklogView {
                                             .button_colors(colors)
                                             .text_ellipsis()
                                             .overflow_hidden()
-                                            .child(h_flex().size_full().px_2().gap_2().child(
-                                                Label::new(title).text_sm().text_color(muted_fg),
-                                            )),
+                                            .child(
+                                                h_flex()
+                                                    .size_full()
+                                                    .px_2()
+                                                    .gap_2()
+                                                    .child(
+                                                        Checkbox::new((
+                                                            "backlog-complete",
+                                                            action_id.as_u128() as u64,
+                                                        ))
+                                                        .checked(is_completing)
+                                                        .tab_stop(false)
+                                                        // .occlude()
+                                                        .cursor_default()
+                                                        .on_click(cx.listener(
+                                                            move |this, _, _window, cx| {
+                                                                this.begin_complete_item(
+                                                                    action_id, cx,
+                                                                );
+                                                            },
+                                                        )),
+                                                    )
+                                                    .child(
+                                                        Label::new(title)
+                                                            .text_sm()
+                                                            .text_color(muted_fg),
+                                                    ),
+                                            ),
                                     ),
                             )
                         })

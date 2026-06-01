@@ -10,6 +10,12 @@ pub struct ActionTarget {
     pub is_static: bool,
 }
 
+impl ActionTarget {
+    pub fn new(time: DateTime<Utc>, is_static: bool) -> Self {
+        Self { time, is_static }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum ActionState {
     Queued(ActionTarget),

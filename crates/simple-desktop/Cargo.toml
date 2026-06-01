@@ -10,12 +10,13 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["fo
 gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 gpui_transitions = { path = "/Users/felixb/Projects/gpui_transitions" }
 
+simple-core = { path = "../simple-core" }
+simple-parser = { path = "../simple-parser" }
 open = { workspace = true }
 tokio = { workspace = true }
 flume = { workspace = true }
 reqwest = { workspace = true }
-simple-core = { path = "../simple-core" }
-simple-parser = { path = "../simple-parser" }
+futures-util = "0.3"
 chrono = { workspace = true }
 uuid = { workspace = true }
 rust-embed = { workspace = true }

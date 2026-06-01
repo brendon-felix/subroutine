@@ -6,6 +6,7 @@ use serde::Serialize;
 pub enum EntityKind {
     Action,
     Event,
+    RoutineStep,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

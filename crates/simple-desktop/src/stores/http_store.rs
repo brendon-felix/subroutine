@@ -1,9 +1,12 @@
 use std::thread;
 
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use flume;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global};
-use serde::Deserialize;
-use simple_core::{Action, ActionState, AnyItem, Event, Routine, next_queue_slot};
+use serde::{Deserialize, Serialize};
+use simple_core::{
+    Action, ActionState, ActionTarget, AnyItem, Event, RecurrenceRule, Routine, next_queue_slot,
+};
 use uuid::Uuid;
 
 // ── Status / events ───────────────────────────────────────────────────────────
@@ -39,6 +42,100 @@ pub struct CompleteResult {
     pub next: Option<Action>,
 }
 
+// ── HTTP API wire types ───────────────────────────────────────────────────────
+//
+// The server serializes Action as ActionDto with a flat, lowercase-tagged state
+// and duration_secs (plain i64). These private types handle that format at the
+// HTTP boundary, converting to/from simple_core::Action.
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum ActionStateDtoWire {
+    Queued {
+        time: DateTime<Utc>,
+        is_static: bool,
+    },
+    Backlogged {
+        date: Option<NaiveDate>,
+    },
+    Completed {
+        at: DateTime<Utc>,
+    },
+    Skipped,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ActionDtoWire {
+    id: uuid::Uuid,
+    lineage_id: uuid::Uuid,
+    origin_routine_id: Option<uuid::Uuid>,
+    title: String,
+    content: Option<String>,
+    duration_secs: Option<i64>,
+    recurrence: Option<RecurrenceRule>,
+    saved: bool,
+    state: ActionStateDtoWire,
+}
+
+impl From<Action> for ActionDtoWire {
+    fn from(a: Action) -> Self {
+        ActionDtoWire {
+            id: a.id,
+            lineage_id: a.lineage_id,
+            origin_routine_id: a.origin_routine_id,
+            title: a.title,
+            content: a.content,
+            duration_secs: a.duration.map(|d| d.num_seconds()),
+            recurrence: a.recurrence,
+            saved: a.saved,
+            state: match a.state {
+                ActionState::Queued(ActionTarget { time, is_static }) => {
+                    ActionStateDtoWire::Queued { time, is_static }
+                }
+                ActionState::Backlogged(date) => ActionStateDtoWire::Backlogged { date },
+                ActionState::Completed(at) => ActionStateDtoWire::Completed { at },
+                ActionState::Skipped => ActionStateDtoWire::Skipped,
+            },
+        }
+    }
+}
+
+impl From<ActionDtoWire> for Action {
+    fn from(w: ActionDtoWire) -> Self {
+        Action {
+            id: w.id,
+            lineage_id: w.lineage_id,
+            origin_routine_id: w.origin_routine_id,
+            title: w.title,
+            content: w.content,
+            duration: w.duration_secs.map(Duration::seconds),
+            recurrence: w.recurrence,
+            saved: w.saved,
+            state: match w.state {
+                ActionStateDtoWire::Queued { time, is_static } => {
+                    ActionState::Queued(ActionTarget { time, is_static })
+                }
+                ActionStateDtoWire::Backlogged { date } => ActionState::Backlogged(date),
+                ActionStateDtoWire::Completed { at } => ActionState::Completed(at),
+                ActionStateDtoWire::Skipped => ActionState::Skipped,
+            },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct AllDataWire {
+    actions: Vec<ActionDtoWire>,
+    events: Vec<Event>,
+    routines: Vec<Routine>,
+}
+
+#[derive(Deserialize)]
+struct CompleteResultWire {
+    completed: ActionDtoWire,
+    next: Option<ActionDtoWire>,
+}
+
 // ── Worker command channel ────────────────────────────────────────────────────
 //
 // Each variant carries a one-shot response sender.  The background tokio thread
@@ -54,17 +151,18 @@ enum Cmd {
     DeleteAction(Uuid, Reply<()>),
     UpsertEvent(Event, Reply<()>),
     DeleteEvent(Uuid, Reply<()>),
-    // UpsertRoutine(Routine, Reply<()>),
-    // DeleteRoutine(Uuid, Reply<()>),
+    UpsertRoutine(Routine, Reply<()>),
+    DeleteRoutine(Uuid, Reply<()>),
     // Combined create + follow-up, sequenced atomically in the worker
     UpsertAndQueueAction(Action, Reply<Vec<Action>>),
     UpsertAndScheduleEvent(Event, Reply<Event>),
-    // UpsertAndInstantiateRoutine(Routine, Reply<Vec<Action>>),
+    UpsertAndInstantiateRoutine(Routine, Reply<Vec<Action>>),
     // State transitions
     CompleteAction(Uuid, Reply<CompleteResult>),
     QueueAction(Uuid, Reply<Vec<Action>>),
+    ClearActionDuration(Uuid, Reply<Action>),
     BacklogAction(Uuid, Reply<Action>),
-    // InstantiateRoutine(Uuid, Reply<Vec<Action>>),
+    InstantiateRoutine(Uuid, Reply<Vec<Action>>),
     RefreshPipeline(Reply<Vec<Action>>),
     ExpeditePipeline(Reply<Vec<Action>>),
 }
@@ -74,7 +172,7 @@ enum Cmd {
 pub struct AppDatabaseStore {
     cmd_tx: flume::Sender<Cmd>,
     _worker: thread::JoinHandle<()>,
-    pub status: StoreStatus,
+    status: StoreStatus,
     actions: Vec<Action>,
     events: Vec<Event>,
     routines: Vec<Routine>,
@@ -90,6 +188,10 @@ impl AppDatabaseStore {
         let (init_tx, init_rx) = flume::bounded(1);
         let _ = cmd_tx.send(Cmd::FetchAll(init_tx));
 
+        // One-shot channel: the SSE loop sends () whenever the server emits a
+        // change event. The GPUI side uses this to trigger a re-fetch.
+        let (sse_tx, sse_rx) = flume::unbounded::<()>();
+
         let base = server_url.clone();
         let worker = thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -98,9 +200,15 @@ impl AppDatabaseStore {
                 .expect("tokio runtime");
             rt.block_on(async move {
                 let client = reqwest::Client::new();
-                while let Ok(cmd) = cmd_rx.recv_async().await {
-                    run(&client, &base, cmd).await;
-                }
+                // Run the SSE listener and the cmd loop concurrently on the
+                // same single-thread runtime. Neither blocks the other.
+                let sse_client = client.clone();
+                let sse_base = base.clone();
+                tokio::join!(sse_loop(&sse_client, &sse_base, sse_tx), async {
+                    while let Ok(cmd) = cmd_rx.recv_async().await {
+                        run(&client, &base, cmd).await;
+                    }
+                });
             });
         });
 
@@ -129,6 +237,33 @@ impl AppDatabaseStore {
                     cx.emit(DatabaseError { _message: e });
                 }
             });
+        })
+        .detach();
+
+        // Persistent task: re-fetch all data whenever the SSE loop signals a
+        // server-side change. Runs for the lifetime of the store entity.
+        let cmd_tx_sse = cmd_tx.clone();
+        cx.spawn(async move |this, cx| {
+            loop {
+                // Block until the SSE loop tells us something changed.
+                if sse_rx.recv_async().await.is_err() {
+                    break; // worker dropped — app is shutting down
+                }
+                tracing::debug!("SSE change event received, re-fetching");
+                let (tx, rx) = flume::bounded(1);
+                let _ = cmd_tx_sse.send(Cmd::FetchAll(tx));
+                if let Ok(Ok(data)) = rx.recv_async().await {
+                    let _ = this.update(cx, |store, cx| {
+                        store.actions = data.actions;
+                        store.events = data.events;
+                        store.routines = data.routines;
+                        cx.emit(DataChanged);
+                        cx.emit(ActionDataChanged);
+                        cx.emit(EventDataChanged);
+                        cx.notify();
+                    });
+                }
+            }
         })
         .detach();
 
@@ -173,13 +308,13 @@ impl AppDatabaseStore {
         }
     }
 
-    // fn upsert_routine_local(&mut self, routine: Routine) {
-    //     if let Some(pos) = self.routines.iter().position(|r| r.id == routine.id) {
-    //         self.routines[pos] = routine;
-    //     } else {
-    //         self.routines.push(routine);
-    //     }
-    // }
+    fn upsert_routine_local(&mut self, routine: Routine) {
+        if let Some(pos) = self.routines.iter().position(|r| r.id == routine.id) {
+            self.routines[pos] = routine;
+        } else {
+            self.routines.push(routine);
+        }
+    }
 
     // Sends a command and spawns a smol task that awaits the reply, then calls
     // `apply` on the entity.  Used for operations where the server response
@@ -263,13 +398,13 @@ impl AppDatabaseStore {
             .collect()
     }
 
-    // pub fn routines(&self) -> Vec<Routine> {
-    //     self.routines.clone()
-    // }
+    pub fn routines(&self) -> Vec<Routine> {
+        self.routines.clone()
+    }
 
-    // pub fn get_routine(&self, id: Uuid) -> Option<Routine> {
-    //     self.routines.iter().find(|r| r.id == id).cloned()
-    // }
+    pub fn get_routine(&self, id: Uuid) -> Option<Routine> {
+        self.routines.iter().find(|r| r.id == id).cloned()
+    }
 
     // ── Write API — simple CRUD (optimistic) ──────────────────────────────────
     // Update local state immediately so the UI is responsive, then fire-and-
@@ -320,39 +455,27 @@ impl AppDatabaseStore {
         self.dispatch(Cmd::DeleteEvent(id, tx), rx, cx, |_store, _, _cx| {});
     }
 
-    // pub fn upsert_routine(&mut self, routine: Routine, cx: &mut Context<Self>) {
-    //     self.upsert_routine_local(routine.clone());
-    //     cx.emit(RoutineDataChanged);
-    //     cx.emit(DataChanged);
-    //     cx.notify();
+    pub fn upsert_routine(&mut self, routine: Routine, cx: &mut Context<Self>) {
+        self.upsert_routine_local(routine.clone());
+        cx.emit(RoutineDataChanged);
+        cx.emit(DataChanged);
+        cx.notify();
 
-    //     let (tx, rx) = flume::bounded(1);
-    //     self.dispatch(Cmd::UpsertRoutine(routine, tx), rx, cx, |_store, _, _cx| {});
-    // }
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(Cmd::UpsertRoutine(routine, tx), rx, cx, |_store, _, _cx| {});
+    }
 
-    // pub fn delete_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
-    //     self.routines.retain(|r| r.id != id);
-    //     cx.emit(RoutineDataChanged);
-    //     cx.emit(DataChanged);
-    //     cx.notify();
+    pub fn delete_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        self.routines.retain(|r| r.id != id);
+        cx.emit(RoutineDataChanged);
+        cx.emit(DataChanged);
+        cx.notify();
 
-    //     let (tx, rx) = flume::bounded(1);
-    //     self.dispatch(Cmd::DeleteRoutine(id, tx), rx, cx, |_store, _, _cx| {});
-    // }
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(Cmd::DeleteRoutine(id, tx), rx, cx, |_store, _, _cx| {});
+    }
 
-    // ── Write API — combined create + follow-up ───────────────────────────────
-    // These are for callers that create an item and immediately want a
-    // server-side follow-up (queue, schedule, instantiate). Both HTTP requests
-    // are sequenced inside a single worker command so there is no race.
-
-    /// Persist a new action and add it to the queue.
-    /// If the action is already `Queued` (the parser set an explicit time),
-    /// the PUT is still sent but the `/queue` call is skipped — the action
-    /// is already positioned correctly.
     pub fn upsert_and_queue_action(&mut self, action: Action, cx: &mut Context<Self>) {
-        // Optimistic local insert: pre-set the action as Queued so it appears
-        // in the queue immediately rather than flickering through the backlog.
-        // The server response will correct the exact time in a single follow-up update.
         let optimistic = if action.is_queued() {
             action.clone()
         } else {
@@ -380,9 +503,6 @@ impl AppDatabaseStore {
         );
     }
 
-    /// Persist a new event. Events always have an explicit time from the
-    /// creator, so this is just a PUT — no follow-up needed. The server
-    /// echoes the event back so local state stays canonical.
     pub fn upsert_and_schedule_event(&mut self, event: Event, cx: &mut Context<Self>) {
         self.upsert_event_local(event.clone());
         cx.emit(EventDataChanged);
@@ -403,34 +523,27 @@ impl AppDatabaseStore {
         );
     }
 
-    // /// Persist a new routine and immediately instantiate it (create one action
-    // /// per step). Returns the created actions so the queue updates in one shot.
-    // pub fn upsert_and_instantiate_routine(&mut self, routine: Routine, cx: &mut Context<Self>) {
-    //     self.upsert_routine_local(routine.clone());
-    //     cx.emit(RoutineDataChanged);
-    //     cx.emit(DataChanged);
-    //     cx.notify();
+    pub fn upsert_and_instantiate_routine(&mut self, routine: Routine, cx: &mut Context<Self>) {
+        self.upsert_routine_local(routine.clone());
+        cx.emit(RoutineDataChanged);
+        cx.emit(DataChanged);
+        cx.notify();
 
-    //     let (tx, rx) = flume::bounded(1);
-    //     self.dispatch(
-    //         Cmd::UpsertAndInstantiateRoutine(routine, tx),
-    //         rx,
-    //         cx,
-    //         |store, actions: Vec<Action>, cx| {
-    //             for a in actions {
-    //                 store.upsert_action_local(a);
-    //             }
-    //             cx.emit(ActionDataChanged);
-    //             cx.emit(DataChanged);
-    //             cx.notify();
-    //         },
-    //     );
-    // }
-
-    // ── Write API — server-response ops ──────────────────────────────────────
-    // These wait for the server before updating local state, because the
-    // response contains data we can't compute locally (next recurrence,
-    // refreshed pipeline positions, etc.).
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(
+            Cmd::UpsertAndInstantiateRoutine(routine, tx),
+            rx,
+            cx,
+            |store, actions: Vec<Action>, cx| {
+                for a in actions {
+                    store.upsert_action_local(a);
+                }
+                cx.emit(ActionDataChanged);
+                cx.emit(DataChanged);
+                cx.notify();
+            },
+        );
+    }
 
     pub fn complete_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
         let (tx, rx) = flume::bounded(1);
@@ -467,6 +580,21 @@ impl AppDatabaseStore {
         );
     }
 
+    pub fn clear_action_duration(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(
+            Cmd::ClearActionDuration(id, tx),
+            rx,
+            cx,
+            |store, action: Action, cx| {
+                store.upsert_action_local(action);
+                cx.emit(ActionDataChanged);
+                cx.emit(DataChanged);
+                cx.notify();
+            },
+        );
+    }
+
     pub fn backlog_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
         let (tx, rx) = flume::bounded(1);
         self.dispatch(
@@ -493,6 +621,7 @@ impl AppDatabaseStore {
                     store.upsert_action_local(action);
                 }
                 cx.emit(ActionDataChanged);
+                cx.emit(EventDataChanged);
                 cx.emit(DataChanged);
                 cx.notify();
             },
@@ -516,22 +645,22 @@ impl AppDatabaseStore {
         );
     }
 
-    // pub fn instantiate_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
-    //     let (tx, rx) = flume::bounded(1);
-    //     self.dispatch(
-    //         Cmd::InstantiateRoutine(id, tx),
-    //         rx,
-    //         cx,
-    //         |store, actions: Vec<Action>, cx| {
-    //             for action in actions {
-    //                 store.upsert_action_local(action);
-    //             }
-    //             cx.emit(ActionDataChanged);
-    //             cx.emit(DataChanged);
-    //             cx.notify();
-    //         },
-    //     );
-    // }
+    pub fn instantiate_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let (tx, rx) = flume::bounded(1);
+        self.dispatch(
+            Cmd::InstantiateRoutine(id, tx),
+            rx,
+            cx,
+            |store, actions: Vec<Action>, cx| {
+                for action in actions {
+                    store.upsert_action_local(action);
+                }
+                cx.emit(ActionDataChanged);
+                cx.emit(DataChanged);
+                cx.notify();
+            },
+        );
+    }
 }
 
 // ── EventEmitter ──────────────────────────────────────────────────────────────
@@ -546,6 +675,69 @@ impl EventEmitter<RoutineDataChanged> for AppDatabaseStore {}
 
 struct GlobalStore(Entity<AppDatabaseStore>);
 impl Global for GlobalStore {}
+
+// ── SSE listener ─────────────────────────────────────────────────────────────
+//
+// Connects to GET /api/changes/stream and forwards each change notification
+// to the GPUI side via `notify_tx`. Reconnects automatically on any error.
+
+async fn sse_loop(client: &reqwest::Client, base: &str, notify_tx: flume::Sender<()>) {
+    loop {
+        match connect_sse(client, base, &notify_tx).await {
+            Ok(()) => {
+                tracing::debug!("SSE stream closed by server, reconnecting");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "SSE connection failed, retrying in 5s");
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        }
+        if notify_tx.is_disconnected() {
+            break; // GPUI side is gone — stop reconnecting
+        }
+    }
+}
+
+async fn connect_sse(
+    client: &reqwest::Client,
+    base: &str,
+    notify_tx: &flume::Sender<()>,
+) -> Result<(), String> {
+    let mut response = client
+        .get(format!("{base}/api/changes/stream"))
+        .header("Accept", "text/event-stream")
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| e.to_string())?;
+
+    // Accumulate raw bytes into lines. SSE lines end with '\n'; events are
+    // separated by blank lines. We only care about 'data:' lines — and we
+    // skip the keep-alive 'ping' texts the server sends every 15 seconds.
+    let mut buf = String::new();
+
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+        buf.push_str(&String::from_utf8_lossy(&chunk));
+
+        // Process every complete line in the buffer.
+        while let Some(newline) = buf.find('\n') {
+            let line = buf[..newline].trim_end_matches('\r').to_owned();
+            buf = buf[newline + 1..].to_owned();
+
+            if let Some(data) = line.strip_prefix("data:") {
+                let data = data.trim();
+                if !data.is_empty() && data != "ping" {
+                    tracing::debug!(event = data, "SSE change event");
+                    if notify_tx.send(()).is_err() {
+                        return Ok(()); // GPUI dropped the receiver, stop
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
 
 // ── Worker ────────────────────────────────────────────────────────────────────
 //
@@ -563,7 +755,15 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .and_then(|r| r.error_for_status())
                 .map_err(|e| e.to_string());
             let result = match result {
-                Ok(resp) => resp.json::<AllData>().await.map_err(|e| e.to_string()),
+                Ok(resp) => resp
+                    .json::<AllDataWire>()
+                    .await
+                    .map(|wire| AllData {
+                        actions: wire.actions.into_iter().map(Action::from).collect(),
+                        events: wire.events,
+                        routines: wire.routines,
+                    })
+                    .map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
             let _ = tx.send(result);
@@ -572,7 +772,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
         Cmd::UpsertAction(action, tx) => {
             let result = client
                 .put(format!("{base}/api/actions/{}", action.id))
-                .json(&action)
+                .json(&ActionDtoWire::from(action))
                 .send()
                 .await
                 .and_then(|r| r.error_for_status())
@@ -597,7 +797,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
             // PUT first — must complete before the server can queue it.
             let put = client
                 .put(format!("{base}/api/actions/{id}"))
-                .json(&action)
+                .json(&ActionDtoWire::from(action.clone()))
                 .send()
                 .await
                 .and_then(|r| r.error_for_status())
@@ -618,7 +818,11 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                         .and_then(|r| r.error_for_status())
                         .map_err(|e| e.to_string());
                     match r {
-                        Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
+                        Ok(resp) => resp
+                            .json::<Vec<ActionDtoWire>>()
+                            .await
+                            .map(|v| v.into_iter().map(Action::from).collect())
+                            .map_err(|e| e.to_string()),
                         Err(e) => Err(e),
                     }
                 }
@@ -642,34 +846,39 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
             let _ = tx.send(result);
         }
 
-        // Cmd::UpsertAndInstantiateRoutine(routine, tx) => {
-        //     let id = routine.id;
-        //     // PUT the routine first, then instantiate it.
-        //     let put = client
-        //         .put(format!("{base}/api/routines/{id}"))
-        //         .json(&routine)
-        //         .send()
-        //         .await
-        //         .and_then(|r| r.error_for_status())
-        //         .map_err(|e| e.to_string());
+        Cmd::UpsertAndInstantiateRoutine(routine, tx) => {
+            let id = routine.id;
+            // PUT the routine first, then instantiate it.
+            let put = client
+                .put(format!("{base}/api/routines/{id}"))
+                .json(&routine)
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| e.to_string());
 
-        //     let result = match put {
-        //         Err(e) => Err(e),
-        //         Ok(_) => {
-        //             let r = client
-        //                 .post(format!("{base}/api/routines/{id}/instantiate"))
-        //                 .send()
-        //                 .await
-        //                 .and_then(|r| r.error_for_status())
-        //                 .map_err(|e| e.to_string());
-        //             match r {
-        //                 Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
-        //                 Err(e) => Err(e),
-        //             }
-        //         }
-        //     };
-        //     let _ = tx.send(result);
-        // }
+            let result = match put {
+                Err(e) => Err(e),
+                Ok(_) => {
+                    let r = client
+                        .post(format!("{base}/api/routines/{id}/instantiate"))
+                        .send()
+                        .await
+                        .and_then(|r| r.error_for_status())
+                        .map_err(|e| e.to_string());
+                    match r {
+                        Ok(resp) => resp
+                            .json::<Vec<ActionDtoWire>>()
+                            .await
+                            .map(|v| v.into_iter().map(Action::from).collect())
+                            .map_err(|e| e.to_string()),
+                        Err(e) => Err(e),
+                    }
+                }
+            };
+            let _ = tx.send(result);
+        }
+
         Cmd::CompleteAction(id, tx) => {
             let result = client
                 .post(format!("{base}/api/actions/{id}/complete"))
@@ -679,8 +888,30 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<CompleteResult>()
+                    .json::<CompleteResultWire>()
                     .await
+                    .map(|w| CompleteResult {
+                        completed: Action::from(w.completed),
+                        next: w.next.map(Action::from),
+                    })
+                    .map_err(|e| e.to_string()),
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(result);
+        }
+
+        Cmd::ClearActionDuration(id, tx) => {
+            let result = client
+                .post(format!("{base}/api/actions/{id}/clear_duration"))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| e.to_string());
+            let result = match result {
+                Ok(resp) => resp
+                    .json::<ActionDtoWire>()
+                    .await
+                    .map(Action::from)
                     .map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
@@ -695,7 +926,11 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .and_then(|r| r.error_for_status())
                 .map_err(|e| e.to_string());
             let result = match result {
-                Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
+                Ok(resp) => resp
+                    .json::<Vec<ActionDtoWire>>()
+                    .await
+                    .map(|v| v.into_iter().map(Action::from).collect())
+                    .map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
             let _ = tx.send(result);
@@ -709,7 +944,11 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .and_then(|r| r.error_for_status())
                 .map_err(|e| e.to_string());
             let result = match result {
-                Ok(resp) => resp.json::<Action>().await.map_err(|e| e.to_string()),
+                Ok(resp) => resp
+                    .json::<ActionDtoWire>()
+                    .await
+                    .map(Action::from)
+                    .map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
             let _ = tx.send(result);
@@ -738,42 +977,47 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
             let _ = tx.send(result);
         }
 
-        // Cmd::UpsertRoutine(routine, tx) => {
-        //     let result = client
-        //         .put(format!("{base}/api/routines/{}", routine.id))
-        //         .json(&routine)
-        //         .send()
-        //         .await
-        //         .and_then(|r| r.error_for_status())
-        //         .map(|_| ())
-        //         .map_err(|e| e.to_string());
-        //     let _ = tx.send(result);
-        // }
+        Cmd::UpsertRoutine(routine, tx) => {
+            let result = client
+                .put(format!("{base}/api/routines/{}", routine.id))
+                .json(&routine)
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        }
 
-        // Cmd::DeleteRoutine(id, tx) => {
-        //     let result = client
-        //         .delete(format!("{base}/api/routines/{id}"))
-        //         .send()
-        //         .await
-        //         .and_then(|r| r.error_for_status())
-        //         .map(|_| ())
-        //         .map_err(|e| e.to_string());
-        //     let _ = tx.send(result);
-        // }
+        Cmd::DeleteRoutine(id, tx) => {
+            let result = client
+                .delete(format!("{base}/api/routines/{id}"))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        }
 
-        // Cmd::InstantiateRoutine(id, tx) => {
-        //     let result = client
-        //         .post(format!("{base}/api/routines/{id}/instantiate"))
-        //         .send()
-        //         .await
-        //         .and_then(|r| r.error_for_status())
-        //         .map_err(|e| e.to_string());
-        //     let result = match result {
-        //         Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
-        //         Err(e) => Err(e),
-        //     };
-        //     let _ = tx.send(result);
-        // }
+        Cmd::InstantiateRoutine(id, tx) => {
+            let result = client
+                .post(format!("{base}/api/routines/{id}/instantiate"))
+                .send()
+                .await
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| e.to_string());
+            let result = match result {
+                Ok(resp) => resp
+                    .json::<Vec<ActionDtoWire>>()
+                    .await
+                    .map(|v| v.into_iter().map(Action::from).collect())
+                    .map_err(|e| e.to_string()),
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(result);
+        }
+
         Cmd::RefreshPipeline(tx) => {
             let result = client
                 .post(format!("{base}/api/pipeline/refresh"))
@@ -782,7 +1026,11 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .and_then(|r| r.error_for_status())
                 .map_err(|e| e.to_string());
             let result = match result {
-                Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
+                Ok(resp) => resp
+                    .json::<Vec<ActionDtoWire>>()
+                    .await
+                    .map(|v| v.into_iter().map(Action::from).collect())
+                    .map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
             let _ = tx.send(result);
@@ -796,7 +1044,11 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .and_then(|r| r.error_for_status())
                 .map_err(|e| e.to_string());
             let result = match result {
-                Ok(resp) => resp.json::<Vec<Action>>().await.map_err(|e| e.to_string()),
+                Ok(resp) => resp
+                    .json::<Vec<ActionDtoWire>>()
+                    .await
+                    .map(|v| v.into_iter().map(Action::from).collect())
+                    .map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
             let _ = tx.send(result);

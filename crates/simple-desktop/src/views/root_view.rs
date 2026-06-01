@@ -2,16 +2,16 @@ use std::time::Duration;
 
 use gpui::{
     AppContext, Context, DragMoveEvent, Entity, EventEmitter, FocusHandle, InteractiveElement,
-    IntoElement, KeyBinding, ParentElement, Render, StatefulInteractiveElement, Styled, Window,
-    actions, div, prelude::FluentBuilder, px,
+    IntoElement, KeyBinding, ParentElement, Pixels, Render, StatefulInteractiveElement, Styled,
+    Window, actions, div, prelude::FluentBuilder, px,
 };
-use gpui_component::{ActiveTheme, Root, animation::ease_out_cubic, h_flex, v_flex};
+use gpui_component::{Root, StyledExt, animation::ease_out_cubic, h_flex, v_flex};
 use gpui_transitions::WindowUseTransition;
 use simple_core::AnyItem;
 
 use crate::{
     components::{CloseOverlay, DragData},
-    views::{ActionCreator, BacklogView, EventCreator, PipelineView},
+    views::{ActionCreator, BacklogView, EventCreator, PipelineView, RoutineCreator},
 };
 
 actions!(
@@ -20,10 +20,9 @@ actions!(
         // StartCommandPalette,
         StartActionCreator,
         StartEventCreator,
-        // StartNewRoutine,
+        StartRoutineCreator,
         // ToggleLeftSidebar,
         // ToggleRightSidebar,
-        // ExpeditePipelineActions
     ]
 );
 
@@ -33,6 +32,7 @@ pub enum CurrentOverlay {
     // ActionEditor(Entity<crate::views::ActionEditor>),
     EventCreator(Entity<EventCreator>),
     // EventEditor(Entity<crate::views::EventEditor>),
+    RoutineCreator(Entity<RoutineCreator>),
     // RoutineEditor(Entity<RoutineEditor>),
 }
 
@@ -52,7 +52,8 @@ impl RootView {
 
         cx.bind_keys([
             KeyBinding::new("cmd-n", StartActionCreator, None),
-            KeyBinding::new("cmd-e", StartEventCreator, None),
+            KeyBinding::new("cmd-shift-n", StartEventCreator, None),
+            KeyBinding::new("cmd-alt-n", StartRoutineCreator, None),
         ]);
 
         Self {
@@ -62,6 +63,43 @@ impl RootView {
             current_overlay,
         }
     }
+
+    pub fn render_backlog(
+        &self,
+        width: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .h_full()
+            .w(width)
+            // spacer with the same height as the tab bar
+            .child(div().h_10().w(width))
+            .child(
+                div()
+                    .id("backlog")
+                    .flex_1()
+                    .rounded_xl()
+                    .on_hover(cx.listener(move |view, hovered, _window, cx| {
+                        view.backlog_hover = Some(*hovered);
+                        cx.notify();
+                    }))
+                    .on_drag_move(cx.listener(
+                        move |view, event: &DragMoveEvent<DragData<AnyItem>>, _window, cx| {
+                            let is_over = event.bounds.contains(&event.event.position);
+                            view.backlog_hover = Some(is_over);
+                            cx.notify();
+                        },
+                    ))
+                    .child(
+                        div()
+                            .h_full()
+                            .flex_1()
+                            .overflow_hidden()
+                            .child(self.backlog_view.clone()),
+                    ),
+            )
+    }
 }
 
 impl EventEmitter<()> for RootView {}
@@ -70,30 +108,21 @@ impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let backlog_transition = window
             .use_keyed_transition("backlog-width", cx, Duration::from_millis(150), |_, _| {
-                px(32.)
+                px(24.)
             })
             .with_easing(ease_out_cubic);
-
         let backlog_width = *backlog_transition.evaluate(window, cx);
-        // let mut button_colors = ButtonColors::outline(cx.theme().secondary, cx);
-        // button_colors.border = None;
-
         if let Some(hovered) = self.backlog_hover.take() {
             backlog_transition.update(cx, |value, _cx| {
-                *value = if hovered { px(256.) } else { px(48.) }
+                *value = if hovered { px(256.) } else { px(24.) }
             });
             window.request_animation_frame();
         }
 
-        // let variant = ButtonCustomVariant::new(cx)
-        //     .color(button_colors.bg)
-        //     .active(button_colors.active)
-        //     .hover(button_colors.hover);
-
         v_flex()
             .absolute()
             .inset_0()
-            .pt_9()
+            // .pt_8()
             .on_action(cx.listener(|view, _: &StartActionCreator, window, cx| {
                 let current_focus = window.focused(cx);
                 let action_creator = cx.new(|cx| ActionCreator::new(window, cx));
@@ -105,6 +134,13 @@ impl Render for RootView {
                 let current_focus = window.focused(cx);
                 let event_creator = cx.new(|cx| EventCreator::new(window, cx));
                 let overlay = CurrentOverlay::EventCreator(event_creator);
+                view.current_overlay = Some((overlay, current_focus));
+                cx.notify();
+            }))
+            .on_action(cx.listener(|view, _: &StartRoutineCreator, window, cx| {
+                let current_focus = window.focused(cx);
+                let routine_creator = cx.new(|cx| RoutineCreator::new(window, cx));
+                let overlay = CurrentOverlay::RoutineCreator(routine_creator);
                 view.current_overlay = Some((overlay, current_focus));
                 cx.notify();
             }))
@@ -121,54 +157,15 @@ impl Render for RootView {
             .justify_center()
             .child(
                 v_flex()
-                    .w_3_4()
-                    .h_3_4()
-                    // .gap_2()
-                    // .child(self.quick_add.clone())
+                    .size_full()
+                    // .w_3_4()
+                    // .h_3_4()
                     .child(
                         h_flex()
                             .flex_1()
-                            // .size_full()
-                            .gap_2()
                             .child(self.pipeline_view.clone())
-                            .child(
-                                h_flex()
-                                    .id("backlog")
-                                    .h_full()
-                                    .w(backlog_width)
-                                    .border_1()
-                                    .border_color(cx.theme().border)
-                                    .rounded_xl()
-                                    .justify_between()
-                                    .on_hover(cx.listener(move |view, hovered, _window, cx| {
-                                        // backlog_transition.update(cx, |value, cx| {
-                                        //     *value = if *hovered { px(256.) } else { px(32.) }
-                                        // });
-                                        view.backlog_hover = Some(*hovered);
-                                        cx.notify();
-                                    }))
-                                    .on_drag_move(cx.listener(
-                                        move |view,
-                                              event: &DragMoveEvent<DragData<AnyItem>>,
-                                              _window,
-                                              cx| {
-                                            let is_over =
-                                                event.bounds.contains(&event.event.position);
-                                            view.backlog_hover = Some(is_over);
-                                            cx.notify();
-                                        },
-                                    ))
-                                    .child(
-                                        div()
-                                            .h_full()
-                                            .flex_1()
-                                            .overflow_hidden()
-                                            .child(self.backlog_view.clone()),
-                                    )
-                                    .border_1()
-                                    .border_color(cx.theme().border)
-                                    .rounded_xl(),
-                            ),
+                            // .child(self.render_backlog(backlog_width, window, cx))
+                            .when(false, |this| this),
                     ),
             )
             .when_some(
@@ -179,6 +176,9 @@ impl Render for RootView {
                     }
                     CurrentOverlay::EventCreator(event_creator) => {
                         this.child(event_creator.clone())
+                    }
+                    CurrentOverlay::RoutineCreator(routine_creator) => {
+                        this.child(routine_creator.clone())
                     }
                 },
             )

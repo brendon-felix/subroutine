@@ -32,11 +32,12 @@ object RustBridge {
             put("origin_routine_id", JsonNull)
             put("title", title)
             put("content", JsonNull)
-            put("duration", JsonNull)
+            put("duration_secs", JsonNull)
             put("recurrence", JsonNull)
             put("saved", false)
             put("state", buildJsonObject {
-                put("Backlogged", JsonNull)
+                put("type", "backlogged")
+                put("date", JsonNull)
             })
         }.toString()
     }

@@ -68,11 +68,11 @@ impl Divider {
         self
     }
 
-    // /// Sets the label for the divider.
-    // pub fn label(mut self, label: impl Into<SharedString>) -> Self {
-    //     self.label = Some(label.into());
-    //     self
-    // }
+    /// Sets the label for the divider.
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
 
     /// Sets the color for the divider line.
     pub fn color(mut self, color: impl Into<Hsla>) -> Self {

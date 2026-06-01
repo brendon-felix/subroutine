@@ -7,10 +7,10 @@ use std::{
 
 use chrono::{DateTime, Duration as ChronoDuration, Local, Timelike};
 use gpui::{
-    App, AsyncApp, Bounds, Context, DragMoveEvent, ElementId, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement, IntoElement, KeyBinding, ParentElement, PinchEvent, Pixels,
-    Point, Render, Size, Styled, Subscription, Window, actions, anchored, deferred,
-    prelude::FluentBuilder, px,
+    App, AsyncApp, Bounds, Context, DragMoveEvent, Element, ElementId, Entity, EventEmitter,
+    FocusHandle, Focusable, GlobalElementId, InteractiveElement, IntoElement, KeyBinding,
+    MouseUpEvent, ParentElement, PinchEvent, Pixels, Point, Render, Size, Styled, Subscription,
+    Window, actions, anchored, deferred, div, prelude::FluentBuilder, px,
 };
 use gpui_component::input::InputState;
 use gpui_component::{
@@ -35,6 +35,10 @@ actions!([
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    FocusItemUp,
+    FocusItemDown,
+    FocusItemLeft,
+    FocusItemRight,
     NextHour,
     PreviousHour,
     NextDay,
@@ -60,7 +64,8 @@ pub(super) struct TimelineView {
     scroll_handle: VirtualListScrollHandle,
     visible_range: Range<usize>,
     // focused_index: Option<usize>,
-    active_drop: Option<ActiveDropInfo>,
+    active_drop: Option<ActiveDropState>,
+    active_resize: Option<ActiveResizeState>,
     drop_active: bool,
     bounds: Option<Bounds<Pixels>>,
     items: Vec<TimelineItem>,
@@ -74,12 +79,91 @@ pub(super) struct TimelineView {
     title_inputs: HashMap<Uuid, Entity<InputState>>,
     title_edit_states: HashMap<Uuid, TitleEditState>,
     editing_items: HashSet<Uuid>,
+    /// Remembered visual column fraction (0.0–1.0) for Up/Down navigation.
+    /// Stored as the left-edge fraction of the focused column so it maps
+    /// proportionally across slots with different column counts.
+    target_column_fraction: Option<f32>,
+    /// Items that have been created locally but not yet persisted to the database.
+    draft_item_ids: HashSet<Uuid>,
+    /// Continuous scroll speed (px/frame) applied while dragging near an edge.
+    /// Positive = scroll up (toward past), negative = scroll down (toward future).
+    edge_scroll_speed: Option<f32>,
     _title_subscriptions: Vec<Subscription>,
 }
 
 impl Focusable for TimelineView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+/// Zero-size element whose sole job is to register a window-level `MouseUpEvent`
+/// handler during the **paint** phase (the only phase where `window.on_mouse_event`
+/// is valid). When the mouse is released anywhere — including outside the timeline
+/// — this clears `active_resize` and `edge_scroll_speed` on the view, ensuring
+/// the resize outline and edge-scroll never linger after a drag.
+struct ResizeDragMouseUpHook(Entity<TimelineView>);
+
+impl IntoElement for ResizeDragMouseUpHook {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for ResizeDragMouseUpHook {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, ()) {
+        (window.request_layout(gpui::Style::default(), [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<Pixels>,
+        _: &mut (),
+        _: &mut Window,
+        _: &mut App,
+    ) -> () {
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        _cx: &mut App,
+    ) {
+        let entity = self.0.clone();
+        window.on_mouse_event(move |_: &MouseUpEvent, phase, _window, cx| {
+            if phase.bubble() {
+                entity.update(cx, |view, cx| {
+                    // commit_resize_state is a no-op when active_resize is None,
+                    // so this is safe to call on every mouse-up.
+                    view.commit_resize_state(cx);
+                });
+            }
+        });
     }
 }
 
@@ -90,8 +174,9 @@ impl TimelineView {
         let hour_height = DEFAULT_HOUR_HEIGHT;
 
         let now = Local::now();
-        let past_hours = 1 * 24;
-        let future_hours = 3 * 24;
+        let current_hour = now.hour();
+        let past_hours = 24 + current_hour as usize;
+        let future_hours = 4 * 24 - current_hour as usize;
         let start = now
             .with_minute(0)
             .and_then(|d| d.with_second(0))
@@ -115,10 +200,18 @@ impl TimelineView {
             KeyBinding::new("cmd--", ZoomOut, None),
             KeyBinding::new("cmd-0", ZoomReset, None),
             KeyBinding::new("escape", ClosedViewedItem, None),
-            KeyBinding::new("down", NextHour, None),
-            KeyBinding::new("up", PreviousHour, None),
-            KeyBinding::new("cmd-down", NextDay, None),
-            KeyBinding::new("cmd-up", PreviousDay, None),
+            KeyBinding::new("down", FocusItemDown, Some("!Input")),
+            KeyBinding::new("up", FocusItemUp, Some("!Input")),
+            KeyBinding::new("left", FocusItemLeft, Some("!Input")),
+            KeyBinding::new("right", FocusItemRight, Some("!Input")),
+            KeyBinding::new("j", FocusItemDown, Some("!Input")),
+            KeyBinding::new("k", FocusItemUp, Some("!Input")),
+            KeyBinding::new("h", FocusItemLeft, Some("!Input")),
+            KeyBinding::new("l", FocusItemRight, Some("!Input")),
+            KeyBinding::new("cmd-down", NextHour, Some("!Input")),
+            KeyBinding::new("cmd-up", PreviousHour, Some("!Input")),
+            // KeyBinding::new("alt-down", NextDay, Some("!Input")),
+            // KeyBinding::new("alt-up", PreviousDay, Some("!Input")),
             KeyBinding::new("cmd-r", RefreshPipeline, None),
         ]);
 
@@ -157,6 +250,7 @@ impl TimelineView {
             visible_range,
             // focused_index,
             active_drop: None,
+            active_resize: None,
             drop_active: false,
             bounds: None,
             items: vec![],
@@ -168,6 +262,9 @@ impl TimelineView {
             title_inputs: HashMap::new(),
             title_edit_states: HashMap::new(),
             editing_items: HashSet::new(),
+            target_column_fraction: None,
+            draft_item_ids: HashSet::new(),
+            edge_scroll_speed: None,
             _title_subscriptions: Vec::new(),
         }
     }
@@ -184,18 +281,22 @@ impl TimelineView {
     }
 
     fn render_header(&self, cx: &App) -> impl IntoElement {
-        let relative_hours = ((self.scroll_offset() - (HOUR_DIVIDER_HEIGHT / 2.0)) * -1.0
-            / self.hour_height)
-            .floor()
-            - self.past_hours as f32;
-        // let date_str = match relative_hours.round() as i32 {
-        //     0 => "today".to_string(),
-        //     1 => "tomorrow".to_string(),
-        //     n => format!("in {} days", n),
-        // };
-        let date_str = format!("{:+} hours", relative_hours);
+        let current_pos = self.scroll_offset();
+        let current_pos_hours = (current_pos * -1.0 / self.hour_height).floor() as i32;
 
+        let relative_date_str = match current_pos_hours {
+            ..24 => "yesterday".to_string(),
+            24..48 => "today".to_string(),
+            48..72 => "tomorrow".to_string(),
+            72.. => format!("in {} days", (current_pos_hours - 24) / 24),
+        };
+        let absolute_date_str = (self.start + ChronoDuration::hours(current_pos_hours as i64))
+            .format("%a %b %-d")
+            .to_string();
+        // let date_str = format!("{:+} hours", current_pos_hours);
+        let date_str = format!("{} - {}", absolute_date_str, relative_date_str);
         h_flex()
+            .justify_end()
             .border_b_1()
             .border_color(cx.theme().border)
             .p_2()
@@ -206,14 +307,15 @@ impl TimelineView {
         DropZone::new("timeline-drop")
             .size_full()
             .active(self.drop_active)
-            .rounded_t_none()
-            .rounded_b_xl()
+            .rounded_none()
+            .rounded_bl_2xl()
     }
 }
 
 impl Render for TimelineView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
+        let hook_entity = entity.clone();
         self.update_layout(window, cx);
 
         v_flex()
@@ -221,13 +323,24 @@ impl Render for TimelineView {
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom_in(cx)))
             .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom_out(cx)))
             .on_action(cx.listener(|this, _: &ZoomReset, _, cx| this.zoom_reset(cx)))
-            // .on_action(cx.listener(|this, _: &ClosedViewedItem, _, cx| this.begin_reattach(cx)))
+            .on_action(cx.listener(|this, _: &FocusItemDown, window, cx| {
+                this.navigate_items(NavDirection::Down, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &FocusItemUp, window, cx| {
+                this.navigate_items(NavDirection::Up, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &FocusItemLeft, window, cx| {
+                this.navigate_items(NavDirection::Left, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &FocusItemRight, window, cx| {
+                this.navigate_items(NavDirection::Right, window, cx)
+            }))
             .on_action(cx.listener(|this, _: &NextHour, _, cx| this.scroll_next_hour(cx)))
             .on_action(cx.listener(|this, _: &PreviousHour, _, cx| this.scroll_previous_hour(cx)))
-            .on_action(cx.listener(|this, _: &NextDay, _, cx| this.scroll_next_day(cx)))
-            .on_action(cx.listener(|this, _: &PreviousDay, _, cx| this.scroll_previous_day(cx)))
+            // .on_action(cx.listener(|this, _: &NextDay, _, cx| this.scroll_next_day(cx)))
+            // .on_action(cx.listener(|this, _: &PreviousDay, _, cx| this.scroll_previous_day(cx)))
             .size_full()
-            .child(self.render_header(cx))
+            // .child(self.render_header(cx))
             .child(
                 self.drop_zone()
                     .on_prepaint(move |bounds, _, cx| {
@@ -248,6 +361,11 @@ impl Render for TimelineView {
                             this.handle_drag_move(event, window, cx);
                         },
                     ))
+                    .on_drag_move(cx.listener(
+                        |this, event: &DragMoveEvent<ResizeDragData>, window, cx| {
+                            this.handle_resize_move(event, window, cx);
+                        },
+                    ))
                     .on_drop(cx.listener(|this, data: &DragData<AnyItem>, window, cx| {
                         this.handle_drop(data, window, cx);
                         this.drop_active = false;
@@ -259,14 +377,16 @@ impl Render for TimelineView {
                     }))
                     .child(self.render_hour_list(window, cx))
                     .child(self.render_now_cursor(cx))
+                    .children(self.render_sticky_date(cx))
                     .when_some(self.active_drop, |this, drop| {
                         this.child(self.render_active_drop(drop, cx))
                     })
+                    .when_some(self.active_resize.clone(), |this, resize| {
+                        this.child(self.render_active_resize(&resize, cx))
+                            .child(ResizeDragMouseUpHook(hook_entity.clone()))
+                    })
                     .when(self.loaded, |this| {
-                        this
-                            // .children(self.render_flying_items(window, cx))
-                            // .child(self.render_detached_items(window, cx))
-                            .children(self.render_attached_items(window, cx))
+                        this.children(self.render_attached_items(window, cx))
                     })
                     .when(!self.loaded, |this| {
                         this.children(self.render_skeleton_items())

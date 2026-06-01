@@ -70,6 +70,16 @@ pub fn parse_event_input_ctx<'a>(input: &str, ctx: &ParseContext<'a>) -> Result<
     parse_impl(input, EntityKind::Event, ctx, Local::now())
 }
 
+/// Parse a free-form routine step description.
+pub fn parse_routine_step_input(input: &str) -> Result<ParseDraft> {
+    parse_routine_step_input_ctx(input, &ParseContext::default())
+}
+
+/// Parse a free-form routine step description with user-supplied context hints.
+pub fn parse_routine_step_input_ctx<'a>(input: &str, ctx: &ParseContext<'a>) -> Result<ParseDraft> {
+    parse_impl(input, EntityKind::RoutineStep, ctx, Local::now())
+}
+
 /// Parse a recurrence specifier string in isolation (used by tests and the
 /// `%` sigil handler).
 #[allow(dead_code)] // Used by tests and future external callers
@@ -149,6 +159,7 @@ fn parse_impl(
                         draft.when = Some(match kind {
                             EntityKind::Action => WhenSpec::NaiveDate(d),
                             EntityKind::Event => WhenSpec::DateTime(date_at(d, default_time())),
+                            EntityKind::RoutineStep => WhenSpec::NaiveDate(d),
                         });
                         break;
                     }
@@ -477,6 +488,7 @@ fn try_nl_when(
         match kind {
             EntityKind::Action => WhenSpec::NaiveDate(d),
             EntityKind::Event => WhenSpec::DateTime(date_at(d, default_time())),
+            EntityKind::RoutineStep => WhenSpec::NaiveDate(d),
         }
     };
 
