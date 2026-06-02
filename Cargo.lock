@@ -6307,6 +6307,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "simple-api"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "simple-core",
+ "uuid",
+]
+
+[[package]]
 name = "simple-cli"
 version = "0.1.0"
 dependencies = [
@@ -6348,6 +6358,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "simple-api",
  "simple-core",
  "simple-parser",
  "tokio",
@@ -6379,6 +6390,7 @@ dependencies = [
  "futures-util",
  "serde",
  "serde_json",
+ "simple-api",
  "simple-core",
  "sqlx",
  "tokio",

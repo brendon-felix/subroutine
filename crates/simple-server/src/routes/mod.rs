@@ -4,7 +4,6 @@ use crate::state::AppState;
 
 mod actions;
 mod data;
-pub(super) mod dto;
 mod events;
 mod pipeline;
 mod routines;

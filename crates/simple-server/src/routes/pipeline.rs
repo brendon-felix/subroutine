@@ -5,7 +5,7 @@ use simple_core::ChangeEvent;
 
 use crate::{db, error::Result, state::AppState};
 
-use super::dto::ActionDto;
+use simple_api::ActionDto;
 
 pub fn router() -> Router<AppState> {
     Router::new()

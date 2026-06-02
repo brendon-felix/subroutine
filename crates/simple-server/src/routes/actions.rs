@@ -5,14 +5,13 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use chrono::Utc;
-use serde::Serialize;
 use uuid::Uuid;
 
 use simple_core::{Action, ActionState, ChangeEvent, DEFAULT_ACTION_DURATION};
 
 use crate::{db, error::Result, state::AppState};
 
-use super::dto::ActionDto;
+use simple_api::{ActionDto, CompleteResult};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -24,6 +23,7 @@ pub fn router() -> Router<AppState> {
         .route("/actions/{id}/queue", post(queue_action))
         .route("/actions/{id}/backlog", post(backlog_action))
         .route("/actions/{id}/complete", post(complete_action))
+        .route("/actions/{id}/clear_duration", post(clear_action_duration))
 }
 
 /// GET /actions — list all non-deleted actions
@@ -152,12 +152,6 @@ async fn backlog_action(
     Ok(Json(ActionDto::from(action)))
 }
 
-#[derive(Serialize)]
-pub struct CompleteResult {
-    pub completed: ActionDto,
-    pub next: Option<ActionDto>,
-}
-
 /// POST /actions/{id}/complete — mark an action complete and compute next occurrence
 async fn complete_action(
     State(state): State<AppState>,
@@ -181,4 +175,18 @@ async fn complete_action(
         completed: ActionDto::from(action),
         next: next.map(ActionDto::from),
     }))
+}
+
+/// POST /actions/{id}/clear_duration — remove the explicit duration from an action
+async fn clear_action_duration(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ActionDto>> {
+    let mut action: Action = db::actions::fetch_by_id(&state.pool, id)
+        .await?
+        .ok_or_else(|| crate::error::AppError::not_found(format!("action {id} not found")))?;
+    action.duration = None;
+    db::actions::upsert(&state.pool, &action).await?;
+    let _ = state.changes.send(ChangeEvent::ActionsChanged);
+    Ok(Json(ActionDto::from(action)))
 }

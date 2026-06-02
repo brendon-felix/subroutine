@@ -1,12 +1,9 @@
 use std::thread;
 
-use chrono::{DateTime, Duration, NaiveDate, Utc};
 use flume;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global};
-use serde::{Deserialize, Serialize};
-use simple_core::{
-    Action, ActionState, ActionTarget, AnyItem, Event, RecurrenceRule, Routine, next_queue_slot,
-};
+use simple_api::ActionDto;
+use simple_core::{Action, ActionState, AnyItem, Event, Routine, next_queue_slot};
 use uuid::Uuid;
 
 // ── Status / events ───────────────────────────────────────────────────────────
@@ -27,113 +24,17 @@ pub struct ActionDataChanged;
 pub struct EventDataChanged;
 pub struct RoutineDataChanged;
 
-// ── Server response types ─────────────────────────────────────────────────────
+// ── Internal channel payload types ───────────────────────────────────────────
 
-#[derive(Deserialize)]
-struct AllData {
+struct FetchAllResult {
     actions: Vec<Action>,
     events: Vec<Event>,
     routines: Vec<Routine>,
 }
 
-#[derive(Deserialize)]
 pub struct CompleteResult {
     pub completed: Action,
     pub next: Option<Action>,
-}
-
-// ── HTTP API wire types ───────────────────────────────────────────────────────
-//
-// The server serializes Action as ActionDto with a flat, lowercase-tagged state
-// and duration_secs (plain i64). These private types handle that format at the
-// HTTP boundary, converting to/from simple_core::Action.
-
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-enum ActionStateDtoWire {
-    Queued {
-        time: DateTime<Utc>,
-        is_static: bool,
-    },
-    Backlogged {
-        date: Option<NaiveDate>,
-    },
-    Completed {
-        at: DateTime<Utc>,
-    },
-    Skipped,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ActionDtoWire {
-    id: uuid::Uuid,
-    lineage_id: uuid::Uuid,
-    origin_routine_id: Option<uuid::Uuid>,
-    title: String,
-    content: Option<String>,
-    duration_secs: Option<i64>,
-    recurrence: Option<RecurrenceRule>,
-    saved: bool,
-    state: ActionStateDtoWire,
-}
-
-impl From<Action> for ActionDtoWire {
-    fn from(a: Action) -> Self {
-        ActionDtoWire {
-            id: a.id,
-            lineage_id: a.lineage_id,
-            origin_routine_id: a.origin_routine_id,
-            title: a.title,
-            content: a.content,
-            duration_secs: a.duration.map(|d| d.num_seconds()),
-            recurrence: a.recurrence,
-            saved: a.saved,
-            state: match a.state {
-                ActionState::Queued(ActionTarget { time, is_static }) => {
-                    ActionStateDtoWire::Queued { time, is_static }
-                }
-                ActionState::Backlogged(date) => ActionStateDtoWire::Backlogged { date },
-                ActionState::Completed(at) => ActionStateDtoWire::Completed { at },
-                ActionState::Skipped => ActionStateDtoWire::Skipped,
-            },
-        }
-    }
-}
-
-impl From<ActionDtoWire> for Action {
-    fn from(w: ActionDtoWire) -> Self {
-        Action {
-            id: w.id,
-            lineage_id: w.lineage_id,
-            origin_routine_id: w.origin_routine_id,
-            title: w.title,
-            content: w.content,
-            duration: w.duration_secs.map(Duration::seconds),
-            recurrence: w.recurrence,
-            saved: w.saved,
-            state: match w.state {
-                ActionStateDtoWire::Queued { time, is_static } => {
-                    ActionState::Queued(ActionTarget { time, is_static })
-                }
-                ActionStateDtoWire::Backlogged { date } => ActionState::Backlogged(date),
-                ActionStateDtoWire::Completed { at } => ActionState::Completed(at),
-                ActionStateDtoWire::Skipped => ActionState::Skipped,
-            },
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct AllDataWire {
-    actions: Vec<ActionDtoWire>,
-    events: Vec<Event>,
-    routines: Vec<Routine>,
-}
-
-#[derive(Deserialize)]
-struct CompleteResultWire {
-    completed: ActionDtoWire,
-    next: Option<ActionDtoWire>,
 }
 
 // ── Worker command channel ────────────────────────────────────────────────────
@@ -145,7 +46,7 @@ struct CompleteResultWire {
 type Reply<T> = flume::Sender<Result<T, String>>;
 
 enum Cmd {
-    FetchAll(Reply<AllData>),
+    FetchAll(Reply<FetchAllResult>),
     // Simple CRUD
     UpsertAction(Action, Reply<()>),
     DeleteAction(Uuid, Reply<()>),
@@ -756,12 +657,12 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<AllDataWire>()
+                    .json::<simple_api::AllData>()
                     .await
-                    .map(|wire| AllData {
-                        actions: wire.actions.into_iter().map(Action::from).collect(),
-                        events: wire.events,
-                        routines: wire.routines,
+                    .map(|d| FetchAllResult {
+                        actions: d.actions.into_iter().map(Action::from).collect(),
+                        events: d.events,
+                        routines: d.routines,
                     })
                     .map_err(|e| e.to_string()),
                 Err(e) => Err(e),
@@ -772,7 +673,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
         Cmd::UpsertAction(action, tx) => {
             let result = client
                 .put(format!("{base}/api/actions/{}", action.id))
-                .json(&ActionDtoWire::from(action))
+                .json(&ActionDto::from(action))
                 .send()
                 .await
                 .and_then(|r| r.error_for_status())
@@ -797,7 +698,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
             // PUT first — must complete before the server can queue it.
             let put = client
                 .put(format!("{base}/api/actions/{id}"))
-                .json(&ActionDtoWire::from(action.clone()))
+                .json(&ActionDto::from(action.clone()))
                 .send()
                 .await
                 .and_then(|r| r.error_for_status())
@@ -819,7 +720,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                         .map_err(|e| e.to_string());
                     match r {
                         Ok(resp) => resp
-                            .json::<Vec<ActionDtoWire>>()
+                            .json::<Vec<ActionDto>>()
                             .await
                             .map(|v| v.into_iter().map(Action::from).collect())
                             .map_err(|e| e.to_string()),
@@ -868,7 +769,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                         .map_err(|e| e.to_string());
                     match r {
                         Ok(resp) => resp
-                            .json::<Vec<ActionDtoWire>>()
+                            .json::<Vec<ActionDto>>()
                             .await
                             .map(|v| v.into_iter().map(Action::from).collect())
                             .map_err(|e| e.to_string()),
@@ -888,11 +789,11 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<CompleteResultWire>()
+                    .json::<simple_api::CompleteResult>()
                     .await
-                    .map(|w| CompleteResult {
-                        completed: Action::from(w.completed),
-                        next: w.next.map(Action::from),
+                    .map(|r| CompleteResult {
+                        completed: Action::from(r.completed),
+                        next: r.next.map(Action::from),
                     })
                     .map_err(|e| e.to_string()),
                 Err(e) => Err(e),
@@ -909,7 +810,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<ActionDtoWire>()
+                    .json::<ActionDto>()
                     .await
                     .map(Action::from)
                     .map_err(|e| e.to_string()),
@@ -927,7 +828,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<Vec<ActionDtoWire>>()
+                    .json::<Vec<ActionDto>>()
                     .await
                     .map(|v| v.into_iter().map(Action::from).collect())
                     .map_err(|e| e.to_string()),
@@ -945,7 +846,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<ActionDtoWire>()
+                    .json::<ActionDto>()
                     .await
                     .map(Action::from)
                     .map_err(|e| e.to_string()),
@@ -1009,7 +910,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<Vec<ActionDtoWire>>()
+                    .json::<Vec<ActionDto>>()
                     .await
                     .map(|v| v.into_iter().map(Action::from).collect())
                     .map_err(|e| e.to_string()),
@@ -1027,7 +928,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<Vec<ActionDtoWire>>()
+                    .json::<Vec<ActionDto>>()
                     .await
                     .map(|v| v.into_iter().map(Action::from).collect())
                     .map_err(|e| e.to_string()),
@@ -1045,7 +946,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<Vec<ActionDtoWire>>()
+                    .json::<Vec<ActionDto>>()
                     .await
                     .map(|v| v.into_iter().map(Action::from).collect())
                     .map_err(|e| e.to_string()),

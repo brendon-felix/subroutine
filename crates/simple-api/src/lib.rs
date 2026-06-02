@@ -1,18 +1,30 @@
+//! HTTP API types shared between `simple-server` and client crates.
+//!
+//! [`ActionDto`] and [`ActionStateDto`] use a flat, lowercase-tagged serde
+//! representation that differs from the in-memory `simple_core` types:
+//!
+//! - `state` is a flat object with a `"type"` discriminant (not Rust's default
+//!   external tagging)
+//! - `duration` is expressed as `duration_secs: Option<i64>` instead of
+//!   `chrono::Duration`, avoiding the `{"secs":…,"nanos":…}` shape
+
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use simple_core::{Action, ActionState, ActionTarget, RecurrenceRule};
+use simple_core::{Action, ActionState, ActionTarget, Event, RecurrenceRule, Routine};
 
-/// HTTP API representation of [`ActionState`].
+// ── ActionStateDto ────────────────────────────────────────────────────────────
+
+/// HTTP wire representation of [`ActionState`].
 ///
 /// Uses `#[serde(tag = "type", rename_all = "lowercase")]` so the wire format
 /// is a flat object with a lowercase `"type"` discriminant:
 ///
 /// ```json
-/// {"type": "queued",     "time": "...", "is_static": false}
+/// {"type": "queued",     "time": "2024-01-15T14:00:00Z", "is_static": false}
 /// {"type": "backlogged", "date": null}
-/// {"type": "completed",  "at": "..."}
+/// {"type": "completed",  "at": "2024-01-15T14:05:00Z"}
 /// {"type": "skipped"}
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,7 +69,9 @@ impl From<ActionStateDto> for ActionState {
     }
 }
 
-/// HTTP API representation of [`Action`].
+// ── ActionDto ─────────────────────────────────────────────────────────────────
+
+/// HTTP wire representation of [`Action`].
 ///
 /// Differences from the core type:
 /// - `state` uses [`ActionStateDto`] (flat, lowercase-tagged object)
@@ -106,4 +120,23 @@ impl From<ActionDto> for Action {
             state: dto.state.into(),
         }
     }
+}
+
+// ── AllData ───────────────────────────────────────────────────────────────────
+
+/// Response body for `GET /api/data`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AllData {
+    pub actions: Vec<ActionDto>,
+    pub events: Vec<Event>,
+    pub routines: Vec<Routine>,
+}
+
+// ── CompleteResult ────────────────────────────────────────────────────────────
+
+/// Response body for `POST /api/actions/{id}/complete`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CompleteResult {
+    pub completed: ActionDto,
+    pub next: Option<ActionDto>,
 }

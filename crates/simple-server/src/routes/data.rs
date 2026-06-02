@@ -1,17 +1,7 @@
 use axum::{Json, Router, extract::State, routing::get};
-use serde::Serialize;
-use simple_core::{Event, Routine};
+use simple_api::{ActionDto, AllData};
 
 use crate::{db, error::Result, state::AppState};
-
-use super::dto::ActionDto;
-
-#[derive(Serialize)]
-pub struct AllData {
-    pub actions: Vec<ActionDto>,
-    pub events: Vec<Event>,
-    pub routines: Vec<Routine>,
-}
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/data", get(get_all_data))

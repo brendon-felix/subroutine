@@ -2,6 +2,7 @@
 members = [
     "crates/android-bridge",
     "crates/parser-cli",
+    "crates/simple-api",
     "crates/simple-cli",
     "crates/simple-core", "crates/simple-desktop",
     "crates/simple-parser", "crates/simple-server",
