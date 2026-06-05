@@ -4,7 +4,7 @@ use chrono::{
     DateTime, Datelike, Days, Duration as ChronoDuration, Local, LocalResult, NaiveDate, Timelike,
 };
 use gpui::{
-    Along, AnyElement, App, Axis, ClickEvent, Context, DismissEvent, Div, Entity,
+    Along, AnyElement, App, Axis, ClickEvent, Context, DismissEvent, Div, Entity, Focusable,
     InteractiveElement, IntoElement, ParentElement, Pixels, Point, Size,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
 };
@@ -14,7 +14,7 @@ use gpui_component::{
     button::Button,
     h_flex,
     label::Label,
-    menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
+    menu::{PopupMenu, PopupMenuItem},
     v_virtual_list,
 };
 use gpui_transitions::{Lerp, WindowUseTransition};
@@ -24,7 +24,7 @@ use crate::{AppIcon, components::Divider};
 
 pub(super) const DEFAULT_HOUR_HEIGHT: Pixels = px(280.);
 pub const HOUR_DIVIDER_HEIGHT: Pixels = px(32.);
-const ZOOM_DURATION: Duration = Duration::from_millis(150);
+const ZOOM_DURATION: Duration = Duration::from_millis(100);
 const SCROLL_DURATION: Duration = Duration::from_millis(150);
 
 /// A single interpolation target for a zoom step.
@@ -840,23 +840,28 @@ impl TimelineView {
         //
         // visible_range.start ≈ n_past - center_y_in_items, so we solve for
         // n_past that puts it well inside the safe zone [buffer, 3*buffer].
-        // Using a 4× multiplier (was 1.5×) ensures that even if the zoom
-        // animation shrinks items and advances visible_range.start toward the
-        // top, we don't cross the prepend threshold (< buffer) before the
-        // animation completes and buffer-management gates re-open.
+        // Using 4× multiplier ensures that even if the zoom animation shrinks
+        // items and advances visible_range.start toward the top, we don't
+        // cross the prepend threshold (< buffer) before the animation
+        // completes and buffer-management gates re-open.
+        //
+        // IMPORTANT: size the buffer against `new_hour_height` (the destination
+        // scale), not `old_hour_height`.  Using the old scale when jumping many
+        // levels at once (e.g. Year→Hour on zoom-reset) produces thousands of
+        // items because the old items were enormous — causing GPU buffer overflow.
         let approx_item_hours = new_div.exact_duration(center_floor).num_seconds() as f32 / 3600.0;
-        let item_height_at_old_h = (old_hour_height * approx_item_hours).max(px(1.));
+        let item_height_at_new_h = (new_hour_height * approx_item_hours).max(px(1.));
         let center_y_in_items =
-            ((center_y - HOUR_DIVIDER_HEIGHT / 2.0) / item_height_at_old_h).max(0.0);
+            ((center_y - HOUR_DIVIDER_HEIGHT / 2.0) / item_height_at_new_h).max(0.0);
         let n_past =
             ((buffer as f32 * 4.0 + center_y_in_items).ceil() as usize).max(buffer * 2 + 1);
 
         // n_future: cover the past mirror, the current viewport, and generous
         // headroom for zooming out (items shrink → more become visible).
-        // 4× viewport_items + 6× buffer (was 2×/3×) ensures the append
-        // threshold isn't crossed on the frame the zoom animation settles.
+        // 4× viewport_items + 6× buffer ensures the append threshold isn't
+        // crossed on the frame the zoom animation settles.
         let viewport_height = self.bounds.map(|b| b.size.height).unwrap_or(px(800.));
-        let viewport_items = (viewport_height / item_height_at_old_h).ceil() as usize;
+        let viewport_items = (viewport_height / item_height_at_new_h).ceil() as usize;
         let n_future = n_past + viewport_items * 4 + buffer * 6;
 
         // New list origin: step n_past boundaries back from center_floor.
@@ -1225,20 +1230,100 @@ impl TimelineView {
 
     pub(super) fn zoom_reset(&mut self, cx: &mut Context<Self>) {
         if self.zoom_state.is_zoomed() {
-            let needs_jump = self.zoom_scroll_target.is_none();
-            let base = self
-                .zoom_scroll_target
-                .unwrap_or_else(|| self.scroll_offset());
-            let a = self.center_relative().y;
-            let d = HOUR_DIVIDER_HEIGHT / 2.0;
-            // h1/h = DEFAULT_HOUR_HEIGHT / current_value = 1/zoom
-            let offset = a - d - (a - base - d) / self.zoom_state.zoom;
-            self.zoom_scroll_target = Some(offset);
-            let mut new_zoom = self.zoom_state.clone();
-            new_zoom.zoom_reset();
-            self.pending_zoom_transition = Some((new_zoom, offset, true, needs_jump));
-            cx.notify();
+            self.zoom_to(1.0, cx);
         }
+    }
+
+    /// Zooms to an absolute zoom level using the same chained-step
+    /// infrastructure as [`zoom_reset`].  Each step advances at most one
+    /// `zoom_factor` toward `target`, with division-boundary crossings
+    /// triggering a full list rebuild.
+    pub(super) fn zoom_to(&mut self, target: f32, cx: &mut Context<Self>) {
+        // Clamp to zoom range; don't move if already there.
+        let target = target.clamp(*self.zoom_state.range.start(), *self.zoom_state.range.end());
+        if (self.zoom_state.zoom - target).abs() < 1e-9 {
+            return;
+        }
+        self.pending_zoom_reset = Some(target);
+        self.step_zoom_reset(cx);
+    }
+
+    /// Advances zoom one step toward `pending_zoom_reset`.  Each call crosses
+    /// at most one base-division boundary, keeping the per-frame element count
+    /// within safe limits for the renderer.
+    fn step_zoom_reset(&mut self, cx: &mut Context<Self>) {
+        let target = match self.pending_zoom_reset {
+            Some(t) => t,
+            None => return,
+        };
+
+        // Find the zoom value at the nearest base-division boundary between
+        // the current zoom and the target.  Each base-division boundary sits
+        // at an exact power of two.  When zooming in (target > zoom) we want
+        // the smallest power-of-two ≥ current; when zooming out (target <
+        // zoom) we want the largest power-of-two ≤ current.
+        //
+        // We also skip the ZoomedOut / ZoomedIn boundaries *within* the same
+        // base division because those don't require a list rebuild — only
+        // true base-division crossings do.  The boundary zoom values (from
+        // `current_division_state`) are:
+        //
+        //   Year  → Month crossing: 2^-12  (= 1/4096)
+        //   Month → Day   crossing: 2^-7   (= 1/128)
+        //   Day   → Hour  crossing: 2^-2   (= 1/4)   [was -2 → -1 boundary]
+        //   Hour  → FiveMin crossing: 2^2  (= 4)
+        //
+        // We step the zoom to exactly the boundary value, then let the
+        // `apply_division_change` path in `update_layout` do its rebuild.
+        // On the next frame, chaining fires again if not yet at target.
+        let current = self.zoom_state.zoom;
+        let zooming_in = target > current;
+
+        // Candidate: zoom_factor step toward target (the normal zoom step).
+        let factor_step = if zooming_in {
+            current * self.zoom_state.zoom_factor
+        } else {
+            current / self.zoom_state.zoom_factor
+        };
+
+        // Clamp to [min, max] and to target; don't overshoot.
+        let clamped = if zooming_in {
+            factor_step.min(target).min(*self.zoom_state.range.end())
+        } else {
+            factor_step.max(target).max(*self.zoom_state.range.start())
+        };
+
+        // If zoom can't change (either hit the target or the range boundary),
+        // clear the chain so we don't loop forever.
+        if (clamped - current).abs() < 1e-9 {
+            self.pending_zoom_reset = None;
+            return;
+        }
+        if (clamped - target).abs() < 1e-9 {
+            self.pending_zoom_reset = None;
+        }
+
+        // Compute scroll offset that keeps the viewport centre fixed.
+        // General formula: new_scroll = a - d - (a - base - d) * ratio
+        // where ratio = new_hour_height / old_hour_height = clamped / current.
+        // Derivation: centre stays fixed → base + oh * h = offset + nh * h
+        // → offset = base + (oh - nh) * h
+        //          = base + (1 - ratio) * (a - base - d)
+        //          = a - d - ratio * (a - base - d)
+        let needs_jump = self.zoom_scroll_target.is_none();
+        let base = self
+            .zoom_scroll_target
+            .unwrap_or_else(|| self.scroll_offset());
+        let a = self.center_relative().y;
+        let d = HOUR_DIVIDER_HEIGHT / 2.0;
+        let ratio = clamped / current;
+        let offset = a - d - (a - base - d) * ratio;
+
+        self.zoom_scroll_target = Some(offset);
+        let mut new_zoom = self.zoom_state.clone();
+        new_zoom.zoom = clamped;
+        self.pending_zoom_transition = Some((new_zoom, offset, true, needs_jump));
+        cx.notify();
     }
 
     pub(super) fn scroll_reset(&mut self, cx: &mut Context<Self>) {
@@ -1415,6 +1500,17 @@ impl TimelineView {
         }
         self.hour_height = frame.hour_height;
 
+        // Chain zoom-reset: start the next step when the current animation
+        // reaches 50% completion.  Balances speed against visual smoothness —
+        // the easing curve is never cut short, and the next step picks up
+        // smoothly from wherever the animation happens to be.
+        if self.pending_zoom_reset.is_some()
+            && self.pending_zoom_transition.is_none()
+            && zoom_transition.evaluate_delta(cx) >= 0.5
+        {
+            self.step_zoom_reset(cx);
+        }
+
         // Apply continuous edge-scroll while dragging near the top/bottom border.
         if let Some(speed) = self.edge_scroll_speed {
             let new_offset = self.scroll_offset() + px(speed);
@@ -1495,6 +1591,54 @@ impl TimelineView {
             // Append never adjusts the scroll handle so it needs no special treatment.
             if visible_range.end + buffer > loaded_range {
                 self.loaded_divisions.end += chunk as i64;
+                self.rebuild_item_start_times();
+                self.update_list_item_heights(self.hour_height);
+            }
+        }
+
+        // ── Zoom-active item count guard ──────────────────────────────────────
+        // While a zoom transition is running the virtual list must not render
+        // more items than the GPU can handle.  During normal incremental zooms
+        // the buffer is sized correctly by `apply_division_change`; this guard
+        // is a last line of defence for any remaining edge case (e.g. a pinch
+        // gesture that crosses multiple boundaries in one frame).
+        //
+        // We cap total items at a generous but safe limit.  The trim is done
+        // symmetrically around the viewport centre so the user never sees a
+        // hard boundary.  Buffer management is already paused during zoom
+        // (`zoom_scroll_target.is_some()` prevents the block above from
+        // running), so trimming here can't interfere with scroll compensation.
+        if self.zoom_scroll_target.is_some() {
+            const MAX_ZOOM_ITEMS: usize = 600;
+            let n = self.item_start_times.len();
+            if n > MAX_ZOOM_ITEMS {
+                // Keep a balanced window around the current visible range.
+                let vis_mid = if self.visible_range.is_empty() {
+                    n / 2
+                } else {
+                    (self.visible_range.start + self.visible_range.end) / 2
+                };
+                let half = MAX_ZOOM_ITEMS / 2;
+                let trim_start = vis_mid.saturating_sub(half).min(n - MAX_ZOOM_ITEMS);
+                let trim_end = (trim_start + MAX_ZOOM_ITEMS).min(n);
+
+                if trim_start > 0 {
+                    // Trim head: advance `self.start` and compensate scroll.
+                    let new_start = self.item_start_times[trim_start];
+                    let delta =
+                        self.hour_height * ((new_start - self.start).num_seconds() as f32 / 3600.0);
+                    self.start = new_start;
+                    self.scroll_to(self.scroll_offset() + delta);
+                    // Keep zoom_scroll_target in same coordinate system.
+                    if let Some(t) = self.zoom_scroll_target.as_mut() {
+                        *t += delta;
+                    }
+                    self.loaded_divisions.start += trim_start as i64;
+                }
+                let tail_trim = n - trim_end;
+                if tail_trim > 0 {
+                    self.loaded_divisions.end -= tail_trim as i64;
+                }
                 self.rebuild_item_start_times();
                 self.update_list_item_heights(self.hour_height);
             }
@@ -1732,9 +1876,8 @@ impl TimelineView {
                             None
                         };
 
-                        // Context menu / double-click interaction — only at fine zoom levels.
+                        // Double-click interaction — only at fine zoom levels.
                         let allow_create = view.is_item_create_enabled();
-                        let entity_for_menu = entity.clone();
                         let entity_for_dbl = entity.clone();
                         let muted_fg = cx.theme().muted_foreground;
 
@@ -1767,14 +1910,45 @@ impl TimelineView {
                                         view.add_draft_action_in_slot(floor_time, window, cx);
                                     });
                                 })
-                                .context_menu(move |menu, _w, _cx| {
-                                    let label = item_time.format("%-I:%M %p").to_string();
-                                    timeline_context_menu(item_time, entity_for_menu.clone())(
-                                        menu.label(label),
-                                        _w,
-                                        _cx,
-                                    )
-                                })
+                                .on_aux_click(cx.listener(
+                                    move |view, event: &ClickEvent, window, cx| {
+                                        if event.is_right_click() {
+                                            // Clear any previous context menu.
+                                            view.context_menu = None;
+                                            view._context_menu_subscription = None;
+
+                                            let local_pos =
+                                                event.position() - view.bounds.unwrap().origin;
+                                            let time = view.position_to_time(local_pos);
+                                            let slot_time = view.floor_to_slot(time);
+
+                                            view.context_menu_position = event.position();
+
+                                            let view_entity = cx.entity().clone();
+                                            let menu = PopupMenu::build(
+                                                window,
+                                                cx,
+                                                timeline_context_menu(slot_time, view_entity),
+                                            );
+
+                                            // Focus for keyboard navigation.
+                                            menu.focus_handle(cx).focus(window, cx);
+
+                                            // Dismiss subscription.
+                                            view._context_menu_subscription = Some(cx.subscribe(
+                                                &menu,
+                                                |this, _menu, _: &DismissEvent, cx| {
+                                                    this.context_menu = None;
+                                                    this._context_menu_subscription = None;
+                                                    cx.notify();
+                                                },
+                                            ));
+
+                                            view.context_menu = Some(menu);
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
                                 .into_any_element()
                         } else {
                             item_div.into_any_element()
@@ -1787,6 +1961,8 @@ impl TimelineView {
     }
 
     pub(super) fn render_timeline_toolbar(&self, cx: &Context<Self>) -> impl IntoElement {
+        let current_division = self.current_division_state().base_division;
+
         h_flex()
             .p_2()
             .gap_2()
@@ -1825,6 +2001,67 @@ impl TimelineView {
                                 view.zoom_out(cx);
                             }))
                             .disabled(!self.can_zoom_out()),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .child(
+                        Button::new("zoom-to-5m")
+                            .child(Label::new("5m").text_sm())
+                            .size_8()
+                            .rounded_l_full()
+                            .rounded_r_none()
+                            .on_click(cx.listener(|view, _event, _window, cx| {
+                                view.zoom_to(16.0, cx);
+                            }))
+                            .disabled(current_division == BaseTimeDivision::FiveMinutes),
+                    )
+                    .child(
+                        Button::new("zoom-to-1h")
+                            .child(Label::new("1h").text_sm())
+                            .size_8()
+                            .rounded_none()
+                            .border_l_0()
+                            .on_click(cx.listener(|view, _event, _window, cx| {
+                                view.zoom_to(1.0, cx);
+                            }))
+                            .disabled(current_division == BaseTimeDivision::Hour),
+                    )
+                    .child(
+                        Button::new("zoom-to-1d")
+                            .child(Label::new("1d").text_sm())
+                            .size_8()
+                            .rounded_none()
+                            .border_l_0()
+                            .on_click(cx.listener(|view, _event, _window, cx| {
+                                view.zoom_to(1.0 / 16.0, cx);
+                            }))
+                            .disabled(current_division == BaseTimeDivision::Day),
+                    )
+                    .child(
+                        Button::new("zoom-to-1mo")
+                            .child(Label::new("1mo").text_sm())
+                            .text_sm()
+                            .size_8()
+                            .rounded_none()
+                            .border_l_0()
+                            .on_click(cx.listener(|view, _event, _window, cx| {
+                                view.zoom_to(1.0 / 512.0, cx);
+                            }))
+                            .disabled(current_division == BaseTimeDivision::Month),
+                    )
+                    .child(
+                        Button::new("zoom-to-1y")
+                            .child(Label::new("1y").text_sm())
+                            .text_sm()
+                            .size_8()
+                            .border_l_0()
+                            .rounded_l_none()
+                            .rounded_r_full()
+                            .on_click(cx.listener(|view, _event, _window, cx| {
+                                view.zoom_to(1.0 / 8192.0, cx);
+                            }))
+                            .disabled(current_division == BaseTimeDivision::Year),
                     ),
             )
             .child(

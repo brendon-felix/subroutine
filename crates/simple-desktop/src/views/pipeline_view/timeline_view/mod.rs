@@ -35,6 +35,11 @@ actions!([
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    ZoomToFiveMinutes,
+    ZoomToHours,
+    ZoomToDays,
+    ZoomToMonths,
+    ZoomToYears,
     ScrollReset,
     FocusItemUp,
     FocusItemDown,
@@ -92,6 +97,10 @@ pub(super) struct TimelineView {
     /// Continuous scroll speed (px/frame) applied while dragging near an edge.
     /// Positive = scroll up (toward past), negative = scroll down (toward future).
     edge_scroll_speed: Option<f32>,
+    /// When `Some(target)`, zoom_reset is walking toward `target` zoom value one
+    /// base-division boundary at a time.  Set by `zoom_reset()`, consumed and
+    /// re-enqueued each frame by `update_layout` until zoom reaches the target.
+    pending_zoom_reset: Option<f32>,
     _title_subscriptions: Vec<Subscription>,
 }
 
@@ -185,8 +194,7 @@ impl TimelineView {
             - ChronoDuration::hours(past_hours as i64);
 
         let zoom_state = ZoomState::new(hour_height)
-            // .with_zoom_factor(4.0)
-            // Range spans level -15 (Year/ZoomedOut, 2^-15) to level 5 (FiveMin/ZoomedIn, 2^5=32).
+            .with_zoom_factor(1.5)
             .with_range(RangeInclusive::new(1.0_f32 / 32768.0, 32.0));
         // Initial zoom = 1.0 → level 0 → Hour/Normal.
         let time_division_state = TimeDivisionState {
@@ -288,6 +296,7 @@ impl TimelineView {
             target_column_fraction: None,
             draft_item_ids: HashSet::new(),
             edge_scroll_speed: None,
+            pending_zoom_reset: None,
             _title_subscriptions: Vec::new(),
         }
     }
@@ -352,6 +361,11 @@ impl Render for TimelineView {
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom_in(cx)))
             .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom_out(cx)))
             .on_action(cx.listener(|this, _: &ZoomReset, _, cx| this.zoom_reset(cx)))
+            .on_action(cx.listener(|this, _: &ZoomToFiveMinutes, _, cx| this.zoom_to(16.0, cx)))
+            .on_action(cx.listener(|this, _: &ZoomToHours, _, cx| this.zoom_to(1.0, cx)))
+            .on_action(cx.listener(|this, _: &ZoomToDays, _, cx| this.zoom_to(1.0 / 16.0, cx)))
+            .on_action(cx.listener(|this, _: &ZoomToMonths, _, cx| this.zoom_to(1.0 / 256.0, cx)))
+            .on_action(cx.listener(|this, _: &ZoomToYears, _, cx| this.zoom_to(1.0 / 8192.0, cx)))
             .on_action(cx.listener(|this, _: &ScrollReset, _, cx| this.scroll_reset(cx)))
             .on_action(cx.listener(|this, _: &FocusItemDown, window, cx| {
                 this.navigate_items(NavDirection::Down, window, cx)

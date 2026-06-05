@@ -1,1 +1,1 @@
-cargo run -p desktop
+cargo run -p simple-desktop

@@ -2769,6 +2769,7 @@ dependencies = [
 [[package]]
 name = "gpui_transitions"
 version = "0.1.5"
+source = "git+https://github.com/brendon-felix/gpui_transitions#44ce9e30a6788a2ea9189da58d9c37c220ff3220"
 dependencies = [
  "gpui",
 ]
