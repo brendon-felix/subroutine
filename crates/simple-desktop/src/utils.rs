@@ -91,20 +91,30 @@ impl<T: Copy + Mul<f32, Output = T>> ZoomState<T> {
         }
     }
 
+    /// Sets the initial zoom level, which is the multiplier applied to the base value to get the current zoomed value. The default initial zoom level is 1.0, which means no zoom.
+    pub fn with_initial_zoom(mut self, zoom: f32) -> Self {
+        self.zoom = zoom;
+        self
+    }
+
+    /// Sets the zoom factor, which determines how much the value changes when zooming in or out. Default is 2.0, meaning each zoom step doubles or halves the value.
     pub fn with_zoom_factor(mut self, zoom_factor: f32) -> Self {
         self.zoom_factor = zoom_factor;
         self
     }
 
+    /// Sets the zoom range, which limits how much the value can be zoomed in or out.
     pub fn with_range(mut self, range: RangeInclusive<f32>) -> Self {
         self.range = range;
         self
     }
 
+    /// Returns the current zoomed value, which is the base value multiplied by the current zoom level.
     pub fn current_value(&self) -> T {
         self.base_value * self.zoom
     }
 
+    /// Zooms in by multiplying the current zoom level by the zoom factor, if it does not exceed the maximum zoom level defined in the range. Returns true if the zoom level was successfully updated, or false if it is already at or above the maximum zoom level.
     pub fn zoom_in(&mut self) -> bool {
         if self.zoom >= *self.range.end() {
             false
@@ -114,6 +124,7 @@ impl<T: Copy + Mul<f32, Output = T>> ZoomState<T> {
         }
     }
 
+    /// Zooms out by dividing the current zoom level by the zoom factor, if it does not go below the minimum zoom level defined in the range. Returns true if the zoom level was successfully updated, or false if it is already at or below the minimum zoom level.
     pub fn zoom_out(&mut self) -> bool {
         if self.zoom <= *self.range.start() {
             false
@@ -123,6 +134,7 @@ impl<T: Copy + Mul<f32, Output = T>> ZoomState<T> {
         }
     }
 
+    /// Sets the zoom level to a specific value, if it is within the zoom range. Returns true if the zoom level was successfully updated, or false if the specified zoom level is outside the range.
     pub fn zoom_to(&mut self, zoom: f32) -> bool {
         if zoom < *self.range.start() || zoom > *self.range.end() {
             false
@@ -132,6 +144,7 @@ impl<T: Copy + Mul<f32, Output = T>> ZoomState<T> {
         }
     }
 
+    /// Zooms by a specific factor, which multiplies the current zoom level by the factor, if the resulting zoom level is within the zoom range. Returns true if the zoom level was successfully updated, or false if the resulting zoom level is outside the range.
     pub fn zoom_by(&mut self, factor: f32) -> bool {
         let new_zoom = self.zoom * factor;
         if new_zoom < *self.range.start() || new_zoom > *self.range.end() {
@@ -142,18 +155,32 @@ impl<T: Copy + Mul<f32, Output = T>> ZoomState<T> {
         }
     }
 
+    /// Resets the zoom level to the default value of 1.0.
     pub fn zoom_reset(&mut self) {
         self.zoom = 1.0;
     }
 
+    /// Returns true if the current zoom level is less than the maximum zoom level defined in the range, indicating that it is possible to zoom in further.
+    pub fn can_zoom_in(&self) -> bool {
+        self.zoom < *self.range.end()
+    }
+
+    /// Returns true if the current zoom level is greater than the minimum zoom level defined in the range, indicating that it is possible to zoom out further.
+    pub fn can_zoom_out(&self) -> bool {
+        self.zoom > *self.range.start()
+    }
+
+    /// Returns true if the current zoom level is not equal to the default value of 1.0, indicating that the value is currently zoomed in or out.
     pub fn is_zoomed(&self) -> bool {
         self.zoom != 1.0
     }
 
+    /// Returns true if the current zoom level is greater than the default value of 1.0, indicating that the value is currently zoomed in.
     pub fn is_zoomed_in(&self) -> bool {
         self.zoom > 1.0
     }
 
+    /// Returns true if the current zoom level is less than the default value of 1.0, indicating that the value is currently zoomed out.
     pub fn is_zoomed_out(&self) -> bool {
         self.zoom < 1.0
     }

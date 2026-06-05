@@ -13,12 +13,16 @@ pub enum AppIcon {
     CalendarPlus,
     ListPlus,
     ListIndentIncrease,
+    ListChevronsDownUp,
     Check,
     Plus,
     Minus,
     Trash,
     Repeat,
     Close,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
 }
 
 impl IconNamed for AppIcon {
@@ -29,11 +33,15 @@ impl IconNamed for AppIcon {
             Self::CalendarPlus => "icons/custom/calendar-plus.svg",
             Self::ListPlus => "icons/custom/list-plus.svg",
             Self::ListIndentIncrease => "icons/custom/list-indent-increase.svg",
+            Self::ListChevronsDownUp => "icons/custom/list-chevrons-down-up.svg",
             Self::Plus => "icons/custom/plus.svg",
             Self::Minus => "icons/custom/minus.svg",
             Self::Trash => "icons/custom/trash.svg",
             Self::Repeat => "icons/custom/repeat.svg",
             Self::Close => "icons/custom/close.svg",
+            Self::ZoomIn => "icons/custom/zoom-in.svg",
+            Self::ZoomOut => "icons/custom/zoom-out.svg",
+            Self::ZoomReset => "icons/custom/zoom-reset.svg",
         }
         .into()
     }

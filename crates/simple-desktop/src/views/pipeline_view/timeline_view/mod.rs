@@ -35,6 +35,7 @@ actions!([
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    ScrollReset,
     FocusItemUp,
     FocusItemDown,
     FocusItemLeft,
@@ -53,9 +54,13 @@ pub(super) struct TimelineView {
     hour_height: Pixels,
     start: DateTime<Local>,
     // visible_date: usize,
-    past_hours: usize,
-    future_hours: usize,
+    loaded_divisions: Range<i64>,
+    /// Start datetime for each loaded list item, in order.
+    /// Parallel to `hour_list_sizes`; updated whenever `start` or the
+    /// division count changes.
+    item_start_times: Vec<DateTime<Local>>,
     zoom_state: ZoomState<Pixels>,
+    time_division_state: TimeDivisionState,
     pending_zoom_transition: Option<(ZoomState<Pixels>, Pixels, bool, bool)>,
     zoom_scroll_target: Option<Pixels>,
     pending_scroll_transition: Option<Pixels>,
@@ -63,12 +68,11 @@ pub(super) struct TimelineView {
     hour_list_sizes: Rc<Vec<Size<Pixels>>>,
     scroll_handle: VirtualListScrollHandle,
     visible_range: Range<usize>,
-    // focused_index: Option<usize>,
-    active_drop: Option<ActiveDropState>,
-    active_resize: Option<ActiveResizeState>,
     drop_active: bool,
     bounds: Option<Bounds<Pixels>>,
     items: Vec<TimelineItem>,
+    active_drop: Option<ActiveDropState>,
+    active_resize: Option<ActiveResizeState>,
     loaded: bool,
     /// Tracks the order items were detached, oldest-first.
     /// Rendered in reverse so the newest detached item appears at the top.
@@ -97,11 +101,6 @@ impl Focusable for TimelineView {
     }
 }
 
-/// Zero-size element whose sole job is to register a window-level `MouseUpEvent`
-/// handler during the **paint** phase (the only phase where `window.on_mouse_event`
-/// is valid). When the mouse is released anywhere — including outside the timeline
-/// — this clears `active_resize` and `edge_scroll_speed` on the view, ensuring
-/// the resize outline and edge-scroll never linger after a drag.
 struct ResizeDragMouseUpHook(Entity<TimelineView>);
 
 impl IntoElement for ResizeDragMouseUpHook {
@@ -141,7 +140,7 @@ impl Element for ResizeDragMouseUpHook {
         _: &mut (),
         _: &mut Window,
         _: &mut App,
-    ) -> () {
+    ) {
     }
 
     fn paint(
@@ -177,18 +176,41 @@ impl TimelineView {
         let current_hour = now.hour();
         let past_hours = 24 + current_hour as usize;
         let future_hours = 4 * 24 - current_hour as usize;
+        let loaded_divisions = -(past_hours as i64)..(future_hours as i64);
         let start = now
             .with_minute(0)
             .and_then(|d| d.with_second(0))
             .and_then(|d| d.with_nanosecond(0))
             .unwrap()
             - ChronoDuration::hours(past_hours as i64);
-        let zoom_state = ZoomState::new(hour_height).with_range(RangeInclusive::new(0.25, 16.0));
-        let hour_list_sizes = Rc::new(
-            (0..(past_hours + future_hours))
-                .map(|_| Size::new(Pixels::default(), zoom_state.current_value()))
-                .collect(),
-        );
+
+        let zoom_state = ZoomState::new(hour_height)
+            // .with_zoom_factor(4.0)
+            // Range spans level -15 (Year/ZoomedOut, 2^-15) to level 5 (FiveMin/ZoomedIn, 2^5=32).
+            .with_range(RangeInclusive::new(1.0_f32 / 32768.0, 32.0));
+        // Initial zoom = 1.0 → level 0 → Hour/Normal.
+        let time_division_state = TimeDivisionState {
+            base_division: BaseTimeDivision::Hour,
+            zoom_level: TimeZoomLevel::Normal,
+        };
+
+        // Build item start times and exact pixel heights together in one pass.
+        // For the initial Hour division every item is exactly 3600 s, so heights
+        // are uniform — but the loop is kept general for when the division changes.
+        let n_items = past_hours + future_hours;
+        let mut item_start_times: Vec<DateTime<Local>> = Vec::with_capacity(n_items);
+        let mut item_sizes: Vec<Size<Pixels>> = Vec::with_capacity(n_items);
+        {
+            let mut t = start;
+            for _ in 0..n_items {
+                let secs = BaseTimeDivision::Hour.exact_duration(t).num_seconds() as f32;
+                let h = zoom_state.current_value() * (secs / 3600.0);
+                item_start_times.push(t);
+                item_sizes.push(Size::new(Pixels::default(), h));
+                t = BaseTimeDivision::Hour.next_boundary(t);
+            }
+        }
+        let hour_list_sizes = Rc::new(item_sizes);
         let visible_range = Range::default();
         let scroll_handle = VirtualListScrollHandle::new();
         let offset = DEFAULT_HOUR_HEIGHT * past_hours as f32;
@@ -199,6 +221,7 @@ impl TimelineView {
             KeyBinding::new("cmd-=", ZoomIn, None),
             KeyBinding::new("cmd--", ZoomOut, None),
             KeyBinding::new("cmd-0", ZoomReset, None),
+            KeyBinding::new("cmd-)", ScrollReset, None),
             KeyBinding::new("escape", ClosedViewedItem, None),
             KeyBinding::new("down", FocusItemDown, Some("!Input")),
             KeyBinding::new("up", FocusItemUp, Some("!Input")),
@@ -238,9 +261,10 @@ impl TimelineView {
             hour_height,
             start,
             // visible_date,
-            past_hours,
-            future_hours,
+            loaded_divisions,
+            item_start_times,
             zoom_state,
+            time_division_state,
             zoom_scroll_target: None,
             pending_zoom_transition: None,
             pending_scroll_transition: None,
@@ -248,12 +272,11 @@ impl TimelineView {
             hour_list_sizes,
             scroll_handle,
             visible_range,
-            // focused_index,
-            active_drop: None,
-            active_resize: None,
             drop_active: false,
             bounds: None,
             items: vec![],
+            active_drop: None,
+            active_resize: None,
             loaded: false,
             detached_order: Vec::new(),
             context_menu: None,
@@ -269,12 +292,18 @@ impl TimelineView {
         }
     }
 
-    fn zoom_by(&mut self, factor: f32, cx: &mut Context<Self>) {
+    fn zoom_by(&mut self, factor: f32, cursor_y: Option<Pixels>, cx: &mut Context<Self>) {
         let mut new_zoom = self.zoom_state.clone();
         if new_zoom.zoom_by(factor) {
-            // Pinch is a continuous gesture — scale from the live scroll position
-            // and apply instantly with no eased transition.
-            let offset = self.scroll_offset() * factor;
+            // Pinch is a continuous gesture — apply instantly with no eased transition.
+            // If a cursor position is provided, anchor the zoom to that point so the
+            // time under the cursor stays fixed; otherwise fall back to anchoring at
+            // the top of the viewport (i.e. multiply scroll by factor).
+            let scroll = self.scroll_offset();
+            let offset = match cursor_y {
+                Some(anchor) => anchor - (anchor - scroll) * factor,
+                None => scroll * factor,
+            };
             self.pending_zoom_transition = Some((new_zoom, offset, false, false));
             cx.notify();
         }
@@ -323,6 +352,7 @@ impl Render for TimelineView {
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom_in(cx)))
             .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom_out(cx)))
             .on_action(cx.listener(|this, _: &ZoomReset, _, cx| this.zoom_reset(cx)))
+            .on_action(cx.listener(|this, _: &ScrollReset, _, cx| this.scroll_reset(cx)))
             .on_action(cx.listener(|this, _: &FocusItemDown, window, cx| {
                 this.navigate_items(NavDirection::Down, window, cx)
             }))
@@ -341,8 +371,11 @@ impl Render for TimelineView {
             // .on_action(cx.listener(|this, _: &PreviousDay, _, cx| this.scroll_previous_day(cx)))
             .size_full()
             // .child(self.render_header(cx))
+            .items_center()
             .child(
                 self.drop_zone()
+                    .absolute()
+                    .inset_0()
                     .on_prepaint(move |bounds, _, cx| {
                         entity.update(cx, |view, _| {
                             view.bounds = Some(bounds);
@@ -372,12 +405,14 @@ impl Render for TimelineView {
                         cx.notify();
                     }))
                     .on_pinch(cx.listener(move |view, e: &PinchEvent, _, cx| {
-                        view.zoom_by(1.0 + e.delta, cx);
+                        // Convert the window-space pinch position to viewport-local y.
+                        let cursor_y = view.bounds.map(|b| e.position.y - b.origin.y);
+                        view.zoom_by(1.0 + e.delta, cursor_y, cx);
                         cx.notify();
                     }))
-                    .child(self.render_hour_list(window, cx))
+                    .child(self.render_division_list(window, cx))
                     .child(self.render_now_cursor(cx))
-                    .children(self.render_sticky_date(cx))
+                    .children(self.render_sticky_outer_label(cx))
                     .when_some(self.active_drop, |this, drop| {
                         this.child(self.render_active_drop(drop, cx))
                     })
@@ -385,12 +420,22 @@ impl Render for TimelineView {
                         this.child(self.render_active_resize(&resize, cx))
                             .child(ResizeDragMouseUpHook(hook_entity.clone()))
                     })
-                    .when(self.loaded, |this| {
+                    .when(self.loaded && self.should_render_items(), |this| {
                         this.children(self.render_attached_items(window, cx))
                     })
-                    .when(!self.loaded, |this| {
+                    .when(!self.loaded && self.should_render_items(), |this| {
                         this.children(self.render_skeleton_items())
                     }),
+            )
+            .child(
+                h_flex()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .justify_end()
+                    // .pl_16()
+                    .child(self.render_timeline_toolbar(cx)),
             )
             .when_some(self.context_menu.clone(), |this, menu| {
                 let position = self.context_menu_position;

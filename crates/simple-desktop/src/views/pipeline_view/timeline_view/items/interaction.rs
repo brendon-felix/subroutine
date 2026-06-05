@@ -256,7 +256,7 @@ impl TimelineView {
         time: DateTime<Local>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Uuid {
         use gpui_component::input::Position;
         let time_utc = time.with_timezone(&chrono::Utc);
         let state = ActionState::Queued(ActionTarget {
@@ -276,6 +276,55 @@ impl TimelineView {
             state.set_cursor_position(Position::new(0, u32::MAX), window, cx);
         });
         cx.notify();
+        id
+    }
+
+    /// Find the next sequential start time within the given slot.
+    ///
+    /// Scans all currently loaded items whose slot-floor equals `slot_start`
+    /// and returns the maximum of their end times (= item.time + duration),
+    /// falling back to `slot_start` itself when the slot is empty.
+    ///
+    /// The returned time is where a new item should be inserted to follow the
+    /// existing queue without overlapping any of them.
+    fn find_next_slot_time(&self, slot_start: DateTime<Local>) -> DateTime<Local> {
+        let state = self.current_division_state();
+        let base = state.base_division;
+        let sub = state.current_subdivision();
+
+        let mut cursor = slot_start;
+        for ti in &self.items {
+            let Some(item_time) = ti.item.time_local() else {
+                continue;
+            };
+            let item_slot = sub
+                .map(|s| s.floor_boundary(item_time))
+                .unwrap_or_else(|| base.floor_boundary(item_time));
+            if item_slot == slot_start {
+                let end = item_time + ti.item.duration().unwrap_or(FALLBACK_ITEM_DURATION);
+                if end > cursor {
+                    cursor = end;
+                }
+            }
+        }
+        cursor
+    }
+
+    /// Double-click creation: place a new draft action at the next sequential
+    /// position within the slot, then push any conflicting persisted actions
+    /// forward to make room.
+    pub(crate) fn add_draft_action_in_slot(
+        &mut self,
+        slot_start: DateTime<Local>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let placement = self.find_next_slot_time(slot_start);
+        let placement_utc = placement.with_timezone(&chrono::Utc);
+        let id = self.add_draft_action(placement, window, cx);
+        // Push any persisted actions that now overlap with the draft's intended
+        // time slot forward so there is no conflict when it is committed.
+        self.push_conflicting_actions(id, placement_utc, FALLBACK_ITEM_DURATION, cx);
     }
 
     /// Create a draft event at the given time, add it to the timeline, and enter edit mode.
@@ -344,24 +393,29 @@ impl TimelineView {
     /// Compute slot-based layout for every item in `items`.
     /// Returns one `Option<SlotLayout>` per item; `None` for items without a scheduled time.
     pub(super) fn compute_slot_layouts(&self, items: &[AnyItem]) -> Vec<Option<SlotLayout>> {
-        let division = self.current_hour_division();
+        let state = self.current_division_state();
+        let base = state.base_division;
+        let sub = state.current_subdivision();
         let n = items.len();
 
         let spans: Vec<Option<(DateTime<Local>, DateTime<Local>)>> = items
             .iter()
             .map(|item| {
                 let time = item.time_local()?;
-                let vs = division.floor_division(time);
+                let vs = sub
+                    .map(|s| s.floor_boundary(time))
+                    .unwrap_or_else(|| base.floor_boundary(time));
+                let slot_dur = sub
+                    .map(|s| s.exact_duration(vs))
+                    .unwrap_or_else(|| base.exact_duration(vs));
                 let ve = if let Some(duration) = item.duration() {
                     let actual_end = time + duration;
-                    let ve_raw = division.ceil_division(actual_end);
-                    if ve_raw <= vs {
-                        vs + division.to_duration()
-                    } else {
-                        ve_raw
-                    }
+                    let ve_raw = sub
+                        .map(|s| s.ceil_boundary(actual_end))
+                        .unwrap_or_else(|| base.ceil_boundary(actual_end));
+                    if ve_raw <= vs { vs + slot_dur } else { ve_raw }
                 } else {
-                    vs + division.to_duration()
+                    vs + slot_dur
                 };
                 Some((vs, ve))
             })
@@ -590,9 +644,16 @@ impl TimelineView {
 
         let new_drop = local_pos.map(|pos| {
             let raw_time = self.position_to_time(pos);
-            let division = self.current_hour_division();
-            let slot_start = division.floor_division(raw_time);
-            let slot_end = slot_start + division.to_duration();
+            let state = self.current_division_state();
+            let base = state.base_division;
+            let sub = state.current_subdivision();
+            let slot_start = sub
+                .map(|s| s.floor_boundary(raw_time))
+                .unwrap_or_else(|| base.floor_boundary(raw_time));
+            let slot_dur = sub
+                .map(|s| s.exact_duration(slot_start))
+                .unwrap_or_else(|| base.exact_duration(slot_start));
+            let slot_end = slot_start + slot_dur;
             let drop_duration = event.drag(cx).data.duration();
 
             let mut items_in_slot: Vec<(DateTime<Local>, ChronoDuration)> = self
@@ -600,7 +661,10 @@ impl TimelineView {
                 .iter()
                 .filter_map(|ti| {
                     let time = ti.item.time_local()?;
-                    if division.floor_division(time) == slot_start {
+                    let time_slot = sub
+                        .map(|s| s.floor_boundary(time))
+                        .unwrap_or_else(|| base.floor_boundary(time));
+                    if time_slot == slot_start {
                         let dur = ti.item.duration().unwrap_or(FALLBACK_ITEM_DURATION);
                         Some((time, dur))
                     } else {
@@ -770,8 +834,15 @@ impl TimelineView {
         let original_end = original_time + original_duration;
 
         let raw_time = self.position_to_time(local_pos);
-        let snapped = self.nearest_time(raw_time);
-        let min_duration = self.current_hour_division().to_duration();
+        let state = self.current_division_state();
+        let base = state.base_division;
+        let sub = state.current_subdivision();
+        let snapped = sub
+            .map(|s| s.floor_boundary(raw_time))
+            .unwrap_or_else(|| base.floor_boundary(raw_time));
+        let min_duration = sub
+            .map(|s| s.exact_duration(raw_time))
+            .unwrap_or_else(|| base.exact_duration(raw_time));
 
         let (new_time, new_end) = match edge {
             ResizeEdge::Top => {

@@ -5,6 +5,7 @@ mod checkbox;
 mod divider;
 mod drag_drop;
 mod overlay;
+pub mod panel_group;
 
 // pub use button::*;
 pub use checkbox::*;

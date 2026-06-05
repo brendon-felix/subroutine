@@ -7,6 +7,7 @@ mod components;
 mod icons;
 mod stores;
 mod themes;
+mod transitions;
 mod utils;
 mod views;
 

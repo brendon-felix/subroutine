@@ -1,16 +1,22 @@
-use std::time::Duration;
+use std::cmp::max;
 
 use gpui::{
-    AppContext, Context, DragMoveEvent, Entity, EventEmitter, FocusHandle, InteractiveElement,
-    IntoElement, KeyBinding, ParentElement, Pixels, Render, StatefulInteractiveElement, Styled,
-    Window, actions, div, prelude::FluentBuilder, px,
+    AppContext, Context, Entity, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
+    KeyBinding, ParentElement, Render, Styled, Window, actions, div, prelude::FluentBuilder, px,
 };
-use gpui_component::{Root, StyledExt, animation::ease_out_cubic, h_flex, v_flex};
-use gpui_transitions::WindowUseTransition;
-use simple_core::AnyItem;
+use gpui_component::{
+    ActiveTheme, Colorize, Root, Sizable, StyledExt, WindowExt, h_flex,
+    tab::{Tab, TabBar},
+    v_flex,
+};
 
 use crate::{
-    components::{CloseOverlay, DragData},
+    components::{
+        CloseOverlay,
+        panel_group::{
+            CenterPanel, NavigationBar, PanelGroup, PanelGroupState, SidePanel, SidePanelState,
+        },
+    },
     views::{ActionCreator, BacklogView, EventCreator, PipelineView, RoutineCreator},
 };
 
@@ -21,25 +27,30 @@ actions!(
         StartActionCreator,
         StartEventCreator,
         StartRoutineCreator,
-        // ToggleLeftSidebar,
-        // ToggleRightSidebar,
+        ToggleLeftSidebar,
+        ToggleRightSidebar,
     ]
 );
 
+pub const NAVBAR_HEIGHT: gpui::Pixels = px(48.);
+
 pub enum CurrentOverlay {
-    // CommandPalette(Entity<CommandPalette>),
     ActionCreator(Entity<ActionCreator>),
-    // ActionEditor(Entity<crate::views::ActionEditor>),
     EventCreator(Entity<EventCreator>),
-    // EventEditor(Entity<crate::views::EventEditor>),
     RoutineCreator(Entity<RoutineCreator>),
-    // RoutineEditor(Entity<RoutineEditor>),
+}
+
+#[derive(Clone, Copy, PartialEq)]
+#[repr(u8)]
+enum RightSidebarTab {
+    Backlog = 0,
 }
 
 pub struct RootView {
     pipeline_view: Entity<PipelineView>,
     backlog_view: Entity<BacklogView>,
-    backlog_hover: Option<bool>,
+    layout_state: Entity<PanelGroupState>,
+    right_sidebar_tab: RightSidebarTab,
     current_overlay: Option<(CurrentOverlay, Option<FocusHandle>)>,
 }
 
@@ -47,58 +58,35 @@ impl RootView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let pipeline_view = cx.new(|cx| PipelineView::new(window, cx));
         let backlog_view = cx.new(|cx| BacklogView::new(cx));
-        let backlog_hover = None;
-        let current_overlay = None;
 
         cx.bind_keys([
             KeyBinding::new("cmd-n", StartActionCreator, None),
             KeyBinding::new("cmd-shift-n", StartEventCreator, None),
             KeyBinding::new("cmd-alt-n", StartRoutineCreator, None),
+            KeyBinding::new("alt-[", ToggleLeftSidebar, None),
+            KeyBinding::new("alt-]", ToggleRightSidebar, None),
         ]);
+
+        let layout_state = cx.new(|_| {
+            let mut state = PanelGroupState::default();
+            state.left_panel = Some(SidePanelState {
+                open: false,
+                ..Default::default()
+            });
+            state.right_panel = Some(SidePanelState {
+                open: true,
+                ..Default::default()
+            });
+            state
+        });
 
         Self {
             pipeline_view,
             backlog_view,
-            backlog_hover,
-            current_overlay,
+            layout_state,
+            right_sidebar_tab: RightSidebarTab::Backlog,
+            current_overlay: None,
         }
-    }
-
-    pub fn render_backlog(
-        &self,
-        width: Pixels,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        v_flex()
-            .h_full()
-            .w(width)
-            // spacer with the same height as the tab bar
-            .child(div().h_10().w(width))
-            .child(
-                div()
-                    .id("backlog")
-                    .flex_1()
-                    .rounded_xl()
-                    .on_hover(cx.listener(move |view, hovered, _window, cx| {
-                        view.backlog_hover = Some(*hovered);
-                        cx.notify();
-                    }))
-                    .on_drag_move(cx.listener(
-                        move |view, event: &DragMoveEvent<DragData<AnyItem>>, _window, cx| {
-                            let is_over = event.bounds.contains(&event.event.position);
-                            view.backlog_hover = Some(is_over);
-                            cx.notify();
-                        },
-                    ))
-                    .child(
-                        div()
-                            .h_full()
-                            .flex_1()
-                            .overflow_hidden()
-                            .child(self.backlog_view.clone()),
-                    ),
-            )
     }
 }
 
@@ -106,23 +94,30 @@ impl EventEmitter<()> for RootView {}
 
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let backlog_transition = window
-            .use_keyed_transition("backlog-width", cx, Duration::from_millis(150), |_, _| {
-                px(24.)
-            })
-            .with_easing(ease_out_cubic);
-        let backlog_width = *backlog_transition.evaluate(window, cx);
-        if let Some(hovered) = self.backlog_hover.take() {
-            backlog_transition.update(cx, |value, _cx| {
-                *value = if hovered { px(256.) } else { px(24.) }
-            });
-            window.request_animation_frame();
-        }
+        let layout_state = self.layout_state.read(cx);
+        let left_panel_open = layout_state
+            .left_panel
+            .as_ref()
+            .map(|p| p.open)
+            .unwrap_or(false);
+
+        let right_panel_open = layout_state
+            .right_panel
+            .as_ref()
+            .map(|p| p.open)
+            .unwrap_or(false);
+
+        let selected_tab = self.right_sidebar_tab;
+
+        let left_panel_width = layout_state.animated_left_px;
+
+        let navbar_left_pad = (px(24. * 4.) - left_panel_width).max(px(2. * 4.));
+
+        let tabbar_height = px(48.);
 
         v_flex()
             .absolute()
             .inset_0()
-            // .pt_8()
             .on_action(cx.listener(|view, _: &StartActionCreator, window, cx| {
                 let current_focus = window.focused(cx);
                 let action_creator = cx.new(|cx| ActionCreator::new(window, cx));
@@ -153,19 +148,146 @@ impl Render for RootView {
                     cx.notify();
                 }
             }))
-            .items_center()
-            .justify_center()
+            .on_action(cx.listener(|view, _: &ToggleLeftSidebar, _window, cx| {
+                view.layout_state.update(cx, |state, cx| {
+                    state.toggle_left();
+                    cx.notify();
+                });
+            }))
+            .on_action(cx.listener(|view, _: &ToggleRightSidebar, _window, cx| {
+                view.layout_state.update(cx, |state, cx| {
+                    state.toggle_right();
+                    cx.notify();
+                });
+            }))
             .child(
-                v_flex()
-                    .size_full()
-                    // .w_3_4()
-                    // .h_3_4()
+                PanelGroup::new(self.layout_state.clone())
+                    .absolute()
+                    .inset_0()
+                    // .top(navbar_height)
+                    .left(
+                        SidePanel::left()
+                            // .width_range_open(px(140.)..px(220.))
+                            // .initial_proportion(0.125)
+                            .p_2()
+                            .pr_0()
+                            .child(
+                                div()
+                                    .size_full()
+                                    .rounded_xl()
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .bg(cx.theme().background.mix_oklab(gpui::black(), 0.95)),
+                            ),
+                    )
+                    .center(
+                        CenterPanel::new().child(
+                            div()
+                                .pt(NAVBAR_HEIGHT)
+                                .size_full()
+                                .overflow_hidden()
+                                .child(self.pipeline_view.clone()),
+                        ),
+                    )
+                    .right(
+                        SidePanel::right()
+                            .width_range_open(px(200.)..px(250.))
+                            // .initial_proportion(0.25)
+                            .child(
+                                v_flex()
+                                    .size_full()
+                                    .pt(NAVBAR_HEIGHT)
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .border_l_1()
+                                            .border_color(cx.theme().border)
+                                            // .h(tabbar_height)
+                                            .w_full()
+                                            .p_1()
+                                            .justify_center()
+                                            // .border_b_1()
+                                            // .border_color(cx.theme().border)
+                                            .child(
+                                                TabBar::new("right-sidebar-tabs")
+                                                    .pill()
+                                                    // .size_full()
+                                                    .rounded_none()
+                                                    // .underline()
+                                                    // .w_full()
+                                                    // .items_center()
+                                                    .selected_index(selected_tab as usize)
+                                                    .child(Tab::new().flex_1().label("Backlog"))
+                                                    .child(Tab::new().flex_1().label("Routines"))
+                                                    .child(Tab::new().flex_1().label("Saved")),
+                                            ),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .border_l_1()
+                                            .border_color(cx.theme().border)
+                                            // .absolute()
+                                            // .top(tabbar_height)
+                                            // .bottom_0()
+                                            // .left_0()
+                                            // .right_0()
+                                            .flex_1()
+                                            .overflow_hidden()
+                                            .child(div().flex_1().min_h_0().w_full().when(
+                                                selected_tab == RightSidebarTab::Backlog,
+                                                |this| this.child(self.backlog_view.clone()),
+                                            )),
+                                    ),
+                            ),
+                    ),
+            )
+            .child(
+                NavigationBar::new()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .left(left_panel_width)
+                    .pl(navbar_left_pad)
+                    .pr_2()
+                    .h(NAVBAR_HEIGHT)
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().transparent.mix_oklab(cx.theme().background, 0.5))
+                    .left_panel_open(left_panel_open)
+                    .right_panel_open(right_panel_open)
+                    .on_toggle_left({
+                        let layout_state = self.layout_state.clone();
+                        move |_window, cx| {
+                            layout_state.update(cx, |state, cx| {
+                                state.toggle_left();
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .on_toggle_right({
+                        let layout_state = self.layout_state.clone();
+                        move |_window, cx| {
+                            layout_state.update(cx, |state, cx| {
+                                state.toggle_right();
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .gap_2()
                     .child(
                         h_flex()
-                            .flex_1()
-                            .child(self.pipeline_view.clone())
-                            // .child(self.render_backlog(backlog_width, window, cx))
-                            .when(false, |this| this),
+                            .size_full()
+                            .gap_2()
+                            .p_2()
+                            .child(
+                                div()
+                                    .size_full()
+                                    .rounded_xl()
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .bg(cx.theme().background.mix_oklab(gpui::black(), 0.95)),
+                            )
+                            .opacity(0.5),
                     ),
             )
             .when_some(

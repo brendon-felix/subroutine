@@ -6361,6 +6361,7 @@ dependencies = [
  "simple-api",
  "simple-core",
  "simple-parser",
+ "smallvec",
  "tokio",
  "tracing",
  "tracing-subscriber",

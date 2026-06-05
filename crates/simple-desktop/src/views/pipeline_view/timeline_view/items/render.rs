@@ -10,7 +10,7 @@ use gpui_component::{
 };
 
 use super::super::TimelineView;
-use super::super::timeline::HOUR_DIVIDER_HEIGHT;
+use super::super::timeline::{HOUR_DIVIDER_HEIGHT, TimeSubDivision};
 use super::{
     ATTACHED_ITEM_LEFT, ActiveDropState, ActiveResizeState, FALLBACK_ITEM_DURATION,
     ItemTimelineBounds, META_ROW_HEIGHT, RESCHEDULE_TRANSITION_DURATION, RESIZE_HANDLE_HEIGHT,
@@ -156,34 +156,38 @@ impl TimelineView {
         input
     }
 
-    /// Render the hybrid title element: a plain label when not editing (double-click to start),
-    /// and a styled input with visible border/background while editing.
+    /// Render the title field: a plain label when not editing (double-clicks lazily create
+    /// the InputState and enter edit mode), or a styled Input while editing.
     pub(super) fn render_title_input(
         &self,
         item_id: Uuid,
-        title_input: Entity<InputState>,
+        item_title: SharedString,
+        is_action: bool,
+        title_input: Option<Entity<InputState>>,
         _window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let is_editing = self.editing_items.contains(&item_id);
 
-        let edit_state = self.title_edit_states.get(&item_id);
-        let _parse_error = edit_state.map(|s| s.parse_error).unwrap_or(false);
-
         if !is_editing {
-            // Label mode: looks like plain text, double-click enters edit mode.
-            let title_text: SharedString = title_input.read(cx).value().to_string().into();
+            // Label mode — no InputState needed. Create it lazily on double-click.
+            let title_clone = item_title.clone();
             let activate = cx.listener(move |this, event: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 if event.click_count() != 2 {
                     return;
                 }
                 this.editing_items.insert(item_id);
-                if let Some(input) = this.title_inputs.get(&item_id) {
-                    input.update(cx, |state, cx| {
-                        state.set_cursor_position(Position::new(0, u32::MAX), window, cx);
-                    });
-                }
+                let input = this.get_or_create_title_input(
+                    item_id,
+                    title_clone.to_string(),
+                    is_action,
+                    window,
+                    cx,
+                );
+                input.update(cx, |state, cx| {
+                    state.set_cursor_position(Position::new(0, u32::MAX), window, cx);
+                });
                 cx.notify();
             });
             return div()
@@ -193,24 +197,37 @@ impl TimelineView {
                 .items_center()
                 .px_1()
                 .on_click(activate)
-                .child(Label::new(title_text).text_sm())
+                .child(Label::new(item_title).text_sm())
                 .into_any_element();
         }
 
-        // Edit mode: input with background and border.
-        div()
-            .id(("title-input-wrap", item_id.as_u128() as u64))
-            .w_full()
-            .child(
-                Input::new(&title_input)
-                    .text_sm()
-                    .w_full()
-                    .py_0()
-                    .px_1()
-                    .appearance(false)
-                    .bordered(false),
-            )
-            .into_any_element()
+        // Edit mode — render the Input widget if we have it; graceful label fallback otherwise.
+        if let Some(input) = title_input {
+            div()
+                .id(("title-input-wrap", item_id.as_u128() as u64))
+                .w_full()
+                .child(
+                    Input::new(&input)
+                        .text_sm()
+                        .w_full()
+                        .py_0()
+                        .px_1()
+                        .appearance(false)
+                        .bordered(false),
+                )
+                .into_any_element()
+        } else {
+            // Shouldn't reach here in normal flow (editing items always have an input),
+            // but provide a graceful fallback rather than panicking.
+            div()
+                .id(("title-label", item_id.as_u128() as u64))
+                .w_full()
+                .flex()
+                .items_center()
+                .px_1()
+                .child(Label::new(item_title).text_sm())
+                .into_any_element()
+        }
     }
 
     pub(super) fn render_attached_item(
@@ -218,9 +235,9 @@ impl TimelineView {
         item_id: Uuid,
         item_element_id: ElementId,
         item_colors: crate::utils::ButtonColors,
-        _item_title: SharedString,
+        item_title: SharedString,
         item_any: AnyItem,
-        title_input: Entity<InputState>,
+        title_input: Option<Entity<InputState>>,
         focus_handle: FocusHandle,
         is_completing: bool,
         layout: Option<SlotLayout>,
@@ -240,7 +257,7 @@ impl TimelineView {
 
         let target = if let Some(ref layout) = layout {
             ItemTimelineBounds {
-                elapsed_secs: (layout.visual_start - self.start).num_seconds() as f64,
+                elapsed_secs: layout.visual_start.timestamp() as f64,
                 duration_secs: (layout.visual_end - layout.visual_start).num_seconds() as f64,
                 left_fraction: layout.column_index as f32 / layout.total_columns as f32,
                 width_fraction: 1.0 / layout.total_columns as f32,
@@ -248,7 +265,7 @@ impl TimelineView {
         } else {
             let time = any_item.time_local()?;
             ItemTimelineBounds {
-                elapsed_secs: (time - self.start).num_seconds() as f64,
+                elapsed_secs: time.timestamp() as f64,
                 duration_secs: any_item
                     .duration()
                     .unwrap_or(FALLBACK_ITEM_DURATION)
@@ -281,7 +298,8 @@ impl TimelineView {
         }
         let anim = *bounds_t.evaluate(window, cx);
 
-        let y = self.hour_height * (anim.elapsed_secs / 3600.0) as f32
+        let start_secs = self.start.timestamp() as f64;
+        let y = self.hour_height * ((anim.elapsed_secs - start_secs) / 3600.0) as f32
             + HOUR_DIVIDER_HEIGHT / 2.0
             + half_gap
             + scroll;
@@ -388,6 +406,8 @@ impl TimelineView {
                             .when(!too_short, |this| {
                                 this.child(self.render_title_input(
                                     item_id,
+                                    item_title.clone(),
+                                    is_action,
                                     title_input.clone(),
                                     window,
                                     cx,
@@ -517,13 +537,61 @@ impl TimelineView {
             .collect();
         let slot_layouts = self.compute_slot_layouts(&any_items);
 
-        // Step 3: pre-create title inputs (mutable borrow).
+        // Step 2.5: cull items that are entirely outside the viewport.
+        // Positions are approximated from target (non-animated) values with a generous
+        // margin so items mid-transition are always included.
+        let start_secs = self.start.timestamp() as f64;
+        let scroll = self.scroll_offset();
+        let viewport_height = self.bounds.map(|b| b.size.height).unwrap_or(px(800.));
+        let cull_margin = px(200.);
+
+        let visibilities: Vec<bool> = item_data
+            .iter()
+            .zip(slot_layouts.iter())
+            .map(|((_, _, _, _, _, any_item, _, _), layout)| {
+                let (y, h) = if let Some(layout) = layout {
+                    let elapsed = layout.visual_start.timestamp() as f64;
+                    let dur = (layout.visual_end - layout.visual_start).num_seconds() as f64;
+                    let y = self.hour_height * ((elapsed - start_secs) / 3600.0) as f32
+                        + HOUR_DIVIDER_HEIGHT / 2.0
+                        + SLOT_GAP * 0.5
+                        + scroll;
+                    let h = self.hour_height * (dur / 3600.0) as f32;
+                    (y, h)
+                } else if let Some(time) = any_item.time_local() {
+                    let elapsed = time.timestamp() as f64;
+                    let dur = any_item
+                        .duration()
+                        .unwrap_or(FALLBACK_ITEM_DURATION)
+                        .num_seconds() as f64;
+                    let y = self.hour_height * ((elapsed - start_secs) / 3600.0) as f32
+                        + HOUR_DIVIDER_HEIGHT / 2.0
+                        + SLOT_GAP * 0.5
+                        + scroll;
+                    let h = self.hour_height * (dur / 3600.0) as f32;
+                    (y, h)
+                } else {
+                    // No time → can't determine position; always render.
+                    return true;
+                };
+                y + h + cull_margin >= px(0.) && y - cull_margin <= viewport_height
+            })
+            .collect();
+
+        // Step 3: create title inputs only for visible items that are actively being
+        // edited or are unsaved drafts. All other items render their title as a plain
+        // label directly from the item data, with no InputState overhead.
         let mut title_inputs: Vec<Option<Entity<InputState>>> = Vec::with_capacity(item_data.len());
-        for (_, item_id, _, _, title, any_item, transition_state, _) in &item_data {
-            if matches!(
-                transition_state,
-                TransitionState::Attached | TransitionState::Completing
-            ) {
+        for ((_, item_id, _, _, title, any_item, transition_state, _), &visible) in
+            item_data.iter().zip(visibilities.iter())
+        {
+            let needs_input = visible
+                && matches!(
+                    transition_state,
+                    TransitionState::Attached | TransitionState::Completing
+                )
+                && (self.editing_items.contains(item_id) || self.draft_item_ids.contains(item_id));
+            if needs_input {
                 let is_action = matches!(any_item, AnyItem::Action(_));
                 let input = self.get_or_create_title_input(
                     *item_id,
@@ -538,36 +606,47 @@ impl TimelineView {
             }
         }
 
-        // Step 4: render.
+        // Step 4: render only visible attached items.
         item_data
             .into_iter()
             .zip(title_inputs)
             .zip(slot_layouts)
+            .zip(visibilities)
             .filter_map(
                 |(
                     (
                         (
-                            _i,
-                            item_id,
-                            element_id,
-                            colors,
-                            title,
-                            any_item,
-                            transition_state,
-                            focus_handle,
+                            (
+                                _i,
+                                item_id,
+                                element_id,
+                                colors,
+                                title,
+                                any_item,
+                                transition_state,
+                                focus_handle,
+                            ),
+                            title_input,
                         ),
-                        title_input,
+                        layout,
                     ),
-                    layout,
+                    visible,
                 )| {
-                    let input = title_input?;
+                    if !visible
+                        || !matches!(
+                            transition_state,
+                            TransitionState::Attached | TransitionState::Completing
+                        )
+                    {
+                        return None;
+                    }
                     self.render_attached_item(
                         item_id,
                         element_id,
                         colors,
                         title,
                         any_item,
-                        input,
+                        title_input,
                         focus_handle,
                         transition_state == TransitionState::Completing,
                         layout,
@@ -626,11 +705,15 @@ impl TimelineView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let half_gap = SLOT_GAP * 0.5;
-        let division = self.current_hour_division();
+        let state = self.current_division_state();
+        let base = state.base_division;
+        let sub = state.current_subdivision();
         let visual_end = match drop_info.drop_duration {
             Some(d) => {
                 let actual_end = drop_info.drop_time + d;
-                let ve_raw = division.ceil_division(actual_end);
+                let ve_raw = sub
+                    .map(|s: TimeSubDivision| s.ceil_boundary(actual_end))
+                    .unwrap_or_else(|| base.ceil_boundary(actual_end));
                 if ve_raw <= drop_info.slot_visual_start {
                     drop_info.slot_visual_end
                 } else {

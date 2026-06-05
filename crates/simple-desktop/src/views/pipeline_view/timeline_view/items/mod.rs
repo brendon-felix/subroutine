@@ -25,7 +25,7 @@ pub(super) const FALLBACK_ITEM_DURATION: ChronoDuration = ChronoDuration::minute
 pub(super) const RESCHEDULE_TRANSITION_DURATION: Duration = Duration::from_millis(150);
 pub(super) const COMPLETE_CHECKBOX_DURATION: Duration = Duration::from_millis(200);
 pub(super) const ATTACHED_ITEM_LEFT: Pixels = px(16. * 4.);
-pub(super) const ITEMS_RIGHT_GAP: Pixels = px(16. * 4.);
+pub(super) const ITEMS_RIGHT_GAP: Pixels = px(24. * 4.);
 pub(super) const SLOT_GAP: Pixels = px(3.);
 pub(super) const RESIZE_HANDLE_HEIGHT: Pixels = px(6.);
 pub(super) const STICKY_TITLE_HEIGHT: Pixels = px(28.);
@@ -37,7 +37,11 @@ pub(super) const META_ROW_HEIGHT: Pixels = px(18.);
 /// viewport-independent coordinates.
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct ItemTimelineBounds {
-    /// Seconds from `TimelineView::start` to the item's visual slot start.
+    /// Unix timestamp (UTC seconds since epoch) of the item's visual slot start.
+    /// Stored as an absolute value so that buffer shifts and division changes —
+    /// which move `TimelineView::start` — do not alter this field and thus do
+    /// not trigger spurious position animations.  Only a genuine reschedule
+    /// (a new `visual_start` time) will animate this value.
     pub elapsed_secs: f64,
     /// Visual duration of the slot in seconds (used to compute height).
     pub duration_secs: f64,
