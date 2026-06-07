@@ -750,6 +750,11 @@ impl TimelineView {
                     s.upsert_event(event, cx);
                 });
             }
+            AnyItem::Routine(routine) => {
+                store.update(cx, |s, cx| {
+                    s.instantiate_routine(routine.id, Some(drop_time_utc), cx);
+                });
+            }
         }
     }
 
@@ -838,7 +843,7 @@ impl TimelineView {
         let base = state.base_division;
         let sub = state.current_subdivision();
         let snapped = sub
-            .map(|s| s.floor_boundary(raw_time))
+            .map(|s| s.closest_boundary(raw_time))
             .unwrap_or_else(|| base.floor_boundary(raw_time));
         let min_duration = sub
             .map(|s| s.exact_duration(raw_time))
@@ -907,6 +912,7 @@ impl TimelineView {
                 event.duration = Some(new_duration);
                 store.update(cx, |s, cx| s.upsert_event(event, cx));
             }
-        }
+            AnyItem::Routine(_) => (),
+        };
     }
 }

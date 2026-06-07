@@ -204,6 +204,9 @@ impl Render for FocusView {
                                             .mix_oklab(cx.theme().foreground, 0.5),
                                         cx,
                                     ),
+                                    AnyItem::Routine(_) => {
+                                        ButtonColors::normal(cx.theme().button_primary, cx)
+                                    }
                                 };
 
                                 let is_action = matches!(item, AnyItem::Action(_));
@@ -243,6 +246,9 @@ impl Render for FocusView {
                                             }
                                             AnyItem::Event(e) => {
                                                 super::event_context_menu(e.id)(menu, window, cx)
+                                            }
+                                            AnyItem::Routine(r) => {
+                                                super::routine_context_menu(r.id)(menu, window, cx)
                                             }
                                         },
                                     )

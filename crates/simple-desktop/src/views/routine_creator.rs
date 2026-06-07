@@ -3,7 +3,7 @@ use std::{rc::Rc, time::Duration};
 use chrono::Local;
 use gpui::{
     App, AppContext as _, Context, DefiniteLength, Entity, FocusHandle, Focusable, KeyBinding,
-    Pixels, Point, ScrollHandle, SharedString, Size, Window, actions, div, prelude::*, px, rems,
+    Pixels, Point, SharedString, Size, Window, actions, div, prelude::*, px, rems,
 };
 use gpui_component::{
     ActiveTheme, Colorize, Icon, IconName, Sizable, VirtualListScrollHandle, WindowExt,
@@ -13,13 +13,13 @@ use gpui_component::{
     input::{Input, InputEvent, InputState},
     label::Label,
     notification::NotificationType,
-    scroll::{ScrollableElement, ScrollbarHandle},
+    scroll::ScrollbarHandle,
     v_flex, v_virtual_list,
 };
 use simple_core::{Routine, RoutineStep};
 use simple_parser::{
     BuildTarget, BuiltEntity, ParseDraft, RecurrenceSpec, WeekdaySet, build_entity,
-    parse::parse_routine_step_input, parse_action_input,
+    parse::parse_routine_step_input,
 };
 
 use gpui_transitions::WindowUseTransition;
@@ -29,6 +29,8 @@ use crate::{
     components::{CloseOverlay, OverlayPosition, overlay},
     stores::AppDatabaseStore,
 };
+
+actions!([DeleteStep, SubmitRoutine]);
 
 const SCROLL_DURATION: Duration = Duration::from_millis(200);
 
@@ -134,7 +136,7 @@ impl RoutineCreator {
         });
         let step_input = cx.new(|cx| InputState::new(window, cx).placeholder("Routine Step"));
 
-        // cx.bind_keys([KeyBinding::new("cmd-b", ToggleBatchMode, None)]);
+        cx.bind_keys([KeyBinding::new("cmd-enter", SubmitRoutine, None)]);
 
         let mut subscriptions = Vec::new();
 
@@ -339,7 +341,7 @@ impl RoutineCreator {
         cx.notify();
     }
 
-    fn render_title_input(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_title_input(&self) -> impl IntoElement {
         Input::new(&self.title_input)
             .h_12()
             .w_full()
@@ -349,7 +351,7 @@ impl RoutineCreator {
             .appearance(false)
     }
 
-    fn render_step_input(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_step_input(&self) -> impl IntoElement {
         Input::new(&self.step_input)
             .px_0()
             // .pr_0()
@@ -424,13 +426,11 @@ impl RoutineCreator {
                                                 .ghost()
                                                 .size_6()
                                                 .child(Icon::new(IconName::CircleX).size_3())
-                                                .on_click(cx.listener(
-                                                    move |view, _, window, cx| {
-                                                        view.current_steps.remove(i);
-                                                        view.refresh_item_sizes(ITEM_HEIGHT);
-                                                        cx.notify();
-                                                    },
-                                                )),
+                                                .on_click(cx.listener(move |view, _, _, cx| {
+                                                    view.current_steps.remove(i);
+                                                    view.refresh_item_sizes(ITEM_HEIGHT);
+                                                    cx.notify();
+                                                })),
                                         ),
                                 )
                         })
@@ -527,6 +527,9 @@ impl Render for RoutineCreator {
                 // .rounded_full()
                 .rounded(px(28.))
                 .shadow_md()
+                .on_action(cx.listener(|view, _: &SubmitRoutine, window, cx| {
+                    view.submit(window, cx);
+                }))
                 .on_any_mouse_down(|_event, _window, cx| {
                     cx.stop_propagation();
                 })
@@ -536,7 +539,7 @@ impl Render for RoutineCreator {
                         .w_full()
                         .items_center()
                         .child(Icon::new(AppIcon::Repeat).large())
-                        .child(self.render_title_input(cx)),
+                        .child(self.render_title_input()),
                 )
                 .when(!self.current_title.is_empty(), |this| {
                     this.child(self.render_steps(window, cx)).child(
@@ -545,7 +548,7 @@ impl Render for RoutineCreator {
                             .items_center()
                             .gap_2()
                             .child(div().w_6())
-                            .child(self.render_step_input(cx)),
+                            .child(self.render_step_input()),
                     )
                 })
                 .when(false, |this| this),

@@ -110,6 +110,7 @@ impl TimelineItem {
                     .mix_oklab(cx.theme().foreground, 0.5),
                 cx,
             ),
+            AnyItem::Routine(_) => ButtonColors::normal(cx.theme().foreground, cx),
         }
     }
 }

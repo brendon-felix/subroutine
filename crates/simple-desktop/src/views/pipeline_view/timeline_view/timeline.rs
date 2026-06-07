@@ -1,15 +1,13 @@
 use std::{rc::Rc, time::Duration};
 
-use chrono::{
-    DateTime, Datelike, Days, Duration as ChronoDuration, Local, LocalResult, NaiveDate, Timelike,
-};
+use chrono::{DateTime, Datelike, Days, Duration as ChronoDuration, Local, LocalResult, NaiveDate};
 use gpui::{
-    Along, AnyElement, App, Axis, ClickEvent, Context, DismissEvent, Div, Entity, Focusable,
-    InteractiveElement, IntoElement, ParentElement, Pixels, Point, Size,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
+    Along, App, Axis, ClickEvent, Context, DismissEvent, Entity, Focusable, InteractiveElement,
+    IntoElement, ParentElement, Pixels, Point, Size, StatefulInteractiveElement, Styled, Window,
+    div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
-    ActiveTheme, Colorize, Disableable, Icon, IconName, InteractiveElementExt, Sizable,
+    ActiveTheme, Colorize, Disableable, Icon, InteractiveElementExt,
     animation::ease_out_cubic,
     button::Button,
     h_flex,
@@ -19,13 +17,15 @@ use gpui_component::{
 };
 use gpui_transitions::{Lerp, WindowUseTransition};
 
-use super::TimelineView;
+use super::{
+    BaseTimeDivision, HOUR_DIVIDER_HEIGHT, TimeDivisionState, TimeZoomLevel, TimelineView,
+};
 use crate::{AppIcon, components::Divider};
 
-pub(super) const DEFAULT_HOUR_HEIGHT: Pixels = px(280.);
-pub const HOUR_DIVIDER_HEIGHT: Pixels = px(32.);
 const ZOOM_DURATION: Duration = Duration::from_millis(100);
 const SCROLL_DURATION: Duration = Duration::from_millis(150);
+
+// const UPCOMING_DURATION: ChronoDuration = ChronoDuration::minutes(15);
 
 /// A single interpolation target for a zoom step.
 /// Combining hour_height and scroll into one value guarantees they are evaluated
@@ -44,138 +44,6 @@ impl Lerp for ZoomFrame {
             scroll: self.scroll.lerp(&to.scroll, delta),
         }
     }
-}
-
-fn hour_minute_label(datetime: DateTime<Local>, muted: bool, pm: bool, cx: &App) -> Div {
-    let format = if pm {
-        "%-I:%M %p" // "2:30 PM"
-    } else {
-        "%-I:%M" // "2:30"
-    };
-    let str = datetime.format(format).to_string();
-    div()
-        .child(str)
-        .text_sm()
-        .when(muted, |this| this.text_color(cx.theme().muted_foreground))
-}
-
-fn hour_label(datetime: DateTime<Local>, cx: &App) -> Div {
-    let hour = datetime.hour();
-    let primary = match hour {
-        0 => "12".to_string(),
-        12 => "Noon".to_string(),
-        _ if hour < 13 => format!("{}", hour),
-        _ => format!("{}", hour - 12),
-    };
-
-    let muted = cx.theme().muted_foreground;
-    let primary_color = cx.theme().foreground.mix_oklab(muted, 0.5);
-
-    let secondary = match hour {
-        12 => None,
-        _ if hour < 13 => Some("AM"),
-        _ => Some("PM"),
-    };
-
-    h_flex()
-        .gap_0p5()
-        .items_end()
-        .child(div().child(primary).text_sm().text_color(primary_color))
-        .when_some(secondary, |this, str| {
-            this.child(div().child(str).text_xs().text_color(muted))
-        })
-}
-
-fn time_of_day_label(datetime: DateTime<Local>, cx: &App) -> Div {
-    let hour = datetime.hour();
-    let label = match hour {
-        0 => "Midnight",
-        12 => "Noon",
-        _ if hour < 12 => "Morning",
-        _ if hour < 18 => "Afternoon",
-        _ => "Evening",
-    };
-    div()
-        .child(label)
-        .text_sm()
-        .text_color(cx.theme().muted_foreground)
-}
-
-fn date_label(datetime: DateTime<Local>, minimal: bool, cx: &App) -> Div {
-    let format = match minimal {
-        true => "%e",     // "15"
-        false => "%b %e", // "Mar 15"
-    };
-    let str = datetime.format(format).to_string();
-    div()
-        .child(str)
-        .text_sm()
-        .text_color(cx.theme().muted_foreground)
-}
-
-fn weekday_date_label(datetime: DateTime<Local>, minimal: bool, cx: &App) -> Div {
-    let format = match minimal {
-        true => "%a",     // "Fri"
-        false => "%a %e", // "Fri 15"
-    };
-    let str = datetime.format(format).to_string();
-    div()
-        .child(str)
-        .text_sm()
-        .text_color(cx.theme().muted_foreground)
-}
-
-fn week_start_label(datetime: DateTime<Local>, cx: &App) -> Div {
-    let week = datetime.iso_week().week();
-    let str = format!("W{}", week); // "2024 W11"
-    div()
-        .child(str)
-        .text_sm()
-        .text_color(cx.theme().muted_foreground)
-}
-
-fn month_label(datetime: DateTime<Local>, cx: &App) -> Div {
-    let str = datetime.format("%B").to_string(); // "March"
-    div()
-        .child(str)
-        .text_sm()
-        .text_color(cx.theme().muted_foreground)
-}
-
-fn time_of_year_label(datetime: DateTime<Local>, cx: &App) -> Div {
-    let month = datetime.month();
-    let label = match month {
-        12 | 1 | 2 => "Winter",
-        3 | 4 | 5 => "Spring",
-        6 | 7 | 8 => "Summer",
-        _ => "Fall",
-    };
-    div()
-        .child(label)
-        .text_sm()
-        .text_color(cx.theme().muted_foreground)
-}
-
-fn year_quarter_label(datetime: DateTime<Local>, cx: &App) -> Div {
-    let month = datetime.month();
-    let quarter = match month {
-        1..=3 => "Q1",
-        4..=6 => "Q2",
-        7..=9 => "Q3",
-        _ => "Q4",
-    };
-    div()
-        .child(quarter)
-        .text_sm()
-        .text_color(cx.theme().muted_foreground)
-}
-
-fn year_label(datetime: DateTime<Local>, cx: &App) -> Div {
-    let str = datetime.format("%Y").to_string(); // "2024"
-    div()
-        .child(str)
-        .text_sm()
-        .text_color(cx.theme().muted_foreground)
 }
 
 fn timeline_context_menu(
@@ -219,514 +87,6 @@ fn timeline_context_menu(
 
 // }
 
-pub enum TimeDivisionStyle {
-    HourMinute,
-    Hour,
-    TimeOfDay,
-    MidnightDate,
-    Date,
-    WeekDayDate,
-    DateWeekStart,
-    MonthName,
-    TimeOfYear,
-    YearQuarter,
-    Year,
-}
-
-impl TimeDivisionStyle {
-    pub(super) fn label(&self, datetime: DateTime<Local>, minimal: bool, cx: &App) -> Div {
-        match self {
-            TimeDivisionStyle::HourMinute => match datetime.minute() {
-                0 => hour_label(datetime, cx),
-                _ => hour_minute_label(datetime, minimal, false, cx).text_xs(),
-            },
-            TimeDivisionStyle::Hour => hour_label(datetime, cx),
-            TimeDivisionStyle::TimeOfDay => time_of_day_label(datetime, cx),
-            TimeDivisionStyle::MidnightDate => div(),
-            TimeDivisionStyle::Date => date_label(datetime, minimal, cx),
-            TimeDivisionStyle::WeekDayDate => weekday_date_label(datetime, false, cx),
-            TimeDivisionStyle::DateWeekStart => week_start_label(datetime, cx),
-            TimeDivisionStyle::MonthName => month_label(datetime, cx),
-            TimeDivisionStyle::TimeOfYear => time_of_year_label(datetime, cx),
-            TimeDivisionStyle::YearQuarter => year_quarter_label(datetime, cx),
-            TimeDivisionStyle::Year => year_label(datetime, cx),
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum TimeSubDivision {
-    Minute,
-    FiveMinutes,
-    TenMinutes,
-    QuarterHour,
-    HalfHour,
-    Hour,
-    EvenHour,
-    QuarterDay,
-    HalfDay,
-    Day,
-    Week,
-    Month,
-    QuarterYear,
-}
-
-impl TimeSubDivision {
-    pub(super) fn style(&self) -> TimeDivisionStyle {
-        match self {
-            TimeSubDivision::Minute => TimeDivisionStyle::HourMinute,
-            TimeSubDivision::FiveMinutes => TimeDivisionStyle::HourMinute,
-            TimeSubDivision::TenMinutes => TimeDivisionStyle::HourMinute,
-            TimeSubDivision::QuarterHour => TimeDivisionStyle::HourMinute,
-            TimeSubDivision::HalfHour => TimeDivisionStyle::HourMinute,
-            TimeSubDivision::Hour => TimeDivisionStyle::Hour,
-            TimeSubDivision::EvenHour => TimeDivisionStyle::Hour,
-            TimeSubDivision::QuarterDay => TimeDivisionStyle::TimeOfDay,
-            TimeSubDivision::HalfDay => TimeDivisionStyle::TimeOfDay,
-            TimeSubDivision::Day => TimeDivisionStyle::WeekDayDate,
-            TimeSubDivision::Week => TimeDivisionStyle::DateWeekStart,
-            TimeSubDivision::Month => TimeDivisionStyle::MonthName,
-            TimeSubDivision::QuarterYear => TimeDivisionStyle::YearQuarter,
-        }
-    }
-
-    /// Returns the start of the next subdivision boundary after `start`.
-    /// Sub-hour divisions use fixed durations (DST occurs on hour boundaries,
-    /// so minutes are always exact). Day/Week/Month delegate to the calendar-aware
-    /// `BaseTimeDivision` helpers so DST-affected days are correctly sized.
-    pub(super) fn next_boundary(&self, start: DateTime<Local>) -> DateTime<Local> {
-        match self {
-            TimeSubDivision::Minute => start + ChronoDuration::minutes(1),
-            TimeSubDivision::FiveMinutes => start + ChronoDuration::minutes(5),
-            TimeSubDivision::TenMinutes => start + ChronoDuration::minutes(10),
-            TimeSubDivision::QuarterHour => start + ChronoDuration::minutes(15),
-            TimeSubDivision::HalfHour => start + ChronoDuration::minutes(30),
-            TimeSubDivision::Hour => start + ChronoDuration::hours(1),
-            TimeSubDivision::EvenHour => start + ChronoDuration::hours(2),
-            TimeSubDivision::QuarterDay => start + ChronoDuration::hours(6),
-            TimeSubDivision::HalfDay => start + ChronoDuration::hours(12),
-            TimeSubDivision::Day => BaseTimeDivision::Day.next_boundary(start),
-            TimeSubDivision::Week => {
-                // Advance by exactly 7 calendar days from `start` (assumed to be Monday
-                // midnight), yielding the next Monday midnight in local time.
-                let naive = (start.date_naive() + Days::new(7))
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap();
-                match naive.and_local_timezone(Local) {
-                    LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt,
-                    // Extremely unlikely for a midnight, but fall back to fixed duration.
-                    LocalResult::None => start + ChronoDuration::weeks(1),
-                }
-            }
-            TimeSubDivision::Month => BaseTimeDivision::Month.next_boundary(start),
-            TimeSubDivision::QuarterYear => {
-                let month = start.month();
-                let next_quarter_month = if month <= 3 {
-                    4
-                } else if month <= 6 {
-                    7
-                } else if month <= 9 {
-                    10
-                } else {
-                    1
-                };
-                let (next_year, next_month) = if next_quarter_month == 1 {
-                    (start.year() + 1, 1)
-                } else {
-                    (start.year(), next_quarter_month)
-                };
-                let naive = NaiveDate::from_ymd_opt(next_year, next_month, 1)
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap();
-                match naive.and_local_timezone(Local) {
-                    LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt,
-                    LocalResult::None => start + ChronoDuration::days(92), // Fallback: add ~3 months
-                }
-            }
-        }
-    }
-
-    /// Returns the start of the subdivision period that contains `time`.
-    pub(super) fn floor_boundary(&self, time: DateTime<Local>) -> DateTime<Local> {
-        match self {
-            TimeSubDivision::Minute => time
-                .with_second(0)
-                .and_then(|t| t.with_nanosecond(0))
-                .unwrap(),
-            TimeSubDivision::FiveMinutes => time
-                .with_minute((time.minute() / 5) * 5)
-                .and_then(|t| t.with_second(0))
-                .and_then(|t| t.with_nanosecond(0))
-                .unwrap(),
-            TimeSubDivision::TenMinutes => time
-                .with_minute((time.minute() / 10) * 10)
-                .and_then(|t| t.with_second(0))
-                .and_then(|t| t.with_nanosecond(0))
-                .unwrap(),
-            TimeSubDivision::QuarterHour => time
-                .with_minute((time.minute() / 15) * 15)
-                .and_then(|t| t.with_second(0))
-                .and_then(|t| t.with_nanosecond(0))
-                .unwrap(),
-            TimeSubDivision::HalfHour => time
-                .with_minute((time.minute() / 30) * 30)
-                .and_then(|t| t.with_second(0))
-                .and_then(|t| t.with_nanosecond(0))
-                .unwrap(),
-            TimeSubDivision::Hour => BaseTimeDivision::Hour.floor_boundary(time),
-            TimeSubDivision::EvenHour => {
-                let hour = time.hour();
-                let even_hour = if hour % 2 == 0 { hour } else { hour - 1 };
-                time.with_hour(even_hour)
-                    .and_then(|t| t.with_minute(0))
-                    .and_then(|t| t.with_second(0))
-                    .and_then(|t| t.with_nanosecond(0))
-                    .unwrap()
-            }
-            TimeSubDivision::QuarterDay => {
-                let quarter = (time.hour() / 6) * 6;
-                time.with_hour(quarter)
-                    .and_then(|t| t.with_minute(0))
-                    .and_then(|t| t.with_second(0))
-                    .and_then(|t| t.with_nanosecond(0))
-                    .unwrap()
-            }
-            TimeSubDivision::HalfDay => {
-                let half = if time.hour() < 12 { 0 } else { 12 };
-                time.with_hour(half)
-                    .and_then(|t| t.with_minute(0))
-                    .and_then(|t| t.with_second(0))
-                    .and_then(|t| t.with_nanosecond(0))
-                    .unwrap()
-            }
-            TimeSubDivision::Day => BaseTimeDivision::Day.floor_boundary(time),
-            TimeSubDivision::Week => {
-                // Floor to the most recent Monday midnight (ISO week start).
-                let days_since_monday = time.weekday().num_days_from_monday() as u64;
-                let naive = (time.date_naive() - Days::new(days_since_monday))
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap();
-                match naive.and_local_timezone(Local) {
-                    LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt,
-                    LocalResult::None => time - ChronoDuration::days(days_since_monday as i64),
-                }
-            }
-            TimeSubDivision::Month => BaseTimeDivision::Month.floor_boundary(time),
-            TimeSubDivision::QuarterYear => {
-                let month = time.month();
-                let quarter_start_month = if month <= 3 {
-                    1
-                } else if month <= 6 {
-                    4
-                } else if month <= 9 {
-                    7
-                } else {
-                    10
-                };
-                let naive = NaiveDate::from_ymd_opt(time.year(), quarter_start_month, 1)
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap();
-                match naive.and_local_timezone(Local) {
-                    LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt,
-                    LocalResult::None => {
-                        // Fallback: subtract months until we find a valid date.
-                        let mut candidate = time;
-                        loop {
-                            candidate = candidate - ChronoDuration::days(30);
-                            let naive =
-                                NaiveDate::from_ymd_opt(candidate.year(), quarter_start_month, 1)
-                                    .unwrap()
-                                    .and_hms_opt(0, 0, 0)
-                                    .unwrap();
-                            if let LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) =
-                                naive.and_local_timezone(Local)
-                            {
-                                break dt;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /// Returns the ceil boundary — start of the next period if `time` is not
-    /// already on a boundary, or `time` itself if it is.
-    pub(super) fn ceil_boundary(&self, time: DateTime<Local>) -> DateTime<Local> {
-        let floor = self.floor_boundary(time);
-        if floor == time {
-            time
-        } else {
-            self.next_boundary(floor)
-        }
-    }
-
-    /// Exact duration of the subdivision period that starts at `division_start`.
-    /// The caller should pass a value already on a boundary (from `floor_boundary`
-    /// or a previous `next_boundary` call).
-    pub(super) fn exact_duration(&self, division_start: DateTime<Local>) -> ChronoDuration {
-        self.next_boundary(division_start) - division_start
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum BaseTimeDivision {
-    FiveMinutes,
-    Hour,
-    Day,
-    Month,
-    Year,
-}
-
-impl BaseTimeDivision {
-    /// Returns the start of the next division boundary after `start`.
-    ///
-    /// Sub-day divisions advance by a fixed duration (minutes are always
-    /// exact and hours are always 3600 s of real time regardless of DST —
-    /// spring-forward simply causes the sequence to skip the non-existent
-    /// wall-clock hour, and fall-back produces two items with the same
-    /// wall-clock label). Day/Month/Year use calendar arithmetic so their
-    /// boundaries always land on midnight / first-of-month / Jan 1 in local
-    /// time, correctly producing 23 h, 24 h, or 25 h days and exact
-    /// month/year lengths.
-    pub(super) fn next_boundary(&self, start: DateTime<Local>) -> DateTime<Local> {
-        match self {
-            BaseTimeDivision::FiveMinutes => start + ChronoDuration::minutes(5),
-            BaseTimeDivision::Hour => start + ChronoDuration::hours(1),
-            BaseTimeDivision::Day => {
-                let naive = (start.date_naive() + Days::new(1))
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap();
-                match naive.and_local_timezone(Local) {
-                    LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt,
-                    // Midnight can't reasonably be a spring-forward gap, but handle
-                    // it defensively by adding 24 h of real time.
-                    LocalResult::None => start + ChronoDuration::hours(24),
-                }
-            }
-            BaseTimeDivision::Month => {
-                let (next_year, next_month) = if start.month() == 12 {
-                    (start.year() + 1, 1)
-                } else {
-                    (start.year(), start.month() + 1)
-                };
-                let naive = NaiveDate::from_ymd_opt(next_year, next_month, 1)
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap();
-                match naive.and_local_timezone(Local) {
-                    LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt,
-                    LocalResult::None => start + ChronoDuration::days(28),
-                }
-            }
-            BaseTimeDivision::Year => {
-                let naive = NaiveDate::from_ymd_opt(start.year() + 1, 1, 1)
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap();
-                match naive.and_local_timezone(Local) {
-                    LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt,
-                    LocalResult::None => start + ChronoDuration::days(365),
-                }
-            }
-        }
-    }
-
-    /// Returns the start of the division period that contains `time`.
-    pub(super) fn floor_boundary(&self, time: DateTime<Local>) -> DateTime<Local> {
-        match self {
-            BaseTimeDivision::FiveMinutes => time
-                .with_minute((time.minute() / 5) * 5)
-                .and_then(|t| t.with_second(0))
-                .and_then(|t| t.with_nanosecond(0))
-                .unwrap(),
-            BaseTimeDivision::Hour => time
-                .with_minute(0)
-                .and_then(|t| t.with_second(0))
-                .and_then(|t| t.with_nanosecond(0))
-                .unwrap(),
-            BaseTimeDivision::Day => {
-                let naive = time.date_naive().and_hms_opt(0, 0, 0).unwrap();
-                match naive.and_local_timezone(Local) {
-                    LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt,
-                    LocalResult::None => {
-                        // Subtract sub-day components as real time if midnight is
-                        // in a spring-forward gap (extremely unlikely).
-                        time - ChronoDuration::seconds(
-                            (time.hour() * 3600 + time.minute() * 60 + time.second()) as i64,
-                        )
-                    }
-                }
-            }
-            BaseTimeDivision::Month => {
-                let naive = NaiveDate::from_ymd_opt(time.year(), time.month(), 1)
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap();
-                match naive.and_local_timezone(Local) {
-                    LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt,
-                    LocalResult::None => time - ChronoDuration::days(time.day() as i64 - 1),
-                }
-            }
-            BaseTimeDivision::Year => {
-                let naive = NaiveDate::from_ymd_opt(time.year(), 1, 1)
-                    .unwrap()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap();
-                match naive.and_local_timezone(Local) {
-                    LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => dt,
-                    LocalResult::None => time - ChronoDuration::days(time.ordinal() as i64 - 1),
-                }
-            }
-        }
-    }
-
-    /// Returns the ceil boundary — start of the next period if `time` is not
-    /// already on a boundary, or `time` itself if it is.
-    pub(super) fn ceil_boundary(&self, time: DateTime<Local>) -> DateTime<Local> {
-        let floor = self.floor_boundary(time);
-        if floor == time {
-            time
-        } else {
-            self.next_boundary(floor)
-        }
-    }
-
-    /// Exact duration of the division that starts at `division_start`.
-    /// The caller should pass a value already on a boundary (from `floor_boundary`
-    /// or a previous `next_boundary` call).
-    pub(super) fn exact_duration(&self, division_start: DateTime<Local>) -> ChronoDuration {
-        self.next_boundary(division_start) - division_start
-    }
-
-    /// The `TimeDivisionStyle` used to render each item's primary label.
-    pub(super) fn base_label_style(&self) -> TimeDivisionStyle {
-        match self {
-            BaseTimeDivision::FiveMinutes => TimeDivisionStyle::HourMinute,
-            BaseTimeDivision::Hour => TimeDivisionStyle::Hour,
-            BaseTimeDivision::Day => TimeDivisionStyle::WeekDayDate,
-            BaseTimeDivision::Month => TimeDivisionStyle::MonthName,
-            BaseTimeDivision::Year => TimeDivisionStyle::Year,
-        }
-    }
-
-    /// Returns `true` when `time` is the first item of an outer division
-    /// (e.g. midnight for Hour, the 1st of the month for Day).
-    pub(super) fn is_outer_boundary(&self, time: DateTime<Local>) -> bool {
-        match self {
-            BaseTimeDivision::FiveMinutes => time.minute() == 0,
-            BaseTimeDivision::Hour => time.hour() == 0,
-            BaseTimeDivision::Day => time.day() == 1,
-            BaseTimeDivision::Month => time.month() == 1,
-            BaseTimeDivision::Year => false,
-        }
-    }
-
-    /// The label string shown on the right side of an outer-boundary divider line.
-    /// Returns `None` for Year (no outer) or if the time is not a boundary.
-    pub(super) fn outer_label(&self, time: DateTime<Local>) -> Option<String> {
-        match self {
-            // Outer of FiveMinutes is Hour → show e.g. "2 PM"
-            BaseTimeDivision::FiveMinutes => Some(time.format("%-I %p").to_string()),
-            // Outer of Hour is Day → show e.g. "Mon 15"
-            BaseTimeDivision::Hour => Some(time.format("%a %-d").to_string()),
-            // Outer of Day is Month → show e.g. "March 2024"
-            BaseTimeDivision::Day => Some(time.format("%B").to_string()),
-            // Outer of Month is Year → show e.g. "2024"
-            BaseTimeDivision::Month => Some(time.format("%Y").to_string()),
-            BaseTimeDivision::Year => None,
-        }
-    }
-
-    pub(super) fn outer_division(&self) -> Option<BaseTimeDivision> {
-        match self {
-            BaseTimeDivision::FiveMinutes => Some(BaseTimeDivision::Hour),
-            BaseTimeDivision::Hour => Some(BaseTimeDivision::Day),
-            BaseTimeDivision::Day => Some(BaseTimeDivision::Month),
-            BaseTimeDivision::Month => Some(BaseTimeDivision::Year),
-            BaseTimeDivision::Year => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum TimeZoomLevel {
-    ZoomedIn,
-    Normal,
-    ZoomedOut,
-    ZoomedOutFar,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct TimeDivisionState {
-    pub base_division: BaseTimeDivision,
-    pub zoom_level: TimeZoomLevel,
-}
-
-impl TimeDivisionState {
-    pub(super) fn current_subdivision(&self) -> Option<TimeSubDivision> {
-        match self.zoom_level {
-            TimeZoomLevel::ZoomedIn => match self.base_division {
-                BaseTimeDivision::FiveMinutes => Some(TimeSubDivision::Minute),
-                BaseTimeDivision::Hour => Some(TimeSubDivision::FiveMinutes),
-                BaseTimeDivision::Day => Some(TimeSubDivision::Hour),
-                BaseTimeDivision::Month => Some(TimeSubDivision::Day),
-                BaseTimeDivision::Year => Some(TimeSubDivision::Month),
-            },
-            TimeZoomLevel::Normal => match self.base_division {
-                BaseTimeDivision::FiveMinutes => Some(TimeSubDivision::Minute),
-                BaseTimeDivision::Hour => Some(TimeSubDivision::TenMinutes),
-                BaseTimeDivision::Day => Some(TimeSubDivision::EvenHour),
-                BaseTimeDivision::Month => Some(TimeSubDivision::Week),
-                BaseTimeDivision::Year => Some(TimeSubDivision::QuarterYear),
-            },
-            TimeZoomLevel::ZoomedOut => match self.base_division {
-                BaseTimeDivision::FiveMinutes => None,
-                BaseTimeDivision::Hour => Some(TimeSubDivision::QuarterHour),
-                BaseTimeDivision::Day => Some(TimeSubDivision::HalfDay),
-                BaseTimeDivision::Month => None,
-                BaseTimeDivision::Year => None,
-            },
-            TimeZoomLevel::ZoomedOutFar => match self.base_division {
-                BaseTimeDivision::FiveMinutes => None,
-                BaseTimeDivision::Hour => None,
-                BaseTimeDivision::Day => None,
-                BaseTimeDivision::Month => None,
-                BaseTimeDivision::Year => None,
-            },
-        }
-    }
-}
-
-/// Floor a datetime to the nearest fixed-duration boundary within the current day.
-/// Used for sub-hour tick positioning where divisions are always uniform.
-/// For calendar-aware flooring (Day/Month/Year), use `BaseTimeDivision::floor_boundary`.
-#[allow(dead_code)]
-pub(super) fn floor_division(division: ChronoDuration, time: DateTime<Local>) -> DateTime<Local> {
-    let secs = division.as_seconds_f32() as i64;
-    let day_start = time
-        .with_hour(0)
-        .and_then(|t| t.with_minute(0))
-        .and_then(|t| t.with_second(0))
-        .and_then(|t| t.with_nanosecond(0))
-        .unwrap();
-    let elapsed = (time - day_start).num_seconds();
-    let floored_secs = (elapsed / secs) * secs;
-    day_start + ChronoDuration::seconds(floored_secs)
-}
-
-#[allow(dead_code)]
-pub(super) fn ceil_division(division: ChronoDuration, time: DateTime<Local>) -> DateTime<Local> {
-    let floor = floor_division(division, time);
-    if floor == time {
-        time
-    } else {
-        floor + division
-    }
-}
-
 impl TimelineView {
     /// Ensure the hour list has the right number of entries, and that all entries have the specified height
     /// Recomputes the pixel height of every list item based on the current
@@ -743,7 +103,7 @@ impl TimelineView {
                 .item_start_times
                 .get(i)
                 .map(|&t| {
-                    let secs = division.exact_duration(t).num_seconds() as f32;
+                    let secs = division.exact_duration(t).as_seconds_f32();
                     hour_height * (secs / 3600.0)
                 })
                 .unwrap_or(hour_height);
@@ -849,7 +209,8 @@ impl TimelineView {
         // scale), not `old_hour_height`.  Using the old scale when jumping many
         // levels at once (e.g. Year→Hour on zoom-reset) produces thousands of
         // items because the old items were enormous — causing GPU buffer overflow.
-        let approx_item_hours = new_div.exact_duration(center_floor).num_seconds() as f32 / 3600.0;
+        let approx_item_hours =
+            new_div.exact_duration(center_floor).as_seconds_f32() as f32 / 3600.0;
         let item_height_at_new_h = (new_hour_height * approx_item_hours).max(px(1.));
         let center_y_in_items =
             ((center_y - HOUR_DIVIDER_HEIGHT / 2.0) / item_height_at_new_h).max(0.0);
@@ -870,7 +231,7 @@ impl TimelineView {
         // Exact hours from the new list origin to the centre time.
         // This value is the same whether we use old_hour_height or new_hour_height
         // to express it in pixels — it just scales differently.
-        let center_hours = (center_time - new_start).num_seconds() as f32 / 3600.0;
+        let center_hours = (center_time - new_start).as_seconds_f32() / 3600.0;
 
         // Scroll at the START of the animation: centre_time at centre_y, with
         // item heights still computed from old_hour_height.
@@ -957,15 +318,15 @@ impl TimelineView {
     }
 
     pub fn time_to_offset(&self, time: DateTime<Local>) -> Pixels {
-        let elapsed_secs = (time - self.start).num_seconds();
+        let elapsed_secs = (time - self.start).as_seconds_f32();
         self.scroll_offset()
-            + self.hour_height * (elapsed_secs as f32 / 3600.0)
+            + self.hour_height * (elapsed_secs / 3600.0)
             + (HOUR_DIVIDER_HEIGHT / 2.)
     }
 
     /// Pixel height for a `chrono::Duration`.
     pub fn duration_to_height(&self, duration: ChronoDuration) -> Pixels {
-        self.hour_height * (duration.num_seconds() as f32 / 3600.0)
+        self.hour_height * (duration.as_seconds_f32() / 3600.0)
     }
 
     pub(super) fn position_to_time(&self, position: Point<Pixels>) -> DateTime<Local> {
@@ -1013,15 +374,15 @@ impl TimelineView {
                 base_division: BaseTimeDivision::FiveMinutes,
                 zoom_level: TimeZoomLevel::ZoomedOut,
             },
-            2 => TimeDivisionState {
+            1..=2 => TimeDivisionState {
                 base_division: BaseTimeDivision::Hour,
                 zoom_level: TimeZoomLevel::ZoomedIn,
             },
-            0..=1 => TimeDivisionState {
-                base_division: BaseTimeDivision::Hour,
-                zoom_level: TimeZoomLevel::Normal,
-            },
-            -1 => TimeDivisionState {
+            // 1 => TimeDivisionState {
+            //     base_division: BaseTimeDivision::Hour,
+            //     zoom_level: TimeZoomLevel::Normal,
+            // },
+            -1..=0 => TimeDivisionState {
                 base_division: BaseTimeDivision::Hour,
                 zoom_level: TimeZoomLevel::ZoomedOut,
             },
@@ -1116,9 +477,9 @@ impl TimelineView {
     //     self.current_hour_division().floor_division(time)
     // }
 
-    fn day_height(&self) -> Pixels {
-        self.hour_height * 24.
-    }
+    // fn day_height(&self) -> Pixels {
+    //     self.hour_height * 24.
+    // }
 
     pub(super) fn center_relative(&self) -> Point<Pixels> {
         self.bounds
@@ -1147,6 +508,13 @@ impl TimelineView {
     //     let point = point(px(0.), )
     // }
 
+    pub(super) fn scroll_by(&mut self, duration: ChronoDuration, cx: &mut Context<Self>) {
+        let base = self.scroll_target.unwrap_or_else(|| self.scroll_offset());
+        let dist = self.duration_to_height(duration);
+        self.scroll_to(base - dist);
+        cx.notify();
+    }
+
     pub(super) fn scroll_next_hour(&mut self, cx: &mut Context<Self>) {
         let base = self.scroll_target.unwrap_or_else(|| self.scroll_offset());
         let new_offset = (base / self.hour_height).round() * self.hour_height - self.hour_height;
@@ -1163,23 +531,23 @@ impl TimelineView {
         cx.notify();
     }
 
-    pub(super) fn scroll_next_day(&mut self, cx: &mut Context<Self>) {
-        let base = self.scroll_target.unwrap_or_else(|| self.scroll_offset());
-        // let new_offset = (base / self.day_height()).round() * self.day_height() - self.day_height();
-        let new_offset = base - self.day_height();
-        self.scroll_target = Some(new_offset);
-        self.pending_scroll_transition = Some(new_offset);
-        cx.notify();
-    }
+    // pub(super) fn scroll_next_day(&mut self, cx: &mut Context<Self>) {
+    //     let base = self.scroll_target.unwrap_or_else(|| self.scroll_offset());
+    //     // let new_offset = (base / self.day_height()).round() * self.day_height() - self.day_height();
+    //     let new_offset = base - self.day_height();
+    //     self.scroll_target = Some(new_offset);
+    //     self.pending_scroll_transition = Some(new_offset);
+    //     cx.notify();
+    // }
 
-    pub(super) fn scroll_previous_day(&mut self, cx: &mut Context<Self>) {
-        let base = self.scroll_target.unwrap_or_else(|| self.scroll_offset());
-        // let new_offset = (base / self.day_height()).round() * self.day_height() + self.day_height();
-        let new_offset = base + self.day_height();
-        self.scroll_target = Some(new_offset);
-        self.pending_scroll_transition = Some(new_offset);
-        cx.notify();
-    }
+    // pub(super) fn scroll_previous_day(&mut self, cx: &mut Context<Self>) {
+    //     let base = self.scroll_target.unwrap_or_else(|| self.scroll_offset());
+    //     // let new_offset = (base / self.day_height()).round() * self.day_height() + self.day_height();
+    //     let new_offset = base + self.day_height();
+    //     self.scroll_target = Some(new_offset);
+    //     self.pending_scroll_transition = Some(new_offset);
+    //     cx.notify();
+    // }
 
     pub(super) fn can_zoom_in(&self) -> bool {
         self.zoom_state.can_zoom_in()
@@ -1345,7 +713,7 @@ impl TimelineView {
 
         if now_in_range {
             // Simple path: animate the scroll handle to centre 'now'.
-            let elapsed_secs = (now - self.start).num_seconds() as f32;
+            let elapsed_secs = (now - self.start).as_seconds_f32();
             let target = center_y - d - self.hour_height * (elapsed_secs / 3600.0);
             self.scroll_target = Some(target);
             self.pending_scroll_transition = Some(target);
@@ -1354,8 +722,7 @@ impl TimelineView {
             // 'now', then animate from a point ¼-viewport away in the approach
             // direction so the transition feels like a deliberate scroll.
             let now_floor = division.floor_boundary(now);
-            let approx_item_hours =
-                division.exact_duration(now_floor).num_seconds() as f32 / 3600.0;
+            let approx_item_hours = division.exact_duration(now_floor).as_seconds_f32() / 3600.0;
             let item_height = (self.hour_height * approx_item_hours).max(px(1.));
             let viewport_items = (viewport_height / item_height).ceil() as usize;
 
@@ -1367,7 +734,7 @@ impl TimelineView {
             let new_start = Self::step_back_n_divisions(division, now_floor, n_past);
 
             // Target: 'now' at the viewport centre.
-            let now_secs = (now - new_start).num_seconds() as f32;
+            let now_secs = (now - new_start).as_seconds_f32();
             let target_scroll = center_y - d - self.hour_height * (now_secs / 3600.0);
 
             // Approach direction: start ¼-viewport away on the side we're coming from.
@@ -1558,8 +925,7 @@ impl TimelineView {
             // Near the top: slide the window backward to load more past.
             if visible_range.start < buffer {
                 let new_start = Self::step_back_n_divisions(division, self.start, chunk);
-                let delta =
-                    self.hour_height * ((self.start - new_start).num_seconds() as f32 / 3600.0);
+                let delta = self.hour_height * ((self.start - new_start).as_seconds_f32() / 3600.0);
                 self.loaded_divisions.start += chunk as i64;
                 self.loaded_divisions.end += chunk as i64;
                 self.start = new_start;
@@ -1572,8 +938,7 @@ impl TimelineView {
             // Far from the top: slide the window forward to trim past.
             if visible_range.start > 3 * buffer && self.item_start_times.len() > chunk {
                 let new_start = self.item_start_times[chunk];
-                let delta =
-                    self.hour_height * ((new_start - self.start).num_seconds() as f32 / 3600.0);
+                let delta = self.hour_height * ((new_start - self.start).as_seconds_f32() / 3600.0);
                 self.loaded_divisions.start -= chunk as i64;
                 self.loaded_divisions.end -= chunk as i64;
                 self.start = new_start;
@@ -1626,7 +991,7 @@ impl TimelineView {
                     // Trim head: advance `self.start` and compensate scroll.
                     let new_start = self.item_start_times[trim_start];
                     let delta =
-                        self.hour_height * ((new_start - self.start).num_seconds() as f32 / 3600.0);
+                        self.hour_height * ((new_start - self.start).as_seconds_f32() / 3600.0);
                     self.start = new_start;
                     self.scroll_to(self.scroll_offset() + delta);
                     // Keep zoom_scroll_target in same coordinate system.
@@ -1719,6 +1084,7 @@ impl TimelineView {
                         match &ti.item {
                             simple_core::AnyItem::Action(_) => entry.0 += 1,
                             simple_core::AnyItem::Event(_) => entry.1 += 1,
+                            simple_core::AnyItem::Routine(_) => entry.0 += 1,
                         }
                     }
                 }
@@ -1749,7 +1115,7 @@ impl TimelineView {
                             view.start + ChronoDuration::seconds(((-scroll) / hh * 3600.0) as i64);
                         let outer_start = outer_div.floor_boundary(top_time);
                         let boundary_y =
-                            hh * (outer_start - view.start).num_seconds() as f32 / 3600.0 + scroll;
+                            hh * (outer_start - view.start).as_seconds_f32() / 3600.0 + scroll;
                         if boundary_y < px(0.) {
                             Some(outer_start)
                         } else {
@@ -1776,7 +1142,7 @@ impl TimelineView {
                             let mut tick_t = sub.next_boundary(item_time);
                             let mut result = vec![];
                             while tick_t < item_end {
-                                let elapsed_secs = (tick_t - item_time).num_seconds() as f32;
+                                let elapsed_secs = (tick_t - item_time).as_seconds_f32().round();
                                 let tick_y = HOUR_DIVIDER_HEIGHT / 2.0
                                     + hour_height * (elapsed_secs / 3600.0);
                                 let label = sub
@@ -2095,7 +1461,7 @@ impl TimelineView {
 
         // Viewport-relative y of the outer-boundary list item.
         let boundary_y =
-            hour_height * (outer_start - self.start).num_seconds() as f32 / 3600.0 + scroll;
+            hour_height * (outer_start - self.start).as_seconds_f32() / 3600.0 + scroll;
 
         // While the boundary item is still on screen the in-list label is visible—no sticky needed.
         if boundary_y >= px(0.) {
@@ -2107,7 +1473,7 @@ impl TimelineView {
         // Viewport y of the *next* outer boundary (drives the push-up animation).
         let next_outer = outer_div.next_boundary(outer_start);
         let next_boundary_y =
-            hour_height * (next_outer - self.start).num_seconds() as f32 / 3600.0 + scroll;
+            hour_height * (next_outer - self.start).as_seconds_f32() / 3600.0 + scroll;
         let sticky_top = if next_boundary_y < HOUR_DIVIDER_HEIGHT {
             next_boundary_y - HOUR_DIVIDER_HEIGHT
         } else {
@@ -2134,7 +1500,7 @@ impl TimelineView {
         // let color = cx.theme().red_light.mix_oklab(cx.theme().foreground, 0.8);
         let color = cx.theme().red.mix_oklab(cx.theme().foreground, 0.8);
 
-        let label = match self.current_division_state().base_division {
+        let time_label = match self.current_division_state().base_division {
             BaseTimeDivision::FiveMinutes | BaseTimeDivision::Hour | BaseTimeDivision::Day => {
                 now.format("%-I:%M").to_string()
             }
@@ -2142,6 +1508,39 @@ impl TimelineView {
             BaseTimeDivision::Year => now.format("%B").to_string(),
         };
 
+        // let upcoming = self
+        //     .items
+        //     .iter()
+        //     .filter(|item| item.item.time_local().is_some())
+        //     .find(|item| {
+        //         let time = item.item.time_local().unwrap();
+        //         time > now && time - now < UPCOMING_DURATION
+        //     });
+        // let upcoming_label = upcoming.map(|item| {
+        //     let time = item.item.time_local().unwrap();
+        //     let delta = time - now;
+        //     let delta_seconds = delta.as_seconds_f32();
+        //     let p = delta_seconds / UPCOMING_DURATION.as_seconds_f32();
+
+        //     let delta_minutes = delta_seconds / 60.;
+        //     let time_label = format!("in {}m", delta_minutes.round());
+        //     let color = cx.theme().green.mix_oklab(cx.theme().red, p);
+        //     let size = px(20. * (1. - p / 2.));
+        //     h_flex()
+        //         .items_center()
+        //         .gap_1()
+        //         .child(
+        //             Label::new(time_label)
+        //                 .text_color(color)
+        //                 .text_size(size)
+        //                 .line_height(size * 1.25),
+        //         )
+        //         .child(
+        //             Label::new(item.item.title())
+        //                 .text_sm()
+        //                 .text_color(cx.theme().muted_foreground), // .line_height(size * 1.5),
+        //         )
+        // });
         h_flex()
             .absolute()
             .top(self.time_to_offset(now) - HOUR_DIVIDER_HEIGHT / 2.)
@@ -2156,8 +1555,69 @@ impl TimelineView {
                     .border_color(cx.theme().border)
                     .bg(cx.theme().background.alpha(0.8))
                     .rounded_xl()
-                    .child(Label::new(label).text_sm().text_color(color)),
+                    .child(Label::new(time_label).text_sm().text_color(color)),
             )
-            .child(Divider::horizontal().color(color).flex_1())
+            .child(
+                h_flex()
+                    .w_full()
+                    .child(Divider::horizontal().color(color).flex_1())
+                    // .when_some(upcoming_label, |this, label| {
+                    //     this.child(
+                    //         div()
+                    //             // .mx_1()
+                    //             .px(px(7.))
+                    //             .border_1()
+                    //             .border_color(cx.theme().border)
+                    //             .bg(cx.theme().background.alpha(0.8))
+                    //             .rounded_xl()
+                    //             .child(label),
+                    //     )
+                    //     .child(Divider::horizontal().color(color).w_2())
+                    // })
+                    .when(false, |this| this),
+            )
     }
+
+    // pub(super) fn render_upcoming_arrow(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
+    //     let now = Local::now();
+    //     // let color = cx.theme().red_light.mix_oklab(cx.theme().foreground, 0.8);
+    //     let color = cx.theme().red.mix_oklab(cx.theme().foreground, 0.8);
+
+    //     let upcoming = self
+    //         .items
+    //         .iter()
+    //         .filter(|item| item.item.time_local().is_some())
+    //         .find(|item| {
+    //             let time = item.item.time_local().unwrap();
+    //             time > now && time - now < UPCOMING_DURATION
+    //         });
+    //     upcoming.map(|item| {
+    //         let time = item.item.time_local().unwrap();
+    //         let delta = time - now;
+    //         let delta_seconds = delta.as_seconds_f32();
+    //         let height = self.duration_to_height(delta);
+    //         let p = delta_seconds / UPCOMING_DURATION.as_seconds_f32();
+
+    //         let color = cx.theme().green.mix_oklab(cx.theme().red, p);
+    //         v_flex()
+    //             .absolute()
+    //             .h(height)
+    //             .top(self.time_to_offset(now))
+    //             .right_2()
+    //             .items_center()
+    //             .child(Divider::vertical_dashed().color(color).h_full())
+    //         // .gap_1()
+    //         // .child(
+    //         //     Label::new(time_label)
+    //         //         .text_color(color)
+    //         //         .text_size(size)
+    //         //         .line_height(size * 1.25),
+    //         // )
+    //         // .child(
+    //         //     Label::new(item.item.title())
+    //         //         .text_sm()
+    //         //         .text_color(cx.theme().muted_foreground), // .line_height(size * 1.5),
+    //         // )
+    //     })
+    // }
 }

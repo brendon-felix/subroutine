@@ -7,11 +7,11 @@ use axum::{
 use chrono::Utc;
 use uuid::Uuid;
 
-use simple_core::{Action, ActionState, ChangeEvent, DEFAULT_ACTION_DURATION};
+use simple_core::{Action, ActionState, ChangeEvent, DEFAULT_ACTION_DURATION, quantize};
 
 use crate::{db, error::Result, state::AppState};
 
-use simple_api::{ActionDto, CompleteResult};
+use simple_core::CompleteResult;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -27,47 +27,42 @@ pub fn router() -> Router<AppState> {
 }
 
 /// GET /actions — list all non-deleted actions
-async fn list_actions(State(state): State<AppState>) -> Result<Json<Vec<ActionDto>>> {
+async fn list_actions(State(state): State<AppState>) -> Result<Json<Vec<Action>>> {
     let actions = db::actions::fetch_all(&state.pool).await?;
-    Ok(Json(actions.into_iter().map(ActionDto::from).collect()))
+    Ok(Json(actions))
 }
 
 /// POST /actions — create a new action (server generates ID)
 async fn create_action(
     State(state): State<AppState>,
-    Json(dto): Json<ActionDto>,
-) -> Result<(StatusCode, Json<ActionDto>)> {
-    let mut action = Action::from(dto);
+    Json(mut action): Json<Action>,
+) -> Result<(StatusCode, Json<Action>)> {
     // Ensure the action starts in a valid initial state
     if !action.is_backlogged() {
         action.backlog(None);
     }
     db::actions::upsert(&state.pool, &action).await?;
     let _ = state.changes.send(ChangeEvent::ActionsChanged);
-    Ok((StatusCode::CREATED, Json(ActionDto::from(action))))
+    Ok((StatusCode::CREATED, Json(action)))
 }
 
 /// GET /actions/{id} — fetch a single action
-async fn get_action(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> Result<Json<ActionDto>> {
+async fn get_action(State(state): State<AppState>, Path(id): Path<Uuid>) -> Result<Json<Action>> {
     let action = db::actions::fetch_by_id(&state.pool, id)
         .await?
         .ok_or_else(|| crate::error::AppError::not_found(format!("action {id} not found")))?;
-    Ok(Json(ActionDto::from(action)))
+    Ok(Json(action))
 }
 
 /// PUT /actions/{id} — upsert an action (sync-friendly, ID from body)
 async fn upsert_action(
     State(state): State<AppState>,
     Path(_id): Path<Uuid>,
-    Json(dto): Json<ActionDto>,
-) -> Result<Json<ActionDto>> {
-    let action = Action::from(dto);
+    Json(action): Json<Action>,
+) -> Result<Json<Action>> {
     db::actions::upsert(&state.pool, &action).await?;
     let _ = state.changes.send(ChangeEvent::ActionsChanged);
-    Ok(Json(ActionDto::from(action)))
+    Ok(Json(action))
 }
 
 /// DELETE /actions/{id} — soft-delete an action
@@ -86,8 +81,8 @@ async fn trash_action(State(state): State<AppState>, Path(id): Path<Uuid>) -> Re
 async fn queue_action(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<Vec<ActionDto>>> {
-    let now = Utc::now();
+) -> Result<Json<Vec<Action>>> {
+    let now = quantize(Utc::now());
     let mut all_actions: Vec<Action> = db::actions::fetch_all(&state.pool).await?;
     let events = db::events::fetch_all(&state.pool).await?;
 
@@ -105,7 +100,7 @@ async fn queue_action(
         .max()
         .unwrap_or(now);
 
-    let slot = chain_end.max(now);
+    let slot = quantize(chain_end.max(now));
 
     // Queue the target action.
     let action = all_actions
@@ -134,14 +129,14 @@ async fn queue_action(
     }
 
     let _ = state.changes.send(ChangeEvent::PipelineChanged);
-    Ok(Json(changed.into_iter().map(ActionDto::from).collect()))
+    Ok(Json(changed))
 }
 
 /// POST /actions/{id}/backlog — return an action to the backlog
 async fn backlog_action(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<ActionDto>> {
+) -> Result<Json<Action>> {
     let mut action: Action = db::actions::fetch_by_id(&state.pool, id)
         .await?
         .ok_or_else(|| crate::error::AppError::not_found(format!("action {id} not found")))?;
@@ -149,7 +144,7 @@ async fn backlog_action(
     action.backlog(None);
     db::actions::upsert(&state.pool, &action).await?;
     let _ = state.changes.send(ChangeEvent::ActionsChanged);
-    Ok(Json(ActionDto::from(action)))
+    Ok(Json(action))
 }
 
 /// POST /actions/{id}/complete — mark an action complete and compute next occurrence
@@ -157,7 +152,7 @@ async fn complete_action(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<CompleteResult>> {
-    let now = Utc::now();
+    let now = quantize(Utc::now());
     let mut action: Action = db::actions::fetch_by_id(&state.pool, id)
         .await?
         .ok_or_else(|| crate::error::AppError::not_found(format!("action {id} not found")))?;
@@ -172,8 +167,8 @@ async fn complete_action(
 
     let _ = state.changes.send(ChangeEvent::PipelineChanged);
     Ok(Json(CompleteResult {
-        completed: ActionDto::from(action),
-        next: next.map(ActionDto::from),
+        completed: action,
+        next,
     }))
 }
 
@@ -181,12 +176,12 @@ async fn complete_action(
 async fn clear_action_duration(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-) -> Result<Json<ActionDto>> {
+) -> Result<Json<Action>> {
     let mut action: Action = db::actions::fetch_by_id(&state.pool, id)
         .await?
         .ok_or_else(|| crate::error::AppError::not_found(format!("action {id} not found")))?;
     action.duration = None;
     db::actions::upsert(&state.pool, &action).await?;
     let _ = state.changes.send(ChangeEvent::ActionsChanged);
-    Ok(Json(ActionDto::from(action)))
+    Ok(Json(action))
 }

@@ -4,10 +4,13 @@ use axum::{
     http::StatusCode,
     routing::{delete, get, post, put},
 };
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
+use serde::Deserialize;
 use uuid::Uuid;
 
-use simple_core::{Action, ActionState, ActionTarget, ChangeEvent, Routine};
+use simple_core::{
+    Action, ActionState, ActionTarget, ChangeEvent, Routine, quantize, quantize_duration,
+};
 
 use crate::{db, error::Result, state::AppState};
 
@@ -70,22 +73,29 @@ async fn trash_routine(State(state): State<AppState>, Path(id): Path<Uuid>) -> R
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct InstantiateRequest {
+    start_time: Option<DateTime<Utc>>,
+}
+
 /// POST /routines/{id}/instantiate — create queued actions from a routine's steps
 async fn instantiate_routine(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
+    Json(body): Json<InstantiateRequest>,
 ) -> Result<Json<Vec<Action>>> {
     let routine: Routine = db::routines::fetch_by_id(&state.pool, id)
         .await?
         .ok_or_else(|| crate::error::AppError::not_found(format!("routine {id} not found")))?;
 
-    let now = Utc::now();
+    let start = quantize(body.start_time.unwrap_or_else(Utc::now));
     let default_duration = Duration::minutes(15);
-    let mut cursor = now;
+    let mut cursor = start;
     let mut actions: Vec<Action> = Vec::new();
 
     for step in &routine.steps {
-        let duration = step.duration.unwrap_or(default_duration);
+        let duration = quantize_duration(step.duration.unwrap_or(default_duration));
         let action = Action::new(step.title.clone())
             .with_origin_routine(routine.id)
             .with_duration(duration)

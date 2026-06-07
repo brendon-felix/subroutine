@@ -185,3 +185,22 @@ impl<T: Copy + Mul<f32, Output = T>> ZoomState<T> {
         self.zoom < 1.0
     }
 }
+
+// /// Extension trait that adds `on_prepaint` to any `ParentElement`.
+// pub trait ElementExt: ParentElement + Sized {
+//     fn on_prepaint<F>(self, f: F) -> Self
+//     where
+//         F: FnOnce(Bounds<Pixels>, &mut Window, &mut App) + 'static,
+//     {
+//         self.child(
+//             canvas(
+//                 move |bounds, window, cx| f(bounds, window, cx),
+//                 |_, _, _, _| {},
+//             )
+//             .absolute()
+//             .size_full(),
+//         )
+//     }
+// }
+
+// impl<T: ParentElement> ElementExt for T {}

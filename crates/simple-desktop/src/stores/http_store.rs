@@ -1,9 +1,11 @@
 use std::thread;
 
+use chrono::{DateTime, Utc};
 use flume;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global};
-use simple_api::ActionDto;
-use simple_core::{Action, ActionState, AnyItem, Event, Routine, next_queue_slot};
+use simple_core::{
+    Action, ActionState, AllData, AnyItem, CompleteResult, Event, Routine, next_queue_slot,
+};
 use uuid::Uuid;
 
 // ── Status / events ───────────────────────────────────────────────────────────
@@ -26,27 +28,10 @@ pub struct RoutineDataChanged;
 
 // ── Internal channel payload types ───────────────────────────────────────────
 
-struct FetchAllResult {
-    actions: Vec<Action>,
-    events: Vec<Event>,
-    routines: Vec<Routine>,
-}
-
-pub struct CompleteResult {
-    pub completed: Action,
-    pub next: Option<Action>,
-}
-
-// ── Worker command channel ────────────────────────────────────────────────────
-//
-// Each variant carries a one-shot response sender.  The background tokio thread
-// makes the HTTP request and sends the result back; the GPUI side awaits it
-// inside cx.spawn (smol can drive flume's recv_async future).
-
 type Reply<T> = flume::Sender<Result<T, String>>;
 
 enum Cmd {
-    FetchAll(Reply<FetchAllResult>),
+    FetchAll(Reply<AllData>),
     // Simple CRUD
     UpsertAction(Action, Reply<()>),
     DeleteAction(Uuid, Reply<()>),
@@ -56,14 +41,14 @@ enum Cmd {
     DeleteRoutine(Uuid, Reply<()>),
     // Combined create + follow-up, sequenced atomically in the worker
     UpsertAndQueueAction(Action, Reply<Vec<Action>>),
-    UpsertAndScheduleEvent(Event, Reply<Event>),
-    UpsertAndInstantiateRoutine(Routine, Reply<Vec<Action>>),
+    // UpsertAndScheduleEvent(Event, Reply<Event>),
+    UpsertAndInstantiateRoutine(Routine, Option<DateTime<Utc>>, Reply<Vec<Action>>),
     // State transitions
     CompleteAction(Uuid, Reply<CompleteResult>),
     QueueAction(Uuid, Reply<Vec<Action>>),
     ClearActionDuration(Uuid, Reply<Action>),
     BacklogAction(Uuid, Reply<Action>),
-    InstantiateRoutine(Uuid, Reply<Vec<Action>>),
+    InstantiateRoutine(Uuid, Option<DateTime<Utc>>, Reply<Vec<Action>>),
     RefreshPipeline(Reply<Vec<Action>>),
     ExpeditePipeline(Reply<Vec<Action>>),
 }
@@ -130,6 +115,9 @@ impl AppDatabaseStore {
                     store.routines = data.routines;
                     store.status = StoreStatus::Ready;
                     cx.emit(DataChanged);
+                    cx.emit(ActionDataChanged);
+                    cx.emit(EventDataChanged);
+                    cx.emit(RoutineDataChanged);
                     cx.notify();
                 }
                 Err(e) => {
@@ -242,9 +230,9 @@ impl AppDatabaseStore {
 
     // ── Read API ──────────────────────────────────────────────────────────────
 
-    pub fn is_ready(&self) -> bool {
-        self.status == StoreStatus::Ready
-    }
+    // pub fn is_ready(&self) -> bool {
+    //     self.status == StoreStatus::Ready
+    // }
 
     pub fn actions(&self) -> Vec<Action> {
         self.actions.clone()
@@ -268,6 +256,21 @@ impl AppDatabaseStore {
 
     pub fn get_event(&self, id: Uuid) -> Option<Event> {
         self.events.iter().find(|e| e.id == id).cloned()
+    }
+
+    pub fn sorted_timeline(&self) -> Vec<AnyItem> {
+        let mut items: Vec<AnyItem> = self
+            .actions
+            .iter()
+            .filter(|a| a.is_queued() || a.is_completed())
+            .map(|a| AnyItem::Action(a.clone()))
+            .chain(self.events.iter().map(|e| AnyItem::Event(e.clone())))
+            .collect();
+        items.sort_by_key(|item| {
+            item.time()
+                .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC)
+        });
+        items
     }
 
     pub fn sorted_queue(&self) -> Vec<AnyItem> {
@@ -404,27 +407,32 @@ impl AppDatabaseStore {
         );
     }
 
-    pub fn upsert_and_schedule_event(&mut self, event: Event, cx: &mut Context<Self>) {
-        self.upsert_event_local(event.clone());
-        cx.emit(EventDataChanged);
-        cx.emit(DataChanged);
-        cx.notify();
+    // pub fn upsert_and_schedule_event(&mut self, event: Event, cx: &mut Context<Self>) {
+    //     self.upsert_event_local(event.clone());
+    //     cx.emit(EventDataChanged);
+    //     cx.emit(DataChanged);
+    //     cx.notify();
 
-        let (tx, rx) = flume::bounded(1);
-        self.dispatch(
-            Cmd::UpsertAndScheduleEvent(event, tx),
-            rx,
-            cx,
-            |store, event: Event, cx| {
-                store.upsert_event_local(event);
-                cx.emit(EventDataChanged);
-                cx.emit(DataChanged);
-                cx.notify();
-            },
-        );
-    }
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(
+    //         Cmd::UpsertAndScheduleEvent(event, tx),
+    //         rx,
+    //         cx,
+    //         |store, event: Event, cx| {
+    //             store.upsert_event_local(event);
+    //             cx.emit(EventDataChanged);
+    //             cx.emit(DataChanged);
+    //             cx.notify();
+    //         },
+    //     );
+    // }
 
-    pub fn upsert_and_instantiate_routine(&mut self, routine: Routine, cx: &mut Context<Self>) {
+    pub fn upsert_and_instantiate_routine(
+        &mut self,
+        routine: Routine,
+        start_time: Option<DateTime<Utc>>,
+        cx: &mut Context<Self>,
+    ) {
         self.upsert_routine_local(routine.clone());
         cx.emit(RoutineDataChanged);
         cx.emit(DataChanged);
@@ -432,7 +440,7 @@ impl AppDatabaseStore {
 
         let (tx, rx) = flume::bounded(1);
         self.dispatch(
-            Cmd::UpsertAndInstantiateRoutine(routine, tx),
+            Cmd::UpsertAndInstantiateRoutine(routine, start_time, tx),
             rx,
             cx,
             |store, actions: Vec<Action>, cx| {
@@ -546,10 +554,15 @@ impl AppDatabaseStore {
         );
     }
 
-    pub fn instantiate_routine(&mut self, id: Uuid, cx: &mut Context<Self>) {
+    pub fn instantiate_routine(
+        &mut self,
+        id: Uuid,
+        start_time: Option<DateTime<Utc>>,
+        cx: &mut Context<Self>,
+    ) {
         let (tx, rx) = flume::bounded(1);
         self.dispatch(
-            Cmd::InstantiateRoutine(id, tx),
+            Cmd::InstantiateRoutine(id, start_time, tx),
             rx,
             cx,
             |store, actions: Vec<Action>, cx| {
@@ -656,15 +669,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .and_then(|r| r.error_for_status())
                 .map_err(|e| e.to_string());
             let result = match result {
-                Ok(resp) => resp
-                    .json::<simple_api::AllData>()
-                    .await
-                    .map(|d| FetchAllResult {
-                        actions: d.actions.into_iter().map(Action::from).collect(),
-                        events: d.events,
-                        routines: d.routines,
-                    })
-                    .map_err(|e| e.to_string()),
+                Ok(resp) => resp.json::<AllData>().await.map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
             let _ = tx.send(result);
@@ -673,7 +678,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
         Cmd::UpsertAction(action, tx) => {
             let result = client
                 .put(format!("{base}/api/actions/{}", action.id))
-                .json(&ActionDto::from(action))
+                .json(&action)
                 .send()
                 .await
                 .and_then(|r| r.error_for_status())
@@ -698,7 +703,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
             // PUT first — must complete before the server can queue it.
             let put = client
                 .put(format!("{base}/api/actions/{id}"))
-                .json(&ActionDto::from(action.clone()))
+                .json(&action.clone())
                 .send()
                 .await
                 .and_then(|r| r.error_for_status())
@@ -720,9 +725,9 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                         .map_err(|e| e.to_string());
                     match r {
                         Ok(resp) => resp
-                            .json::<Vec<ActionDto>>()
+                            .json::<Vec<Action>>()
                             .await
-                            .map(|v| v.into_iter().map(Action::from).collect())
+                            .map(|v| v)
                             .map_err(|e| e.to_string()),
                         Err(e) => Err(e),
                     }
@@ -731,23 +736,22 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
             let _ = tx.send(result);
         }
 
-        Cmd::UpsertAndScheduleEvent(event, tx) => {
-            // Events always have an explicit time; just PUT and return the echo.
-            let result = client
-                .put(format!("{base}/api/events/{}", event.id))
-                .json(&event)
-                .send()
-                .await
-                .and_then(|r| r.error_for_status())
-                .map_err(|e| e.to_string());
-            let result = match result {
-                Ok(_) => Ok(event),
-                Err(e) => Err(e),
-            };
-            let _ = tx.send(result);
-        }
-
-        Cmd::UpsertAndInstantiateRoutine(routine, tx) => {
+        // Cmd::UpsertAndScheduleEvent(event, tx) => {
+        //     // Events always have an explicit time; just PUT and return the echo.
+        //     let result = client
+        //         .put(format!("{base}/api/events/{}", event.id))
+        //         .json(&event)
+        //         .send()
+        //         .await
+        //         .and_then(|r| r.error_for_status())
+        //         .map_err(|e| e.to_string());
+        //     let result = match result {
+        //         Ok(_) => Ok(event),
+        //         Err(e) => Err(e),
+        //     };
+        //     let _ = tx.send(result);
+        // }
+        Cmd::UpsertAndInstantiateRoutine(routine, start_time, tx) => {
             let id = routine.id;
             // PUT the routine first, then instantiate it.
             let put = client
@@ -761,17 +765,21 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
             let result = match put {
                 Err(e) => Err(e),
                 Ok(_) => {
+                    let body = serde_json::json!({
+                        "start_time": start_time,
+                    });
                     let r = client
                         .post(format!("{base}/api/routines/{id}/instantiate"))
+                        .json(&body)
                         .send()
                         .await
                         .and_then(|r| r.error_for_status())
                         .map_err(|e| e.to_string());
                     match r {
                         Ok(resp) => resp
-                            .json::<Vec<ActionDto>>()
+                            .json::<Vec<Action>>()
                             .await
-                            .map(|v| v.into_iter().map(Action::from).collect())
+                            .map(|v| v)
                             .map_err(|e| e.to_string()),
                         Err(e) => Err(e),
                     }
@@ -789,12 +797,8 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<simple_api::CompleteResult>()
+                    .json::<CompleteResult>()
                     .await
-                    .map(|r| CompleteResult {
-                        completed: Action::from(r.completed),
-                        next: r.next.map(Action::from),
-                    })
                     .map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
@@ -809,11 +813,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .and_then(|r| r.error_for_status())
                 .map_err(|e| e.to_string());
             let result = match result {
-                Ok(resp) => resp
-                    .json::<ActionDto>()
-                    .await
-                    .map(Action::from)
-                    .map_err(|e| e.to_string()),
+                Ok(resp) => resp.json::<Action>().await.map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
             let _ = tx.send(result);
@@ -828,9 +828,9 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<Vec<ActionDto>>()
+                    .json::<Vec<Action>>()
                     .await
-                    .map(|v| v.into_iter().map(Action::from).collect())
+                    .map(|v| v)
                     .map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
@@ -845,11 +845,7 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .and_then(|r| r.error_for_status())
                 .map_err(|e| e.to_string());
             let result = match result {
-                Ok(resp) => resp
-                    .json::<ActionDto>()
-                    .await
-                    .map(Action::from)
-                    .map_err(|e| e.to_string()),
+                Ok(resp) => resp.json::<Action>().await.map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
             let _ = tx.send(result);
@@ -901,18 +897,22 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
             let _ = tx.send(result);
         }
 
-        Cmd::InstantiateRoutine(id, tx) => {
+        Cmd::InstantiateRoutine(id, start_time, tx) => {
+            let body = serde_json::json!({
+                "start_time": start_time,
+            });
             let result = client
                 .post(format!("{base}/api/routines/{id}/instantiate"))
+                .json(&body)
                 .send()
                 .await
                 .and_then(|r| r.error_for_status())
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<Vec<ActionDto>>()
+                    .json::<Vec<Action>>()
                     .await
-                    .map(|v| v.into_iter().map(Action::from).collect())
+                    .map(|v| v)
                     .map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
@@ -928,9 +928,9 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<Vec<ActionDto>>()
+                    .json::<Vec<Action>>()
                     .await
-                    .map(|v| v.into_iter().map(Action::from).collect())
+                    .map(|v| v)
                     .map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };
@@ -946,9 +946,9 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 .map_err(|e| e.to_string());
             let result = match result {
                 Ok(resp) => resp
-                    .json::<Vec<ActionDto>>()
+                    .json::<Vec<Action>>()
                     .await
-                    .map(|v| v.into_iter().map(Action::from).collect())
+                    .map(|v| v)
                     .map_err(|e| e.to_string()),
                 Err(e) => Err(e),
             };

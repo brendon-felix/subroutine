@@ -10,7 +10,6 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["fo
 gpui-component = { git = "https://github.com/longbridge/gpui-component" }
 gpui_transitions = { git = "https://github.com/brendon-felix/gpui_transitions" }
 
-simple-api = { path = "../simple-api" }
 simple-core = { path = "../simple-core" }
 simple-parser = { path = "../simple-parser" }
 open = { workspace = true }

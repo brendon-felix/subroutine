@@ -2,8 +2,8 @@ use std::{rc::Rc, time::Duration};
 
 use gpui::{
     Animation, AnimationExt, AnyElement, App, Div, ElementId, InteractiveElement, IntoElement,
-    ParentElement, Pixels, RenderOnce, SharedString, StatefulInteractiveElement, StyleRefinement,
-    Styled, Window, div, prelude::FluentBuilder as _, px, relative, rems, svg,
+    ParentElement, RenderOnce, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
+    prelude::FluentBuilder as _, px, relative, rems, svg,
 };
 use gpui_component::{
     ActiveTheme, Colorize, Disableable, Icon, IconName, IconNamed, Selectable, Sizable, Size,
@@ -11,11 +11,6 @@ use gpui_component::{
 };
 
 use crate::components::FocusableExt;
-
-// pub(crate) trait FocusableExt<T: ParentElement + Styled + Sized> {
-//     /// Add focus ring to the element.
-//     fn focus_ring(self, is_focused: bool, margins: Pixels, window: &Window, cx: &App) -> Self;
-// }
 
 /// A Checkbox element.
 #[derive(IntoElement)]
@@ -31,9 +26,9 @@ pub struct Checkbox {
     tab_stop: bool,
     tab_index: isize,
     on_click: Option<Rc<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
-    // tooltip: ComponentTooltip,
 }
 
+#[allow(unused)]
 impl Checkbox {
     /// Create a new Checkbox with the given id.
     pub fn new(id: impl Into<ElementId>) -> Self {

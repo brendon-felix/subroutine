@@ -54,11 +54,7 @@ pub struct BacklogView {
 impl BacklogView {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let scroll_handle = VirtualListScrollHandle::new();
-        let item_sizes = Rc::new(
-            (0..10)
-                .map(|_| Size::new(Pixels::default(), ITEM_HEIGHT))
-                .collect(),
-        );
+        let item_sizes = Rc::new(vec![]);
 
         let db_store = AppDatabaseStore::global(cx);
 
@@ -175,7 +171,6 @@ impl BacklogView {
                             let preview_colors = colors;
                             let is_completing = completing_items.contains(&action_id);
                             let drag_data = DragData::new(item)
-                                .with_label(title.clone())
                                 .with_preview(move || {
                                     render_backlog_item_preview(
                                         preview_colors,
@@ -220,11 +215,7 @@ impl BacklogView {
                                                             },
                                                         )),
                                                     )
-                                                    .child(
-                                                        Label::new(title)
-                                                            .text_sm()
-                                                            .text_color(muted_fg),
-                                                    ),
+                                                    .child(Label::new(title).text_sm()),
                                             ),
                                     ),
                             )

@@ -1,5 +1,5 @@
 use axum::{Json, Router, extract::State, routing::get};
-use simple_api::{ActionDto, AllData};
+use simple_core::AllData;
 
 use crate::{db, error::Result, state::AppState};
 
@@ -14,7 +14,7 @@ async fn get_all_data(State(state): State<AppState>) -> Result<Json<AllData>> {
         db::routines::fetch_all(&state.pool),
     )?;
     Ok(Json(AllData {
-        actions: actions.into_iter().map(ActionDto::from).collect(),
+        actions,
         events,
         routines,
     }))

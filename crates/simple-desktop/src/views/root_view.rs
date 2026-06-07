@@ -1,23 +1,29 @@
-use std::cmp::max;
-
 use gpui::{
     AppContext, Context, Entity, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
-    KeyBinding, ParentElement, Render, Styled, Window, actions, div, prelude::FluentBuilder, px,
+    KeyBinding, ParentElement, Render, StatefulInteractiveElement, Styled, Window, actions, div,
+    prelude::FluentBuilder, px,
 };
 use gpui_component::{
-    ActiveTheme, Colorize, Root, Sizable, StyledExt, WindowExt, h_flex,
+    ActiveTheme, Colorize, Icon, IconName, Root, Sizable,
+    button::{Button, ButtonVariants},
+    h_flex,
     tab::{Tab, TabBar},
+    tooltip::Tooltip,
     v_flex,
 };
 
 use crate::{
+    AppIcon,
     components::{
         CloseOverlay,
         panel_group::{
             CenterPanel, NavigationBar, PanelGroup, PanelGroupState, SidePanel, SidePanelState,
         },
     },
-    views::{ActionCreator, BacklogView, EventCreator, PipelineView, RoutineCreator},
+    views::{
+        ActionCreator, AllItemsView, BacklogView, EventCreator, PipelineView, RoutineCreator,
+        RoutinesView, SelectedPipelineView,
+    },
 };
 
 actions!(
@@ -44,11 +50,15 @@ pub enum CurrentOverlay {
 #[repr(u8)]
 enum RightSidebarTab {
     Backlog = 0,
+    Routines = 1,
+    SavedItems = 2,
 }
 
 pub struct RootView {
     pipeline_view: Entity<PipelineView>,
     backlog_view: Entity<BacklogView>,
+    routines_view: Entity<RoutinesView>,
+    saved_items_view: Entity<AllItemsView>,
     layout_state: Entity<PanelGroupState>,
     right_sidebar_tab: RightSidebarTab,
     current_overlay: Option<(CurrentOverlay, Option<FocusHandle>)>,
@@ -58,6 +68,8 @@ impl RootView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let pipeline_view = cx.new(|cx| PipelineView::new(window, cx));
         let backlog_view = cx.new(|cx| BacklogView::new(cx));
+        let routines_view = cx.new(|cx| RoutinesView::new(cx));
+        let saved_items_view = cx.new(|cx| AllItemsView::new(window, cx));
 
         cx.bind_keys([
             KeyBinding::new("cmd-n", StartActionCreator, None),
@@ -83,6 +95,8 @@ impl RootView {
         Self {
             pipeline_view,
             backlog_view,
+            routines_view,
+            saved_items_view,
             layout_state,
             right_sidebar_tab: RightSidebarTab::Backlog,
             current_overlay: None,
@@ -113,7 +127,9 @@ impl Render for RootView {
 
         let navbar_left_pad = (px(24. * 4.) - left_panel_width).max(px(2. * 4.));
 
-        let tabbar_height = px(48.);
+        let selected_pipeline_view = self.pipeline_view.read(cx).selected_view();
+
+        // let tabbar_height = px(48.);
 
         v_flex()
             .absolute()
@@ -210,16 +226,65 @@ impl Render for RootView {
                                             // .border_color(cx.theme().border)
                                             .child(
                                                 TabBar::new("right-sidebar-tabs")
-                                                    .pill()
+                                                    .outline()
+                                                    // .pill()
                                                     // .size_full()
                                                     .rounded_none()
                                                     // .underline()
                                                     // .w_full()
                                                     // .items_center()
                                                     .selected_index(selected_tab as usize)
-                                                    .child(Tab::new().flex_1().label("Backlog"))
-                                                    .child(Tab::new().flex_1().label("Routines"))
-                                                    .child(Tab::new().flex_1().label("Saved")),
+                                                    .child(
+                                                        Tab::new()
+                                                            .flex_1()
+                                                            .icon(Icon::new(AppIcon::Archive))
+                                                            // .label("Backlog")
+                                                            .tooltip(|window, cx| {
+                                                                Tooltip::new("Backlog")
+                                                                    .build(window, cx)
+                                                            })
+                                                            .on_click(cx.listener(
+                                                                |view, _, _, cx| {
+                                                                    view.right_sidebar_tab =
+                                                                        RightSidebarTab::Backlog;
+                                                                    cx.notify();
+                                                                },
+                                                            )),
+                                                    )
+                                                    .child(
+                                                        Tab::new()
+                                                            .flex_1()
+                                                            .icon(Icon::new(AppIcon::Repeat))
+                                                            // .label("Routines")
+                                                            .tooltip(|window, cx| {
+                                                                Tooltip::new("Routines")
+                                                                    .build(window, cx)
+                                                            })
+                                                            .on_click(cx.listener(
+                                                                |view, _, _, cx| {
+                                                                    view.right_sidebar_tab =
+                                                                        RightSidebarTab::Routines;
+                                                                    cx.notify();
+                                                                },
+                                                            )),
+                                                    )
+                                                    .child(
+                                                        Tab::new()
+                                                            .flex_1()
+                                                            .icon(Icon::new(AppIcon::Save))
+                                                            // .label("Saved")
+                                                            .tooltip(|window, cx| {
+                                                                Tooltip::new("Saved items")
+                                                                    .build(window, cx)
+                                                            })
+                                                            .on_click(cx.listener(
+                                                                |view, _, _, cx| {
+                                                                    view.right_sidebar_tab =
+                                                                        RightSidebarTab::SavedItems;
+                                                                    cx.notify();
+                                                                },
+                                                            )),
+                                                    ),
                                             ),
                                     )
                                     .child(
@@ -233,10 +298,19 @@ impl Render for RootView {
                                             // .right_0()
                                             .flex_1()
                                             .overflow_hidden()
-                                            .child(div().flex_1().min_h_0().w_full().when(
-                                                selected_tab == RightSidebarTab::Backlog,
-                                                |this| this.child(self.backlog_view.clone()),
-                                            )),
+                                            .child(div().flex_1().min_h_0().w_full().map(|this| {
+                                                match selected_tab {
+                                                    RightSidebarTab::Backlog => {
+                                                        this.child(self.backlog_view.clone())
+                                                    }
+                                                    RightSidebarTab::Routines => {
+                                                        this.child(self.routines_view.clone())
+                                                    }
+                                                    RightSidebarTab::SavedItems => {
+                                                        this.child(self.saved_items_view.clone())
+                                                    }
+                                                }
+                                            })),
                                     ),
                             ),
                     ),
@@ -273,21 +347,75 @@ impl Render for RootView {
                             });
                         }
                     })
-                    .gap_2()
+                    .gap_4()
                     .child(
                         h_flex()
                             .size_full()
-                            .gap_2()
+                            .gap_8()
                             .p_2()
                             .child(
-                                div()
-                                    .size_full()
-                                    .rounded_xl()
-                                    .border_1()
-                                    .border_color(cx.theme().border)
-                                    .bg(cx.theme().background.mix_oklab(gpui::black(), 0.95)),
+                                Button::new("new-item")
+                                    .outline()
+                                    .icon(Icon::new(IconName::Plus))
+                                    .rounded_full()
+                                    .text_2xl(),
                             )
-                            .opacity(0.5),
+                            .child(
+                                TabBar::new("main-tabbar")
+                                    .outline()
+                                    .selected_index(selected_pipeline_view as usize)
+                                    .child(
+                                        Tab::new()
+                                            .icon(Icon::new(AppIcon::Timeline))
+                                            // .label("Timeline")
+                                            .tooltip(|window, cx| {
+                                                Tooltip::new("Timeline view").build(window, cx)
+                                            })
+                                            .on_click(cx.listener(|view, event, window, cx| {
+                                                view.pipeline_view.update(cx, |pipeline, cx| {
+                                                    pipeline.select_view(
+                                                        SelectedPipelineView::Timeline,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                            })),
+                                    )
+                                    .child(
+                                        Tab::new()
+                                            .icon(Icon::new(AppIcon::ListChecks))
+                                            // .label("Queue")
+                                            .tooltip(|window, cx| {
+                                                Tooltip::new("Queue view").build(window, cx)
+                                            })
+                                            .on_click(cx.listener(|view, event, window, cx| {
+                                                view.pipeline_view.update(cx, |pipeline, cx| {
+                                                    pipeline.select_view(
+                                                        SelectedPipelineView::Queue,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                            })),
+                                    )
+                                    .child(
+                                        Tab::new()
+                                            .icon(Icon::new(AppIcon::ScanEye))
+                                            // .label("Focus")
+                                            .tooltip(|window, cx| {
+                                                Tooltip::new("Focus mode").build(window, cx)
+                                            })
+                                            .on_click(cx.listener(|view, event, window, cx| {
+                                                view.pipeline_view.update(cx, |pipeline, cx| {
+                                                    pipeline.select_view(
+                                                        SelectedPipelineView::Focus,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                            })),
+                                    ),
+                            ),
                     ),
             )
             .when_some(

@@ -8,7 +8,6 @@ name = "simple-server"
 path = "src/main.rs"
 
 [dependencies]
-simple-api = { path = "../simple-api" }
 simple-core = { path = "../simple-core" }
 axum = { workspace = true }
 tokio = { workspace = true }

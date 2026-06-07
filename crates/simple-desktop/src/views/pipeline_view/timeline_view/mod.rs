@@ -10,12 +10,10 @@ use gpui::{
     App, AsyncApp, Bounds, Context, DragMoveEvent, Element, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, GlobalElementId, InteractiveElement, IntoElement, KeyBinding,
     MouseUpEvent, ParentElement, PinchEvent, Pixels, Point, Render, Size, Styled, Subscription,
-    Window, actions, anchored, deferred, div, prelude::FluentBuilder, px,
+    Window, actions, anchored, deferred, prelude::FluentBuilder, px,
 };
-use gpui_component::input::InputState;
-use gpui_component::{
-    ActiveTheme, ElementExt, VirtualListScrollHandle, h_flex, label::Label, menu::PopupMenu, v_flex,
-};
+use gpui_component::{ActiveTheme, input::InputState};
+use gpui_component::{ElementExt, VirtualListScrollHandle, h_flex, menu::PopupMenu, v_flex};
 use uuid::Uuid;
 
 use crate::{
@@ -25,11 +23,14 @@ use crate::{
 };
 use simple_core::AnyItem;
 
+mod divisions;
 mod items;
 mod timeline;
 
+use divisions::*;
 use items::*;
-use timeline::*;
+
+pub const HOUR_DIVIDER_HEIGHT: Pixels = px(32.);
 
 actions!([
     ZoomIn,
@@ -253,10 +254,18 @@ impl TimelineView {
         // })
         // .detach();
 
-        cx.spawn(async move |this, cx: &mut AsyncApp| {
+        cx.spawn(async move |view, cx: &mut AsyncApp| {
+            let mut last_tick = Local::now();
             loop {
-                cx.background_executor().timer(Duration::from_secs(1)).await;
-                let result = this.update(cx, |_, cx| cx.notify());
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
+                let result = view.update(cx, |view, cx| {
+                    let now = Local::now();
+                    let delta = now - last_tick;
+                    last_tick = now;
+                    view.scroll_by(delta, cx);
+                });
                 if result.is_err() {
                     break;
                 };
@@ -318,28 +327,28 @@ impl TimelineView {
         }
     }
 
-    fn render_header(&self, cx: &App) -> impl IntoElement {
-        let current_pos = self.scroll_offset();
-        let current_pos_hours = (current_pos * -1.0 / self.hour_height).floor() as i32;
+    // fn render_header(&self, cx: &App) -> impl IntoElement {
+    //     let current_pos = self.scroll_offset();
+    //     let current_pos_hours = (current_pos * -1.0 / self.hour_height).floor() as i32;
 
-        let relative_date_str = match current_pos_hours {
-            ..24 => "yesterday".to_string(),
-            24..48 => "today".to_string(),
-            48..72 => "tomorrow".to_string(),
-            72.. => format!("in {} days", (current_pos_hours - 24) / 24),
-        };
-        let absolute_date_str = (self.start + ChronoDuration::hours(current_pos_hours as i64))
-            .format("%a %b %-d")
-            .to_string();
-        // let date_str = format!("{:+} hours", current_pos_hours);
-        let date_str = format!("{} - {}", absolute_date_str, relative_date_str);
-        h_flex()
-            .justify_end()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .p_2()
-            .child(Label::new(date_str).text_sm())
-    }
+    //     let relative_date_str = match current_pos_hours {
+    //         ..24 => "yesterday".to_string(),
+    //         24..48 => "today".to_string(),
+    //         48..72 => "tomorrow".to_string(),
+    //         72.. => format!("in {} days", (current_pos_hours - 24) / 24),
+    //     };
+    //     let absolute_date_str = (self.start + ChronoDuration::hours(current_pos_hours as i64))
+    //         .format("%a %b %-d")
+    //         .to_string();
+    //     // let date_str = format!("{:+} hours", current_pos_hours);
+    //     let date_str = format!("{} - {}", absolute_date_str, relative_date_str);
+    //     h_flex()
+    //         .justify_end()
+    //         .border_b_1()
+    //         .border_color(cx.theme().border)
+    //         .p_2()
+    //         .child(Label::new(date_str).text_sm())
+    // }
 
     pub fn drop_zone(&self) -> DropZone<DragData<AnyItem>> {
         DropZone::new("timeline-drop")
@@ -358,6 +367,8 @@ impl Render for TimelineView {
 
         v_flex()
             .track_focus(&self.focus_handle)
+            // .border_t_1()
+            // .border_color(cx.theme().border)
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom_in(cx)))
             .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom_out(cx)))
             .on_action(cx.listener(|this, _: &ZoomReset, _, cx| this.zoom_reset(cx)))
@@ -426,6 +437,7 @@ impl Render for TimelineView {
                     }))
                     .child(self.render_division_list(window, cx))
                     .child(self.render_now_cursor(cx))
+                    // .children(self.render_upcoming_arrow(cx))
                     .children(self.render_sticky_outer_label(cx))
                     .when_some(self.active_drop, |this, drop| {
                         this.child(self.render_active_drop(drop, cx))

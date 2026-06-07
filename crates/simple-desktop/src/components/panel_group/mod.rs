@@ -1,334 +1,25 @@
-use std::{ops::Range, rc::Rc, time::Duration};
+use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, AppContext as _, Bounds, Context, Element, ElementId, Empty, Entity,
-    InteractiveElement, IntoElement, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render,
-    RenderOnce, StatefulInteractiveElement, Style, StyleRefinement, Styled, Window, canvas, div,
-    prelude::FluentBuilder, px,
+    App, AppContext as _, Bounds, Context, Element, ElementId, Empty, Entity, IntoElement,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render, RenderOnce, Style,
+    StyleRefinement, Styled, Window, div, prelude::FluentBuilder, px,
 };
-use gpui_component::{
-    IconName, StyledExt,
-    button::{Button, ButtonVariants},
-    h_flex, v_flex,
-};
+use gpui_component::{ElementExt, StyledExt, h_flex};
 use gpui_transitions::WindowUseTransition;
-use smallvec::SmallVec;
 
 use crate::transitions::ease_in_out;
 
+mod center_panel;
+mod navigation_bar;
 mod resize_handle;
-use resize_handle::resize_handle;
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-/// Extension trait that adds `on_prepaint` to any `ParentElement`.
-trait ElementExt: ParentElement + Sized {
-    fn on_prepaint<F>(self, f: F) -> Self
-    where
-        F: FnOnce(Bounds<Pixels>, &mut Window, &mut App) + 'static,
-    {
-        self.child(
-            canvas(
-                move |bounds, window, cx| f(bounds, window, cx),
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .size_full(),
-        )
-    }
-}
-
-impl<T: ParentElement> ElementExt for T {}
-
-// ── constants ─────────────────────────────────────────────────────────────────
+mod side_panel;
+pub use center_panel::*;
+pub use navigation_bar::*;
+use resize_handle::*;
+pub use side_panel::*;
 
 const SLIDE_DURATION_MS: u64 = 100;
-
-// ── NavigationBar ─────────────────────────────────────────────────────────────
-
-#[derive(IntoElement)]
-pub struct NavigationBar {
-    base: gpui::Div,
-    // style: StyleRefinement,
-    left_panel_open: Option<bool>,
-    right_panel_open: Option<bool>,
-    on_toggle_left: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
-    on_toggle_right: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
-    /// Extra left padding to add when the left panel is closed, to avoid the
-    /// toggle button being obscured by the macOS traffic light controls.
-    /// Interpolated smoothly via the panel open/close transition.
-    traffic_light_padding: Pixels,
-    children: SmallVec<[AnyElement; 8]>,
-}
-
-impl NavigationBar {
-    pub fn new() -> Self {
-        Self {
-            base: h_flex(),
-            // style: StyleRefinement::default(),
-            left_panel_open: None,
-            right_panel_open: None,
-            on_toggle_left: None,
-            on_toggle_right: None,
-            traffic_light_padding: px(0.),
-            children: SmallVec::new(),
-        }
-    }
-
-    /// Sets the animated extra left padding for the toggle button to clear the
-    /// macOS traffic light controls when the left panel is closed.
-    pub fn traffic_light_padding(mut self, padding: Pixels) -> Self {
-        self.traffic_light_padding = padding;
-        self
-    }
-
-    pub fn left_panel_open(mut self, open: bool) -> Self {
-        self.left_panel_open = Some(open);
-        self
-    }
-
-    pub fn right_panel_open(mut self, open: bool) -> Self {
-        self.right_panel_open = Some(open);
-        self
-    }
-
-    pub fn on_toggle_left(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
-        self.on_toggle_left = Some(Rc::new(f));
-        self
-    }
-
-    pub fn on_toggle_right(mut self, f: impl Fn(&mut Window, &mut App) + 'static) -> Self {
-        self.on_toggle_right = Some(Rc::new(f));
-        self
-    }
-}
-
-impl Styled for NavigationBar {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
-    }
-}
-
-impl ParentElement for NavigationBar {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements);
-    }
-}
-
-impl RenderOnce for NavigationBar {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let on_toggle_left = self.on_toggle_left;
-        let on_toggle_right = self.on_toggle_right;
-        let traffic_light_padding = self.traffic_light_padding;
-
-        self.base
-            .items_center()
-            // .justify_between()
-            .when_some(self.left_panel_open, |this, open| {
-                let on_toggle = on_toggle_left.clone();
-                this.child(
-                    div().pl(traffic_light_padding).child(
-                        Button::new("left-panel-button")
-                            .size_6()
-                            .ghost()
-                            .when_else(
-                                open,
-                                |btn| btn.icon(IconName::PanelLeftClose),
-                                |btn| btn.icon(IconName::PanelLeftOpen),
-                            )
-                            .when_some(on_toggle, |btn, callback| {
-                                btn.on_click(move |_, window, cx| callback(window, cx))
-                            }),
-                    ),
-                )
-            })
-            .child(
-                h_flex()
-                    .h_full()
-                    .items_center()
-                    .flex_1()
-                    .children(self.children),
-            )
-            .when_some(self.right_panel_open, |this, open| {
-                let on_toggle = on_toggle_right.clone();
-                this.child(
-                    Button::new("right-panel-button")
-                        .size_6()
-                        .ghost()
-                        .when_else(
-                            open,
-                            |btn| btn.icon(IconName::PanelRightClose),
-                            |btn| btn.icon(IconName::PanelRightOpen),
-                        )
-                        .when_some(on_toggle, |btn, callback| {
-                            btn.on_click(move |_, window, cx| callback(window, cx))
-                        }),
-                )
-            })
-    }
-}
-
-// ── CenterPanel ───────────────────────────────────────────────────────────────
-
-#[derive(IntoElement)]
-pub struct CenterPanel {
-    base: gpui::Stateful<gpui::Div>,
-    navigation_bar: Option<NavigationBar>,
-    children: SmallVec<[AnyElement; 8]>,
-}
-
-impl CenterPanel {
-    pub fn new() -> Self {
-        Self {
-            base: div().id("center-panel"),
-            navigation_bar: None,
-            children: SmallVec::new(),
-        }
-    }
-
-    // pub fn navigation_bar(mut self) -> Self {
-    //     self.navigation_bar = Some(NavigationBar::new());
-    //     self
-    // }
-}
-
-impl Styled for CenterPanel {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
-    }
-}
-
-impl InteractiveElement for CenterPanel {
-    fn interactivity(&mut self) -> &mut gpui::Interactivity {
-        self.base.interactivity()
-    }
-}
-
-impl StatefulInteractiveElement for CenterPanel {}
-
-impl ParentElement for CenterPanel {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements);
-    }
-}
-
-impl RenderOnce for CenterPanel {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        self.base.size_full().child(
-            v_flex()
-                .size_full()
-                .when_some(self.navigation_bar, |this, nav| this.child(nav))
-                .children(self.children),
-        )
-    }
-}
-
-// ── SidePanel ────────────────────────────────────────────────────────────────
-
-#[derive(IntoElement)]
-pub struct SidePanel {
-    base: gpui::Stateful<gpui::Div>,
-    width_range: Range<Pixels>,
-    initial_proportion: f32,
-    // start_open: bool,
-}
-
-impl SidePanel {
-    fn new(id: impl Into<ElementId>) -> Self {
-        Self {
-            base: div().id(id),
-            width_range: px(10.)..Pixels::MAX,
-            initial_proportion: 0.25,
-            // start_open: true,
-        }
-    }
-
-    pub fn left() -> Self {
-        Self::new("left-panel")
-    }
-
-    pub fn right() -> Self {
-        Self::new("right-panel")
-    }
-
-    pub fn width_range_open(mut self, range: Range<Pixels>) -> Self {
-        self.width_range = range;
-        self
-    }
-
-    pub fn initial_proportion(mut self, width: f32) -> Self {
-        self.initial_proportion = width;
-        self
-    }
-
-    // pub fn start_open(mut self, open: bool) -> Self {
-    //     self.start_open = open;
-    //     self
-    // }
-}
-
-impl Styled for SidePanel {
-    fn style(&mut self) -> &mut StyleRefinement {
-        self.base.style()
-    }
-}
-
-impl InteractiveElement for SidePanel {
-    fn interactivity(&mut self) -> &mut gpui::Interactivity {
-        self.base.interactivity()
-    }
-}
-
-impl StatefulInteractiveElement for SidePanel {}
-
-impl ParentElement for SidePanel {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.base.extend(elements);
-    }
-}
-
-impl RenderOnce for SidePanel {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        self.base.size_full()
-    }
-}
-
-// ── State ─────────────────────────────────────────────────────────────────────
-
-#[derive(Clone)]
-pub struct SidePanelState {
-    /// The allowed range of pixel widths for this panel when open, used to clamp during resizing.
-    pub width_range: Range<Pixels>,
-    /// The proportion this panel occupies when it is open.
-    pub opened_proportion: f32,
-    /// Whether the panel is open right now (used to drive the slide transition goal).
-    pub open: bool,
-}
-
-impl Default for SidePanelState {
-    fn default() -> Self {
-        Self {
-            width_range: px(10.)..Pixels::MAX,
-            opened_proportion: 0.25,
-            open: true,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct CenterPanelState {
-    // pub min_proportion: f32,
-    pub min_width: Pixels,
-}
-
-impl Default for CenterPanelState {
-    fn default() -> Self {
-        Self {
-            // min_proportion: 0.2,
-            min_width: px(100.),
-        }
-    }
-}
 
 /// Which side panel (if any) is currently being dragged by the user.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -367,9 +58,9 @@ impl PanelGroupState {
         }
     }
 
-    pub fn container_width(&self) -> Pixels {
-        self.bounds.size.width
-    }
+    // pub fn container_width(&self) -> Pixels {
+    //     self.bounds.size.width
+    // }
 
     // fn total_side_proportion(&self) -> f32 {
     //     let left = self
@@ -398,12 +89,12 @@ impl PanelGroupState {
             Some(p) => p,
             None => return,
         };
-        let right_proportion = self
-            .right_panel
-            .as_ref()
-            .filter(|p| p.open)
-            .map(|p| p.opened_proportion)
-            .unwrap_or(0.0);
+        // let right_proportion = self
+        //     .right_panel
+        //     .as_ref()
+        //     .filter(|p| p.open)
+        //     .map(|p| p.opened_proportion)
+        //     .unwrap_or(0.0);
         // let max = (1.0 - self.center_panel.min_proportion - right_proportion)
         //     .max(panel.proportion_range.start);
         let min_proportion = panel.width_range.start / container_width;
@@ -486,7 +177,7 @@ impl Styled for PanelGroup {
 }
 
 impl RenderOnce for PanelGroup {
-    fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = self.state.clone();
         let weak_state = state.downgrade();
 
@@ -602,7 +293,7 @@ impl RenderOnce for PanelGroup {
             px(0.)
         };
 
-        state.update(cx, |s, cx| {
+        state.update(cx, |s, _| {
             s.animated_left_px = left_px;
         });
 
@@ -639,39 +330,39 @@ impl RenderOnce for PanelGroup {
 
         window.request_animation_frame();
 
-        // ── wire navigation bar toggle callbacks ─────────────────────────────
+        // // ── wire navigation bar toggle callbacks ─────────────────────────────
 
-        if let Some(nav) = self.center.navigation_bar.as_mut() {
-            // Reflect current open state in the icons.
-            if let Some(panel) = group_state.left_panel.as_ref() {
-                nav.left_panel_open = Some(panel.open);
-            }
-            if let Some(panel) = group_state.right_panel.as_ref() {
-                nav.right_panel_open = Some(panel.open);
-            }
+        // if let Some(nav) = self.center.navigation_bar.as_mut() {
+        //     // Reflect current open state in the icons.
+        //     if let Some(panel) = group_state.left_panel.as_ref() {
+        //         nav.left_panel_open = Some(panel.open);
+        //     }
+        //     if let Some(panel) = group_state.right_panel.as_ref() {
+        //         nav.right_panel_open = Some(panel.open);
+        //     }
 
-            if self.left.is_some() {
-                let weak = weak_state.clone();
-                nav.on_toggle_left = Some(Rc::new(move |_window, cx| {
-                    weak.update(cx, |state, cx| {
-                        state.toggle_left();
-                        cx.notify();
-                    })
-                    .ok();
-                }));
-            }
+        //     if self.left.is_some() {
+        //         let weak = weak_state.clone();
+        //         nav.on_toggle_left = Some(Rc::new(move |_window, cx| {
+        //             weak.update(cx, |state, cx| {
+        //                 state.toggle_left();
+        //                 cx.notify();
+        //             })
+        //             .ok();
+        //         }));
+        //     }
 
-            if self.right.is_some() {
-                let weak = weak_state.clone();
-                nav.on_toggle_right = Some(Rc::new(move |_window, cx| {
-                    weak.update(cx, |state, cx| {
-                        state.toggle_right();
-                        cx.notify();
-                    })
-                    .ok();
-                }));
-            }
-        }
+        //     if self.right.is_some() {
+        //         let weak = weak_state.clone();
+        //         nav.on_toggle_right = Some(Rc::new(move |_window, cx| {
+        //             weak.update(cx, |state, cx| {
+        //                 state.toggle_right();
+        //                 cx.notify();
+        //             })
+        //             .ok();
+        //         }));
+        //     }
+        // }
 
         // ── build layout ─────────────────────────────────────────────────────
 

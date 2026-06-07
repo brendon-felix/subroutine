@@ -2,7 +2,7 @@ use chrono::{DateTime, Duration, Local, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{Action, ActionState, ActionTarget, Event};
+use crate::{Action, ActionState, ActionTarget, Event, Routine};
 
 pub const DEFAULT_ACTION_DURATION: Duration = Duration::minutes(5);
 // const CONSECUTIVE_GAP_THRESHOLD: Duration = Duration::minutes(5);
@@ -15,8 +15,8 @@ fn action_effective_duration(action: &Action) -> Duration {
 
 fn _quantize_floor(dt: DateTime<Utc>, segment_secs: i64) -> DateTime<Utc> {
     let total_seconds = dt.timestamp();
-    let remainder = total_seconds % segment_secs;
-    dt - Duration::seconds(remainder)
+    let remainder = total_seconds.rem_euclid(segment_secs);
+    DateTime::from_timestamp(total_seconds - remainder, 0).unwrap_or(dt)
 }
 
 /// Round `dt` down to the nearest 5-minute boundary.
@@ -27,22 +27,36 @@ pub fn quantize_floor(dt: DateTime<Utc>) -> DateTime<Utc> {
 fn _quantize(dt: DateTime<Utc>, segment_secs: i64) -> DateTime<Utc> {
     let total_seconds = dt.timestamp();
     let step = segment_secs;
-    let remainder = total_seconds % step;
-    if remainder == 0 {
-        dt
+    let remainder = total_seconds.rem_euclid(step);
+    let target = if remainder == 0 {
+        total_seconds
     } else {
-        dt + Duration::seconds(step - remainder)
-    }
+        total_seconds + (step - remainder)
+    };
+    DateTime::from_timestamp(target, 0).unwrap_or(dt)
 }
 
 pub fn quantize(dt: DateTime<Utc>) -> DateTime<Utc> {
     _quantize(dt, 300) // 5 minutes
 }
 
+/// Round  up to the nearest 5-minute boundary.
+pub fn quantize_duration(duration: Duration) -> Duration {
+    let total_seconds = duration.num_seconds();
+    let step: i64 = 300; // 5 minutes
+    let remainder = total_seconds.rem_euclid(step);
+    if remainder == 0 {
+        duration
+    } else {
+        duration + Duration::seconds(step - remainder)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AnyItem {
     Action(Action),
     Event(Event),
+    Routine(Routine),
 }
 
 impl AnyItem {
@@ -50,6 +64,7 @@ impl AnyItem {
         match self {
             AnyItem::Action(a) => &a.title,
             AnyItem::Event(e) => &e.title,
+            AnyItem::Routine(r) => &r.title,
         }
     }
 
@@ -57,6 +72,7 @@ impl AnyItem {
         match self {
             AnyItem::Action(a) => a.id,
             AnyItem::Event(e) => e.id,
+            AnyItem::Routine(r) => r.id,
         }
     }
 
@@ -65,6 +81,7 @@ impl AnyItem {
         match self {
             AnyItem::Action(a) => a.id.as_u64_pair().1,
             AnyItem::Event(e) => e.id.as_u64_pair().1,
+            AnyItem::Routine(r) => r.id.as_u64_pair().1,
         }
     }
 
@@ -75,6 +92,7 @@ impl AnyItem {
                 _ => None,
             },
             AnyItem::Event(e) => Some(e.time),
+            AnyItem::Routine(_) => None,
         }
     }
 
@@ -85,6 +103,7 @@ impl AnyItem {
                 _ => None,
             },
             AnyItem::Event(e) => Some(e.time.with_timezone(&Local)),
+            AnyItem::Routine(_) => None,
         }
     }
 
@@ -92,6 +111,7 @@ impl AnyItem {
         match self {
             AnyItem::Action(a) => a.duration,
             AnyItem::Event(e) => e.duration,
+            AnyItem::Routine(r) => r.duration(),
         }
     }
 

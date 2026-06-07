@@ -2,7 +2,10 @@ use gpui::{
     AnyElement, ClickEvent, Context, ElementId, Entity, FocusHandle, IntoElement, Pixels,
     SharedString, Window, div, prelude::FluentBuilder, px,
 };
-use gpui::{AppContext, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled};
+use gpui::{
+    AppContext, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled, TextOverflow,
+};
+use gpui_component::Sizable;
 use gpui_component::input::{Input, InputState, Position};
 use gpui_component::{
     ActiveTheme, Icon, IconName, h_flex, label::Label, menu::ContextMenuExt, skeleton::Skeleton,
@@ -10,7 +13,7 @@ use gpui_component::{
 };
 
 use super::super::TimelineView;
-use super::super::timeline::{HOUR_DIVIDER_HEIGHT, TimeSubDivision};
+use super::super::{HOUR_DIVIDER_HEIGHT, TimeSubDivision};
 use super::{
     ATTACHED_ITEM_LEFT, ActiveDropState, ActiveResizeState, FALLBACK_ITEM_DURATION,
     ItemTimelineBounds, META_ROW_HEIGHT, RESCHEDULE_TRANSITION_DURATION, RESIZE_HANDLE_HEIGHT,
@@ -19,7 +22,7 @@ use super::{
 };
 use crate::components::Checkbox;
 use crate::views::format_item_meta;
-use crate::views::pipeline_view::{action_context_menu, event_context_menu};
+use crate::views::pipeline_view::{action_context_menu, event_context_menu, routine_context_menu};
 use crate::{
     components::{DragData, Draggable},
     utils::ButtonColorizeExt,
@@ -375,7 +378,8 @@ impl TimelineView {
                     .left(px(0.))
                     .w_full()
                     .h(title_block_h)
-                    .overflow_hidden()
+                    // .overflow_hidden()
+                    .truncate()
                     .child(
                         h_flex()
                             .w_full()
@@ -386,11 +390,13 @@ impl TimelineView {
                                 let action_id = item_id;
                                 this.child(
                                     Checkbox::new(("complete", item_id.as_u128() as u64))
+                                        .large()
                                         .checked(is_completing)
                                         .tab_stop(false)
                                         // .occlude()
                                         .cursor_default()
                                         .on_click(cx.listener(move |this, _, window, cx| {
+                                            cx.stop_propagation();
                                             this.begin_complete_item(action_id, window, cx);
                                         })),
                                 )
@@ -486,6 +492,7 @@ impl TimelineView {
                         .context_menu(move |menu, window, cx| match &any_item {
                             AnyItem::Action(a) => action_context_menu(a.id)(menu, window, cx),
                             AnyItem::Event(e) => event_context_menu(e.id)(menu, window, cx),
+                            AnyItem::Routine(r) => routine_context_menu(r.id)(menu, window, cx),
                         }),
                 )
                 .child(top_handle)

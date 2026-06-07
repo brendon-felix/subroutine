@@ -9,15 +9,21 @@ use gpui_component::{Icon, IconNamed};
 #[derive(Clone, Debug, IntoElement)]
 #[allow(dead_code)]
 pub enum AppIcon {
+    Archive,
     CalendarClock,
     CalendarPlus,
     ListPlus,
     ListIndentIncrease,
     ListChevronsDownUp,
+    ListChecks,
     Check,
+    Play,
     Plus,
     Minus,
+    Save,
+    ScanEye,
     Trash,
+    Timeline,
     Repeat,
     Close,
     ZoomIn,
@@ -28,15 +34,21 @@ pub enum AppIcon {
 impl IconNamed for AppIcon {
     fn path(self) -> SharedString {
         match self {
+            Self::Archive => "icons/custom/archive.svg",
             Self::CalendarClock => "icons/custom/calendar-clock.svg",
             Self::Check => "icons/custom/check.svg",
             Self::CalendarPlus => "icons/custom/calendar-plus.svg",
             Self::ListPlus => "icons/custom/list-plus.svg",
             Self::ListIndentIncrease => "icons/custom/list-indent-increase.svg",
             Self::ListChevronsDownUp => "icons/custom/list-chevrons-down-up.svg",
+            Self::ListChecks => "icons/custom/list-checks.svg",
+            Self::Play => "icons/custom/play.svg",
             Self::Plus => "icons/custom/plus.svg",
             Self::Minus => "icons/custom/minus.svg",
+            Self::Save => "icons/custom/save.svg",
+            Self::ScanEye => "icons/custom/scan-eye.svg",
             Self::Trash => "icons/custom/trash.svg",
+            Self::Timeline => "icons/custom/timeline.svg",
             Self::Repeat => "icons/custom/repeat.svg",
             Self::Close => "icons/custom/close.svg",
             Self::ZoomIn => "icons/custom/zoom-in.svg",

@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::RecurrenceRule;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy)]
 pub struct ActionTarget {
     pub time: DateTime<Utc>,
     pub is_static: bool,
@@ -16,12 +16,72 @@ impl ActionTarget {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy)]
 pub enum ActionState {
     Queued(ActionTarget),
     Backlogged(Option<NaiveDate>),
     Completed(DateTime<Utc>),
     Skipped,
+}
+
+impl Serialize for ActionState {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        match self {
+            ActionState::Queued(t) => {
+                let mut st = s.serialize_struct("ActionState", 3)?;
+                st.serialize_field("type", "queued")?;
+                st.serialize_field("time", &t.time)?;
+                st.serialize_field("is_static", &t.is_static)?;
+                st.end()
+            }
+            ActionState::Backlogged(d) => {
+                let mut st = s.serialize_struct("ActionState", 2)?;
+                st.serialize_field("type", "backlogged")?;
+                st.serialize_field("date", d)?;
+                st.end()
+            }
+            ActionState::Completed(at) => {
+                let mut st = s.serialize_struct("ActionState", 2)?;
+                st.serialize_field("type", "completed")?;
+                st.serialize_field("at", at)?;
+                st.end()
+            }
+            ActionState::Skipped => {
+                let mut st = s.serialize_struct("ActionState", 1)?;
+                st.serialize_field("type", "skipped")?;
+                st.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ActionState {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "type")]
+        enum Helper {
+            #[serde(rename = "queued")]
+            Queued {
+                time: DateTime<Utc>,
+                is_static: bool,
+            },
+            #[serde(rename = "backlogged")]
+            Backlogged { date: Option<NaiveDate> },
+            #[serde(rename = "completed")]
+            Completed { at: DateTime<Utc> },
+            #[serde(rename = "skipped")]
+            Skipped,
+        }
+        match Helper::deserialize(d)? {
+            Helper::Queued { time, is_static } => {
+                Ok(ActionState::Queued(ActionTarget { time, is_static }))
+            }
+            Helper::Backlogged { date } => Ok(ActionState::Backlogged(date)),
+            Helper::Completed { at } => Ok(ActionState::Completed(at)),
+            Helper::Skipped => Ok(ActionState::Skipped),
+        }
+    }
 }
 
 impl ActionState {
@@ -37,10 +97,34 @@ pub struct Action {
     pub origin_routine_id: Option<Uuid>,
     pub title: String,
     pub content: Option<String>,
+    #[serde(with = "duration_nanos")]
     pub duration: Option<Duration>,
     pub recurrence: Option<RecurrenceRule>,
     pub saved: bool,
     pub state: ActionState,
+}
+
+mod duration_nanos {
+    use chrono::Duration;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(d: &Option<Duration>, s: S) -> Result<S::Ok, S::Error> {
+        match d {
+            Some(d) => d.num_nanoseconds().map_or_else(
+                || {
+                    Err(serde::ser::Error::custom(format!(
+                        "duration out of range: {d}"
+                    )))
+                },
+                |n| s.serialize_i64(n),
+            ),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Duration>, D::Error> {
+        Ok(Option::<i64>::deserialize(d)?.map(Duration::nanoseconds))
+    }
 }
 
 impl Action {

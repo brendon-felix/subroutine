@@ -22,6 +22,14 @@ impl RoutineStep {
         self.duration = Some(duration);
         self
     }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    pub fn duration(&self) -> Option<Duration> {
+        self.duration
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,5 +80,21 @@ impl Routine {
 
     pub fn insert_step(&mut self, index: usize, step: RoutineStep) {
         self.steps.insert(index, step);
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    pub fn steps(&self) -> &[RoutineStep] {
+        &self.steps
+    }
+
+    pub fn duration(&self) -> Option<Duration> {
+        // self.duration
+        self.steps().iter().fold(None, |acc, step| {
+            acc.map(|acc| acc + step.duration().unwrap_or_default())
+                .or_else(|| step.duration())
+        })
     }
 }

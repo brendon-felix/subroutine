@@ -1,13 +1,10 @@
 use chrono::{DateTime, Duration as ChronoDuration, Local};
 use gpui::{
-    App, AppContext, Context, DragMoveEvent, Entity, InteractiveElement, IntoElement, KeyBinding,
-    ParentElement, Render, SharedString, Styled, Subscription, Window, actions, div,
-    prelude::FluentBuilder,
+    App, AppContext, Context, Entity, InteractiveElement, IntoElement, KeyBinding, ParentElement,
+    Render, SharedString, Styled, Subscription, Window, actions, div, prelude::FluentBuilder,
 };
 use gpui_component::{
-    ActiveTheme,
     menu::{PopupMenu, PopupMenuItem},
-    tab::{Tab, TabBar},
     v_flex,
 };
 use simple_core::AnyItem;
@@ -63,7 +60,6 @@ pub struct DeleteItem {
 
 use crate::{
     AppIcon,
-    components::DragData,
     stores::{AppDatabaseStore, DataChanged},
 };
 
@@ -138,6 +134,29 @@ fn event_context_menu(
     }
 }
 
+fn routine_context_menu(
+    routine_id: Uuid,
+) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+    move |menu, _window, _cx| {
+        menu.item(
+            PopupMenuItem::new("Reschedule")
+                .icon(AppIcon::CalendarClock)
+                .on_click(|_, _, _cx| {}),
+        )
+        .separator()
+        .item(
+            PopupMenuItem::new("Delete routine")
+                .icon(AppIcon::Trash)
+                .on_click(move |_event, _window, cx| {
+                    let db_store = AppDatabaseStore::global(cx);
+                    db_store.update(cx, |store, cx| {
+                        store.delete_routine(routine_id, cx);
+                    });
+                }),
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectedPipelineView {
     Timeline = 0,
@@ -161,14 +180,15 @@ impl PipelineView {
         let queue_view = cx.new(|cx| QueueView::new(cx));
         let focus_view = cx.new(|cx| FocusView::new(cx));
 
-        let selected_view = SelectedPipelineView::Timeline;
+        let selected_view = SelectedPipelineView::Queue;
         cx.focus_view(&timeline_view, window);
 
         let db_store = AppDatabaseStore::global(cx);
         cx.subscribe(&db_store, |view, store, _: &DataChanged, cx| {
             let queue = store.read(cx).sorted_queue();
+            let all_items = store.read(cx).sorted_timeline();
             view.timeline_view.update(cx, |timeline_view, cx| {
-                timeline_view.refresh_items(queue.clone(), cx)
+                timeline_view.refresh_items(all_items, cx)
             });
             view.queue_view.update(cx, |queue_view, cx| {
                 queue_view.refresh_items(queue.clone(), cx)
@@ -194,6 +214,10 @@ impl PipelineView {
             focus_view,
             _focus_lost_subscription: focus_lost_subscription,
         }
+    }
+
+    pub fn selected_view(&self) -> SelectedPipelineView {
+        self.selected_view
     }
 
     pub fn select_view(

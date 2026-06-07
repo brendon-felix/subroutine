@@ -25,19 +25,20 @@ pub struct Divider {
     line_style: DividerStyle,
 }
 
+#[allow(unused)]
 impl Divider {
-    // /// Creates a vertical divider.
-    // pub fn vertical() -> Self {
-    //     Self {
-    //         base: div().h_full(),
-    //         stroke: px(1.0),
-    //         axis: Axis::Vertical,
-    //         label: None,
-    //         color: None,
-    //         style: StyleRefinement::default(),
-    //         line_style: DividerStyle::Solid,
-    //     }
-    // }
+    /// Creates a vertical divider.
+    pub fn vertical() -> Self {
+        Self {
+            base: div().h_full(),
+            stroke: px(1.0),
+            axis: Axis::Vertical,
+            label: None,
+            color: None,
+            style: StyleRefinement::default(),
+            line_style: DividerStyle::Solid,
+        }
+    }
 
     /// Creates a horizontal divider.
     pub fn horizontal() -> Self {
@@ -52,15 +53,15 @@ impl Divider {
         }
     }
 
-    // /// Creates a vertical dashed divider.
-    // pub fn vertical_dashed() -> Self {
-    //     Self::vertical().dashed()
-    // }
+    /// Creates a vertical dashed divider.
+    pub fn vertical_dashed() -> Self {
+        Self::vertical().dashed()
+    }
 
-    // /// Creates a horizontal dashed divider.
-    // pub fn horizontal_dashed() -> Self {
-    //     Self::horizontal().dashed()
-    // }
+    /// Creates a horizontal dashed divider.
+    pub fn horizontal_dashed() -> Self {
+        Self::horizontal().dashed()
+    }
 
     /// Sets the thickness of the divider line.
     pub fn stroke(mut self, stroke: impl Into<Pixels>) -> Self {
