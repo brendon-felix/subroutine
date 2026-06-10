@@ -3,7 +3,7 @@ use gpui::{
     App, AppContext, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
     WindowOptions, actions, point, px, size,
 };
-use gpui_component::{ActiveTheme, Root, Theme, ThemeMode, ThemeRegistry, input};
+use gpui_component::{ActiveTheme, Root, Theme, ThemeMode, ThemeRegistry, TitleBar, input};
 
 use crate::{
     assets::AppAssets,
@@ -79,17 +79,31 @@ pub fn init(cx: &mut App) {
 
     let url = server_url_from_env().unwrap_or_else(|| "http://localhost:3000".into());
 
-    cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
+        KeyBinding::new("cmd-q", Quit, None),
+        // KeyBinding::new("cmd-w", actions::CloseWindow, None),
+    ]);
+    #[cfg(target_os = "windows")]
+    cx.bind_keys([
+        KeyBinding::new("ctrl-q", Quit, None),
+        // KeyBinding::new("ctrl-w", actions::CloseWindow, None),
+    ]);
     AppDatabaseStore::initialize_global(url, cx);
     let db_store = AppDatabaseStore::global(cx);
     db_store.update(cx, |store, cx| {
         store.refresh_pipeline(cx);
     });
 
-    let mut titlebar_options = TitlebarOptions::default();
+    let mut titlebar_options = if cfg!(target_os = "macos") {
+        TitlebarOptions {
+            traffic_light_position: Some(point(px(16.), px(16.))),
+            ..Default::default()
+        }
+    } else {
+        TitleBar::title_bar_options()
+    };
     titlebar_options.title = Some("Subroutine".into());
-    titlebar_options.appears_transparent = true;
-    titlebar_options.traffic_light_position = Some(point(px(16.), px(16.)));
 
     let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
     let window_options = WindowOptions {

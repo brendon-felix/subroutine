@@ -4,9 +4,10 @@ use gpui::{
     prelude::FluentBuilder, px,
 };
 use gpui_component::{
-    ActiveTheme, Colorize, Icon, IconName, Root, Sizable,
+    ActiveTheme, Colorize, Icon, IconName, Root, Sizable, StyledExt, TITLE_BAR_HEIGHT, TitleBar,
     button::{Button, ButtonVariants},
     h_flex,
+    menu::AppMenuBar,
     tab::{Tab, TabBar},
     tooltip::Tooltip,
     v_flex,
@@ -55,6 +56,7 @@ enum RightSidebarTab {
 }
 
 pub struct RootView {
+    app_menu_bar: Entity<AppMenuBar>,
     pipeline_view: Entity<PipelineView>,
     backlog_view: Entity<BacklogView>,
     routines_view: Entity<RoutinesView>,
@@ -66,6 +68,10 @@ pub struct RootView {
 
 impl RootView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let app_menu_bar = AppMenuBar::new(cx);
+        app_menu_bar.update(cx, |menu_bar, cx| {
+            menu_bar.reload(cx);
+        });
         let pipeline_view = cx.new(|cx| PipelineView::new(window, cx));
         let backlog_view = cx.new(|cx| BacklogView::new(cx));
         let routines_view = cx.new(|cx| RoutinesView::new(cx));
@@ -93,6 +99,7 @@ impl RootView {
         });
 
         Self {
+            app_menu_bar,
             pipeline_view,
             backlog_view,
             routines_view,
@@ -125,9 +132,15 @@ impl Render for RootView {
 
         let left_panel_width = layout_state.animated_left_px;
 
-        let navbar_left_pad = (px(24. * 4.) - left_panel_width).max(px(2. * 4.));
-
         let selected_pipeline_view = self.pipeline_view.read(cx).selected_view();
+
+        let is_macos = cfg!(target_os = "macos");
+
+        let navbar_left_pad = if is_macos {
+            (px(24. * 4.) - left_panel_width).max(px(2. * 4.))
+        } else {
+            px(2. * 4.)
+        };
 
         // let tabbar_height = px(48.);
 
@@ -176,25 +189,166 @@ impl Render for RootView {
                     cx.notify();
                 });
             }))
+            .when(!is_macos, |this| {
+                this.child(
+                    TitleBar::new()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .top_0()
+                        .child(
+                            h_flex()
+                                .debug_red()
+                                .size_full()
+                                .child(self.app_menu_bar.clone()),
+                        )
+                        .child(
+                            h_flex()
+                                .justify_end()
+                                .gap_2()
+                                .child(
+                                    Button::new("settings")
+                                        .ghost()
+                                        .icon(Icon::new(IconName::Settings2)),
+                                )
+                                .child(Button::new("info").ghost().icon(Icon::new(AppIcon::Info))),
+                        ),
+                )
+            })
+            .child(
+                NavigationBar::new()
+                    .absolute()
+                    .when_else(
+                        is_macos,
+                        |this| this.top_0(),
+                        |this| this.top(TITLE_BAR_HEIGHT),
+                    )
+                    .right_0()
+                    .left(left_panel_width)
+                    .pl(navbar_left_pad)
+                    .pr_2()
+                    .h(NAVBAR_HEIGHT)
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().transparent.mix_oklab(cx.theme().background, 0.5))
+                    .left_panel_open(left_panel_open)
+                    .right_panel_open(right_panel_open)
+                    .on_toggle_left({
+                        let layout_state = self.layout_state.clone();
+                        move |_window, cx| {
+                            layout_state.update(cx, |state, cx| {
+                                state.toggle_left();
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .on_toggle_right({
+                        let layout_state = self.layout_state.clone();
+                        move |_window, cx| {
+                            layout_state.update(cx, |state, cx| {
+                                state.toggle_right();
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .gap_4()
+                    .child(
+                        h_flex()
+                            .size_full()
+                            .gap_8()
+                            .p_2()
+                            .child(
+                                Button::new("new-item")
+                                    .outline()
+                                    .icon(Icon::new(IconName::Plus))
+                                    .rounded_full()
+                                    .text_2xl(),
+                            )
+                            .child(
+                                TabBar::new("main-tabbar")
+                                    .outline()
+                                    .selected_index(selected_pipeline_view as usize)
+                                    .child(
+                                        Tab::new()
+                                            .icon(Icon::new(AppIcon::Timeline))
+                                            // .label("Timeline")
+                                            .tooltip(|window, cx| {
+                                                Tooltip::new("Timeline view").build(window, cx)
+                                            })
+                                            .on_click(cx.listener(|view, event, window, cx| {
+                                                view.pipeline_view.update(cx, |pipeline, cx| {
+                                                    pipeline.select_view(
+                                                        SelectedPipelineView::Timeline,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                            })),
+                                    )
+                                    .child(
+                                        Tab::new()
+                                            .icon(Icon::new(AppIcon::ListChecks))
+                                            // .label("Queue")
+                                            .tooltip(|window, cx| {
+                                                Tooltip::new("Queue view").build(window, cx)
+                                            })
+                                            .on_click(cx.listener(|view, event, window, cx| {
+                                                view.pipeline_view.update(cx, |pipeline, cx| {
+                                                    pipeline.select_view(
+                                                        SelectedPipelineView::Queue,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                            })),
+                                    )
+                                    .child(
+                                        Tab::new()
+                                            .icon(Icon::new(AppIcon::ScanEye))
+                                            // .label("Focus")
+                                            .tooltip(|window, cx| {
+                                                Tooltip::new("Focus mode").build(window, cx)
+                                            })
+                                            .on_click(cx.listener(|view, event, window, cx| {
+                                                view.pipeline_view.update(cx, |pipeline, cx| {
+                                                    pipeline.select_view(
+                                                        SelectedPipelineView::Focus,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                            })),
+                                    ),
+                            ),
+                    ),
+            )
             .child(
                 PanelGroup::new(self.layout_state.clone())
                     .absolute()
-                    .inset_0()
-                    // .top(navbar_height)
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .when_else(
+                        is_macos,
+                        |this| this.top(NAVBAR_HEIGHT),
+                        |this| this.top(TITLE_BAR_HEIGHT + NAVBAR_HEIGHT),
+                    )
                     .left(
                         SidePanel::left()
                             // .width_range_open(px(140.)..px(220.))
                             // .initial_proportion(0.125)
                             .p_2()
                             .pr_0()
-                            .child(
-                                div()
-                                    .size_full()
-                                    .rounded_xl()
-                                    .border_1()
-                                    .border_color(cx.theme().border)
-                                    .bg(cx.theme().background.mix_oklab(gpui::black(), 0.95)),
-                            ),
+                            .child(div().size_full().when_else(
+                                is_macos,
+                                |this| {
+                                    this.rounded_xl()
+                                        .border_1()
+                                        .border_color(cx.theme().border)
+                                        .bg(cx.theme().background.mix_oklab(gpui::black(), 0.95))
+                                },
+                                |this| this.border_r_1().border_color(cx.theme().border),
+                            )),
                     )
                     .center(
                         CenterPanel::new().child(
@@ -310,109 +464,6 @@ impl Render for RootView {
                                                         this.child(self.saved_items_view.clone())
                                                     }
                                                 }
-                                            })),
-                                    ),
-                            ),
-                    ),
-            )
-            .child(
-                NavigationBar::new()
-                    .absolute()
-                    .top_0()
-                    .right_0()
-                    .left(left_panel_width)
-                    .pl(navbar_left_pad)
-                    .pr_2()
-                    .h(NAVBAR_HEIGHT)
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .bg(cx.theme().transparent.mix_oklab(cx.theme().background, 0.5))
-                    .left_panel_open(left_panel_open)
-                    .right_panel_open(right_panel_open)
-                    .on_toggle_left({
-                        let layout_state = self.layout_state.clone();
-                        move |_window, cx| {
-                            layout_state.update(cx, |state, cx| {
-                                state.toggle_left();
-                                cx.notify();
-                            });
-                        }
-                    })
-                    .on_toggle_right({
-                        let layout_state = self.layout_state.clone();
-                        move |_window, cx| {
-                            layout_state.update(cx, |state, cx| {
-                                state.toggle_right();
-                                cx.notify();
-                            });
-                        }
-                    })
-                    .gap_4()
-                    .child(
-                        h_flex()
-                            .size_full()
-                            .gap_8()
-                            .p_2()
-                            .child(
-                                Button::new("new-item")
-                                    .outline()
-                                    .icon(Icon::new(IconName::Plus))
-                                    .rounded_full()
-                                    .text_2xl(),
-                            )
-                            .child(
-                                TabBar::new("main-tabbar")
-                                    .outline()
-                                    .selected_index(selected_pipeline_view as usize)
-                                    .child(
-                                        Tab::new()
-                                            .icon(Icon::new(AppIcon::Timeline))
-                                            // .label("Timeline")
-                                            .tooltip(|window, cx| {
-                                                Tooltip::new("Timeline view").build(window, cx)
-                                            })
-                                            .on_click(cx.listener(|view, event, window, cx| {
-                                                view.pipeline_view.update(cx, |pipeline, cx| {
-                                                    pipeline.select_view(
-                                                        SelectedPipelineView::Timeline,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                            })),
-                                    )
-                                    .child(
-                                        Tab::new()
-                                            .icon(Icon::new(AppIcon::ListChecks))
-                                            // .label("Queue")
-                                            .tooltip(|window, cx| {
-                                                Tooltip::new("Queue view").build(window, cx)
-                                            })
-                                            .on_click(cx.listener(|view, event, window, cx| {
-                                                view.pipeline_view.update(cx, |pipeline, cx| {
-                                                    pipeline.select_view(
-                                                        SelectedPipelineView::Queue,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                            })),
-                                    )
-                                    .child(
-                                        Tab::new()
-                                            .icon(Icon::new(AppIcon::ScanEye))
-                                            // .label("Focus")
-                                            .tooltip(|window, cx| {
-                                                Tooltip::new("Focus mode").build(window, cx)
-                                            })
-                                            .on_click(cx.listener(|view, event, window, cx| {
-                                                view.pipeline_view.update(cx, |pipeline, cx| {
-                                                    pipeline.select_view(
-                                                        SelectedPipelineView::Focus,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
                                             })),
                                     ),
                             ),
