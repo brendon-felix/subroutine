@@ -1,15 +1,18 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use chrono::{DateTime, Duration as ChronoDuration, Local};
-use gpui::{AsyncApp, Context, DragMoveEvent, Window};
+use chrono::{DateTime, Local};
+use gpui::{AsyncApp, Bounds, Context, DragMoveEvent, Pixels, Window, point};
 use simple_core::{Action, ActionState, ActionTarget, AnyItem, Event};
-use simple_parser::{parse_action_input, parse_event_input, recurrence_to_rule};
+use simple_parser::{parse_action, parse_event, recurrence_to_rule};
 use uuid::Uuid;
 
 use super::super::TimelineView;
 use super::{
     ActiveDropState, ActiveResizeState, COMPLETE_CHECKBOX_DURATION, FALLBACK_ITEM_DURATION,
-    NavDirection, ResizeDragData, ResizeEdge, SlotLayout, TimelineItem, TransitionState, uf_find,
+    ResizeDragData, ResizeEdge, TimelineItem, TransitionState,
+};
+use crate::views::pipeline_view::timeline_view::{
+    ATTACHED_ITEM_LEFT, MIN_ITEM_HEIGHT, MIN_ITEM_WIDTH, SLOT_GAP,
 };
 use crate::{components::DragData, stores::AppDatabaseStore};
 
@@ -17,7 +20,7 @@ impl TimelineView {
     pub fn refresh_items(&mut self, queue: Vec<AnyItem>, cx: &mut Context<Self>) {
         let scheduled: Vec<AnyItem> = queue
             .into_iter()
-            .filter(|item| item.time().is_some())
+            .filter(|item| item.start_time().is_some())
             .collect();
 
         let incoming_ids: HashSet<u64> = scheduled.iter().map(|i| i.truncated_id()).collect();
@@ -48,7 +51,7 @@ impl TimelineView {
         }
 
         self.items
-            .sort_by_key(|i| i.item.time().map(|t| t.timestamp()));
+            .sort_by_key(|i| i.item.start_time().map(|t| t.timestamp()));
 
         if !self.loaded {
             self.loaded = true;
@@ -87,7 +90,7 @@ impl TimelineView {
         self.editing_items.remove(&id);
         if let Some(state) = self.title_edit_states.get_mut(&id) {
             state.current_text = title.clone();
-            state.draft = parse_action_input(&title).ok();
+            state.draft = parse_action(&title).ok();
             state.parse_error = false;
         }
     }
@@ -120,7 +123,7 @@ impl TimelineView {
                     .get(&id)
                     .map(|e| e.read(cx).value().to_string())
                     .unwrap_or_default();
-                parse_action_input(text.trim()).ok()
+                parse_action(text.trim()).ok()
             });
 
         let updated_action = match draft {
@@ -203,7 +206,7 @@ impl TimelineView {
                     .get(&id)
                     .map(|e| e.read(cx).value().to_string())
                     .unwrap_or_default();
-                parse_event_input(text.trim()).ok()
+                parse_event(text.trim()).ok()
             });
 
         let updated_event = match draft {
@@ -214,7 +217,7 @@ impl TimelineView {
                     e.time = dt;
                 }
                 if let Some(dur) = d.duration {
-                    e.duration = Some(dur);
+                    e.duration = dur;
                 }
                 if let Some(ref rec) = d.recurrence {
                     if let Some(rule) = recurrence_to_rule(Some(rec)) {
@@ -259,7 +262,7 @@ impl TimelineView {
     ) -> Uuid {
         use gpui_component::input::Position;
         let time_utc = time.with_timezone(&chrono::Utc);
-        let state = ActionState::Queued(ActionTarget {
+        let state = ActionState::Scheduled(ActionTarget {
             time: time_utc,
             is_static: true,
         });
@@ -268,7 +271,7 @@ impl TimelineView {
         let any_item = AnyItem::Action(action);
         self.items.push(TimelineItem::new(any_item, cx));
         self.items
-            .sort_by_key(|i| i.item.time().map(|t| t.timestamp()));
+            .sort_by_key(|i| i.item.start_time().map(|t| t.timestamp()));
         self.draft_item_ids.insert(id);
         self.editing_items.insert(id);
         let input = self.get_or_create_title_input(id, String::new(), true, window, cx);
@@ -320,11 +323,11 @@ impl TimelineView {
         cx: &mut Context<Self>,
     ) {
         let placement = self.find_next_slot_time(slot_start);
-        let placement_utc = placement.with_timezone(&chrono::Utc);
-        let id = self.add_draft_action(placement, window, cx);
-        // Push any persisted actions that now overlap with the draft's intended
-        // time slot forward so there is no conflict when it is committed.
-        self.push_conflicting_actions(id, placement_utc, FALLBACK_ITEM_DURATION, cx);
+        // let placement_utc = placement.with_timezone(&chrono::Utc);
+        let _id = self.add_draft_action(placement, window, cx);
+        // // Push any persisted actions that now overlap with the draft's intended
+        // // time slot forward so there is no conflict when it is committed.
+        // self.push_conflicting_actions(id, placement_utc, FALLBACK_ITEM_DURATION, cx);
     }
 
     /// Create a draft event at the given time, add it to the timeline, and enter edit mode.
@@ -336,12 +339,12 @@ impl TimelineView {
     ) {
         use gpui_component::input::Position;
         let time_utc = time.with_timezone(&chrono::Utc);
-        let event = Event::new("", time_utc);
+        let event = Event::new("", time_utc, chrono::Duration::minutes(60));
         let id = event.id;
         let any_item = AnyItem::Event(event);
         self.items.push(TimelineItem::new(any_item, cx));
         self.items
-            .sort_by_key(|i| i.item.time().map(|t| t.timestamp()));
+            .sort_by_key(|i| i.item.start_time().map(|t| t.timestamp()));
         self.draft_item_ids.insert(id);
         self.editing_items.insert(id);
         let input = self.get_or_create_title_input(id, String::new(), false, window, cx);
@@ -368,8 +371,6 @@ impl TimelineView {
         };
         if let Some(handle) = next_focus {
             handle.focus(window, cx);
-        } else {
-            self.focus_handle.focus(window, cx);
         }
 
         if let Some(item) = self.items.iter_mut().find(|i| i.item.id() == action_id) {
@@ -392,245 +393,189 @@ impl TimelineView {
 
     /// Compute slot-based layout for every item in `items`.
     /// Returns one `Option<SlotLayout>` per item; `None` for items without a scheduled time.
-    pub(super) fn compute_slot_layouts(&self, items: &[AnyItem]) -> Vec<Option<SlotLayout>> {
+    pub(super) fn compute_item_bounds(&self, items: &[AnyItem]) -> Vec<Option<Bounds<Pixels>>> {
         let state = self.current_division_state();
         let base = state.base_division;
         let sub = state.current_subdivision();
-        let n = items.len();
+        let sub_duration = sub
+            .map(|s| s.duration())
+            .unwrap_or(base.approximate_duration());
+        // let n = items.len();
 
-        let spans: Vec<Option<(DateTime<Local>, DateTime<Local>)>> = items
+        let total_width = self.item_area_width();
+        // let num_columns = self.bounds.unwrap_or_default().size.width / BASE_ITEM_WIDTH;
+
+        // let spans: Vec<Option<(DateTime<Local>, DateTime<Local>)>> = items
+        //     .iter()
+        //     .map(|item| {
+        //         let time = item.time_local()?;
+        //         let vs = sub
+        //             .map(|s| s.floor_boundary(time))
+        //             .unwrap_or_else(|| base.floor_boundary(time));
+        //         let slot_dur = sub
+        //             .map(|s| s.exact_duration(vs))
+        //             .unwrap_or_else(|| base.exact_duration(vs));
+        //         let ve = if let Some(duration) = item.duration() {
+        //             let actual_end = time + duration;
+        //             let ve_raw = sub
+        //                 .map(|s| s.ceil_boundary(actual_end))
+        //                 .unwrap_or_else(|| base.ceil_boundary(actual_end));
+        //             if ve_raw <= vs { vs + slot_dur } else { ve_raw }
+        //         } else {
+        //             vs + slot_dur
+        //         };
+        //         Some((vs, ve))
+        //     })
+        //     .collect();
+
+        // let mut parent: Vec<usize> = (0..n).collect();
+        // for i in 0..n {
+        //     let Some((s_i, e_i)) = spans[i] else {
+        //         continue;
+        //     };
+        //     for j in (i + 1)..n {
+        //         let Some((s_j, e_j)) = spans[j] else {
+        //             continue;
+        //         };
+        //         if s_i < e_j && s_j < e_i {
+        //             let ri = uf_find(&mut parent, i);
+        //             let rj = uf_find(&mut parent, j);
+        //             if ri != rj {
+        //                 parent[ri] = rj;
+        //             }
+        //         }
+        //     }
+        // }
+
+        // let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+        // for i in 0..n {
+        //     if spans[i].is_none() {
+        //         continue;
+        //     }
+        //     let root = uf_find(&mut parent, i);
+        //     groups.entry(root).or_default().push(i);
+        // }
+
+        // let mut result: Vec<Option<SlotLayout>> = (0..n).map(|_| None).collect();
+        // for group in groups.values() {
+        //     let mut sorted = group.clone();
+        //     sorted.sort_by_key(|&i| {
+        //         let (vs, _) = spans[i].unwrap();
+        //         (vs, items[i].time_local().unwrap_or(vs))
+        //     });
+
+        //     let mut col_ends: Vec<DateTime<Local>> = Vec::new();
+        //     let mut assignments: Vec<usize> = vec![0; sorted.len()];
+
+        //     for (g_idx, &item_idx) in sorted.iter().enumerate() {
+        //         let (vs, ve) = spans[item_idx].unwrap();
+        //         let col = match col_ends.iter().position(|&end| end <= vs) {
+        //             Some(c) => {
+        //                 col_ends[c] = ve;
+        //                 c
+        //             }
+        //             None => {
+        //                 col_ends.push(ve);
+        //                 col_ends.len() - 1
+        //             }
+        //         };
+        //         assignments[g_idx] = col;
+        //     }
+
+        //     let total_columns = col_ends.len();
+        //     for (g_idx, &item_idx) in sorted.iter().enumerate() {
+        //         let (visual_start, visual_end) = spans[item_idx].unwrap();
+        //         result[item_idx] = Some(SlotLayout {
+        //             top: self.time_to_offset(visual_start),
+        //             bottom: self.time_to_offset(visual_end),
+        //             column_index: assignments[g_idx],
+        //             total_columns,
+        //             h_scroll_offset: px(0.),
+        //         });
+        //     }
+        // }
+
+        // items
+        //     .iter()
+        //     .map(|item| {
+        //         let start_time = item.start_time_local()?;
+        //         let end_time = start_time + item.duration().unwrap_or(FALLBACK_ITEM_DURATION);
+        //         let top = self.time_to_offset(start_time);
+        //         let bottom = self.time_to_offset(end_time);
+        //         Some(SlotLayout {
+        //             top,
+        //             bottom,
+        //             column_index: 0,
+        //             total_columns: 1,
+        //             h_scroll_offset: px(0.),
+        //         })
+        //     })
+        //     .collect()
+
+        // let mut items = self
+        //     .items
+        //     .iter()
+        //     .map(|i| i.item.clone())
+        //     .collect::<Vec<_>>();
+        // items.sort_by_key(|item| item.start_time_local().unwrap_or_default());
+
+        // let ranges = items
+        //     .iter()
+        //     .filter_map(|item| {
+        //         let start = item.start_time_local()?;
+        //         let end = start
+        //             + item
+        //                 .duration()
+        //                 .unwrap_or(FALLBACK_ITEM_DURATION)
+        //                 .max(sub_duration);
+        //         Some((start, end))
+        //     })
+        //     .collect::<Vec<_>>();
+
+        // let mut unioned_ranges: Vec<(DateTime<Local>, DateTime<Local>)> = Vec::new();
+        // let mut current_range: Option<(DateTime<Local>, DateTime<Local>)> = None;
+        // for (start, end) in ranges {
+        //     if let Some(current) = &mut current_range {
+        //         if current.1 >= start {
+        //             current.1 = end;
+        //             continue;
+        //         }
+        //     }
+        //     unioned_ranges.push((start, end));
+        //     current_range = Some((start, end));
+        // }
+
+        // let mut column_count = 1;
+        // let mut last_end_time: Option<DateTime<Local>> = None;
+        // let mut column = 0;
+
+        items
             .iter()
             .map(|item| {
-                let time = item.time_local()?;
-                let vs = sub
-                    .map(|s| s.floor_boundary(time))
-                    .unwrap_or_else(|| base.floor_boundary(time));
-                let slot_dur = sub
-                    .map(|s| s.exact_duration(vs))
-                    .unwrap_or_else(|| base.exact_duration(vs));
-                let ve = if let Some(duration) = item.duration() {
-                    let actual_end = time + duration;
-                    let ve_raw = sub
-                        .map(|s| s.ceil_boundary(actual_end))
-                        .unwrap_or_else(|| base.ceil_boundary(actual_end));
-                    if ve_raw <= vs { vs + slot_dur } else { ve_raw }
-                } else {
-                    vs + slot_dur
-                };
-                Some((vs, ve))
+                let start_time = item.start_time_local()?;
+                let duration = item.duration().unwrap_or(FALLBACK_ITEM_DURATION);
+                let top = self.time_to_offset(start_time);
+                let height = self
+                    .duration_to_height(duration)
+                    .max(MIN_ITEM_HEIGHT)
+                    .min(self.duration_to_height(sub_duration))
+                    - SLOT_GAP;
+                // let bottom = self.time_to_offset(visual_end_time) - SLOT_GAP;
+                let start_offset = sub
+                    .map(|s| start_time - s.floor_boundary(start_time))
+                    .unwrap_or(start_time - base.floor_boundary(start_time));
+                let start_proportion =
+                    start_offset.as_seconds_f32() / sub_duration.as_seconds_f32();
+                let width_proportion = duration.as_seconds_f32() / sub_duration.as_seconds_f32();
+                // let width = (total_width / column_count as f32).max(MIN_ITEM_WIDTH);
+                let left = start_proportion * total_width + ATTACHED_ITEM_LEFT;
+                let width = ((width_proportion * total_width) - SLOT_GAP / 2.).max(MIN_ITEM_WIDTH);
+                Some(Bounds::from_corners(
+                    point(left, top),
+                    point(left + width, top + height),
+                ))
             })
-            .collect();
-
-        let mut parent: Vec<usize> = (0..n).collect();
-        for i in 0..n {
-            let Some((s_i, e_i)) = spans[i] else {
-                continue;
-            };
-            for j in (i + 1)..n {
-                let Some((s_j, e_j)) = spans[j] else {
-                    continue;
-                };
-                if s_i < e_j && s_j < e_i {
-                    let ri = uf_find(&mut parent, i);
-                    let rj = uf_find(&mut parent, j);
-                    if ri != rj {
-                        parent[ri] = rj;
-                    }
-                }
-            }
-        }
-
-        let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
-        for i in 0..n {
-            if spans[i].is_none() {
-                continue;
-            }
-            let root = uf_find(&mut parent, i);
-            groups.entry(root).or_default().push(i);
-        }
-
-        let mut result: Vec<Option<SlotLayout>> = (0..n).map(|_| None).collect();
-        for group in groups.values() {
-            let mut sorted = group.clone();
-            sorted.sort_by_key(|&i| {
-                let (vs, _) = spans[i].unwrap();
-                (vs, items[i].time_local().unwrap_or(vs))
-            });
-
-            let mut col_ends: Vec<DateTime<Local>> = Vec::new();
-            let mut assignments: Vec<usize> = vec![0; sorted.len()];
-
-            for (g_idx, &item_idx) in sorted.iter().enumerate() {
-                let (vs, ve) = spans[item_idx].unwrap();
-                let col = match col_ends.iter().position(|&end| end <= vs) {
-                    Some(c) => {
-                        col_ends[c] = ve;
-                        c
-                    }
-                    None => {
-                        col_ends.push(ve);
-                        col_ends.len() - 1
-                    }
-                };
-                assignments[g_idx] = col;
-            }
-
-            let total_columns = col_ends.len();
-            for (g_idx, &item_idx) in sorted.iter().enumerate() {
-                let (visual_start, visual_end) = spans[item_idx].unwrap();
-                result[item_idx] = Some(SlotLayout {
-                    visual_start,
-                    visual_end,
-                    column_index: assignments[g_idx],
-                    total_columns,
-                });
-            }
-        }
-
-        result
-    }
-
-    pub(crate) fn navigate_items(
-        &mut self,
-        dir: NavDirection,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let focused_idx = self
-            .items
-            .iter()
-            .position(|i| i.focus_handle.is_focused(window));
-        let view_focused = self.focus_handle.is_focused(window);
-        if !view_focused && focused_idx.is_none() {
-            return;
-        }
-
-        let any_items: Vec<AnyItem> = self.items.iter().map(|i| i.item.clone()).collect();
-        let layouts = self.compute_slot_layouts(&any_items);
-
-        let col_frac = |col: usize, total: usize| col as f32 / total as f32;
-
-        let Some(focused_idx) = focused_idx else {
-            let target = match dir {
-                NavDirection::Down | NavDirection::Right => {
-                    layouts.iter().enumerate().find_map(|(i, l)| l.map(|_| i))
-                }
-                NavDirection::Up | NavDirection::Left => layouts
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .find_map(|(i, l)| l.map(|_| i)),
-            };
-            if let Some(idx) = target {
-                if let Some(layout) = layouts[idx] {
-                    self.target_column_fraction =
-                        Some(col_frac(layout.column_index, layout.total_columns));
-                }
-                self.items[idx].focus_handle.focus(window, cx);
-            }
-            return;
-        };
-
-        let Some(focused_layout) = layouts[focused_idx] else {
-            return;
-        };
-
-        let target_frac: f32 = match dir {
-            NavDirection::Up | NavDirection::Down => {
-                self.target_column_fraction.unwrap_or_else(|| {
-                    col_frac(focused_layout.column_index, focused_layout.total_columns)
-                })
-            }
-            NavDirection::Left | NavDirection::Right => {
-                col_frac(focused_layout.column_index, focused_layout.total_columns)
-            }
-        };
-
-        let target_idx: Option<usize> = match dir {
-            NavDirection::Down => {
-                let s = focused_layout.visual_start;
-                layouts
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, l)| l.map(|l| (i, l)))
-                    .filter(|(i, l)| *i != focused_idx && l.visual_start > s)
-                    .min_by(|(_, la), (_, lb)| {
-                        la.visual_start.cmp(&lb.visual_start).then_with(|| {
-                            let da =
-                                (col_frac(la.column_index, la.total_columns) - target_frac).abs();
-                            let db =
-                                (col_frac(lb.column_index, lb.total_columns) - target_frac).abs();
-                            da.total_cmp(&db)
-                        })
-                    })
-                    .map(|(i, _)| i)
-            }
-            NavDirection::Up => {
-                let s = focused_layout.visual_start;
-                layouts
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, l)| l.map(|l| (i, l)))
-                    .filter(|(i, l)| *i != focused_idx && l.visual_start < s)
-                    .max_by(|(_, la), (_, lb)| {
-                        la.visual_start.cmp(&lb.visual_start).then_with(|| {
-                            let da =
-                                (col_frac(la.column_index, la.total_columns) - target_frac).abs();
-                            let db =
-                                (col_frac(lb.column_index, lb.total_columns) - target_frac).abs();
-                            db.total_cmp(&da)
-                        })
-                    })
-                    .map(|(i, _)| i)
-            }
-            NavDirection::Left => {
-                let s = focused_layout.visual_start;
-                let e = focused_layout.visual_end;
-                let col = focused_layout.column_index;
-                if col == 0 {
-                    return;
-                }
-                layouts
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, l)| l.map(|l| (i, l)))
-                    .filter(|(i, l)| {
-                        *i != focused_idx
-                            && l.column_index == col - 1
-                            && l.visual_start < e
-                            && s < l.visual_end
-                    })
-                    .min_by_key(|(_, l)| (l.visual_start - s).num_seconds().unsigned_abs())
-                    .map(|(i, _)| i)
-            }
-            NavDirection::Right => {
-                let s = focused_layout.visual_start;
-                let e = focused_layout.visual_end;
-                let col = focused_layout.column_index;
-                layouts
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, l)| l.map(|l| (i, l)))
-                    .filter(|(i, l)| {
-                        *i != focused_idx
-                            && l.column_index == col + 1
-                            && l.visual_start < e
-                            && s < l.visual_end
-                    })
-                    .min_by_key(|(_, l)| (l.visual_start - s).num_seconds().unsigned_abs())
-                    .map(|(i, _)| i)
-            }
-        };
-
-        if let Some(idx) = target_idx {
-            if matches!(dir, NavDirection::Left | NavDirection::Right) {
-                if let Some(layout) = layouts[idx] {
-                    self.target_column_fraction =
-                        Some(col_frac(layout.column_index, layout.total_columns));
-                }
-            }
-            self.items[idx].focus_handle.focus(window, cx);
-        }
+            .collect()
     }
 
     pub(crate) fn handle_drag_move(
@@ -656,48 +601,11 @@ impl TimelineView {
             let slot_end = slot_start + slot_dur;
             let drop_duration = event.drag(cx).data.duration();
 
-            let mut items_in_slot: Vec<(DateTime<Local>, ChronoDuration)> = self
-                .items
-                .iter()
-                .filter_map(|ti| {
-                    let time = ti.item.time_local()?;
-                    let time_slot = sub
-                        .map(|s| s.floor_boundary(time))
-                        .unwrap_or_else(|| base.floor_boundary(time));
-                    if time_slot == slot_start {
-                        let dur = ti.item.duration().unwrap_or(FALLBACK_ITEM_DURATION);
-                        Some((time, dur))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            items_in_slot.sort_by_key(|(t, _)| *t);
-
-            let existing_count = items_in_slot.len();
-            let total_columns = existing_count + 1;
-
-            use super::ATTACHED_ITEM_LEFT;
-            let area_w = self.item_area_width();
-            let col_w = area_w / total_columns as f32;
-            let item_relative_x = pos.x - ATTACHED_ITEM_LEFT;
-            let column_index = ((item_relative_x / col_w).floor() as usize)
-                .clamp(0, total_columns.saturating_sub(1));
-
-            let drop_time = if column_index == 0 || items_in_slot.is_empty() {
-                slot_start
-            } else {
-                let (prev_t, prev_d) = items_in_slot[column_index - 1];
-                prev_t + prev_d
-            };
-
             ActiveDropState {
-                drop_time,
+                drop_time: slot_start,
                 drop_duration,
                 slot_visual_start: slot_start,
                 slot_visual_end: slot_end,
-                column_index,
-                total_columns,
             }
         });
 
@@ -736,13 +644,13 @@ impl TimelineView {
         let store = AppDatabaseStore::global(cx);
         match item {
             AnyItem::Action(mut action) => {
-                let action_duration = action.duration.unwrap_or(FALLBACK_ITEM_DURATION);
+                // let action_duration = action.duration.unwrap_or(FALLBACK_ITEM_DURATION);
                 action.queue_static(drop_time_utc);
-                let action_id = action.id;
+                // let action_id = action.id;
                 store.update(cx, |s, cx| {
                     s.upsert_action(action, cx);
                 });
-                self.push_conflicting_actions(action_id, drop_time_utc, action_duration, cx);
+                // self.push_conflicting_actions(action_id, drop_time_utc, action_duration, cx);
             }
             AnyItem::Event(mut event) => {
                 event.time = drop_time_utc;
@@ -758,54 +666,54 @@ impl TimelineView {
         }
     }
 
-    fn push_conflicting_actions(
-        &mut self,
-        skip_id: Uuid,
-        drop_start: chrono::DateTime<chrono::Utc>,
-        drop_duration: ChronoDuration,
-        cx: &mut Context<Self>,
-    ) {
-        let store = AppDatabaseStore::global(cx);
+    // fn push_conflicting_actions(
+    //     &mut self,
+    //     skip_id: Uuid,
+    //     drop_start: chrono::DateTime<chrono::Utc>,
+    //     drop_duration: ChronoDuration,
+    //     cx: &mut Context<Self>,
+    // ) {
+    //     let store = AppDatabaseStore::global(cx);
 
-        let mut actions: Vec<simple_core::Action> = store
-            .read(cx)
-            .actions()
-            .into_iter()
-            .filter(|a| a.id != skip_id && a.is_queued_static())
-            .collect();
+    //     let mut actions: Vec<simple_core::Action> = store
+    //         .read(cx)
+    //         .actions()
+    //         .into_iter()
+    //         .filter(|a| a.id != skip_id && a.is_queued_static())
+    //         .collect();
 
-        actions.sort_by_key(|a| match a.state {
-            ActionState::Queued(t) => t.time,
-            _ => unreachable!(),
-        });
+    //     actions.sort_by_key(|a| match a.state {
+    //         ActionState::Scheduled(t) => t.time,
+    //         _ => unreachable!(),
+    //     });
 
-        let mut cursor = drop_start + drop_duration;
-        let mut updated: Vec<simple_core::Action> = Vec::new();
+    //     let mut cursor = drop_start + drop_duration;
+    //     let mut updated: Vec<simple_core::Action> = Vec::new();
 
-        for mut action in actions {
-            let ActionState::Queued(target) = action.state else {
-                continue;
-            };
-            let action_dur = action.duration.unwrap_or(FALLBACK_ITEM_DURATION);
-            let action_end = target.time + action_dur;
+    //     for mut action in actions {
+    //         let ActionState::Scheduled(target) = action.state else {
+    //             continue;
+    //         };
+    //         let action_dur = action.duration.unwrap_or(FALLBACK_ITEM_DURATION);
+    //         let action_end = target.time + action_dur;
 
-            if target.time < cursor && action_end > drop_start {
-                action.queue(cursor);
-                cursor = cursor + action_dur;
-                updated.push(action);
-            } else if target.time >= cursor {
-                break;
-            }
-        }
+    //         if target.time < cursor && action_end > drop_start {
+    //             action.queue(cursor);
+    //             cursor = cursor + action_dur;
+    //             updated.push(action);
+    //         } else if target.time >= cursor {
+    //             break;
+    //         }
+    //     }
 
-        if !updated.is_empty() {
-            store.update(cx, |s, cx| {
-                for action in updated {
-                    s.upsert_action(action, cx);
-                }
-            });
-        }
-    }
+    //     if !updated.is_empty() {
+    //         store.update(cx, |s, cx| {
+    //             for action in updated {
+    //                 s.upsert_action(action, cx);
+    //             }
+    //         });
+    //     }
+    // }
 
     pub(crate) fn handle_resize_move(
         &mut self,
@@ -909,7 +817,7 @@ impl TimelineView {
             }
             AnyItem::Event(mut event) => {
                 event.time = new_time_utc;
-                event.duration = Some(new_duration);
+                event.duration = new_duration;
                 store.update(cx, |s, cx| s.upsert_event(event, cx));
             }
             AnyItem::Routine(_) => (),

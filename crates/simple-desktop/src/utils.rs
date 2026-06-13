@@ -4,7 +4,8 @@ use gpui::{
     App, Div, Hsla, InteractiveElement, Stateful, StatefulInteractiveElement, Styled,
     prelude::FluentBuilder, transparent_white,
 };
-use gpui_component::{ActiveTheme, Colorize};
+use gpui_component::{ActiveTheme, Colorize, button::Button};
+use gpui_squircle::{Squircle, SquircleStyled};
 
 // /// format hour using simplified US format (e.g. 1pm, 8am, noon, midnight)
 // pub fn format_hour(hour: usize) -> String {
@@ -35,21 +36,36 @@ pub struct ButtonColors {
 #[allow(unused)]
 impl ButtonColors {
     pub fn normal(base_color: Hsla, cx: &App) -> Self {
+        let transparent = cx.theme().transparent;
         Self {
-            bg: base_color.mix_oklab(cx.theme().transparent, 0.2),
-            hover: base_color.mix_oklab(cx.theme().transparent, 0.3),
-            active: base_color.mix_oklab(cx.theme().transparent, 0.4),
-            // border: None,
+            bg: base_color.mix_oklab(transparent, 0.2),
+            hover: base_color.mix_oklab(transparent, 0.3),
+            active: base_color.mix_oklab(transparent, 0.4),
             border: Some(base_color.mix_oklab(transparent_white(), 0.4)),
         }
     }
 
     pub fn outline(base_color: Hsla, cx: &App) -> Self {
+        let transparent = cx.theme().transparent;
         Self {
             bg: cx.theme().transparent,
-            hover: base_color.mix_oklab(cx.theme().transparent, 0.2),
-            active: base_color.mix_oklab(cx.theme().transparent, 0.3),
+            hover: base_color.mix_oklab(transparent, 0.2),
+            active: base_color.mix_oklab(transparent, 0.3),
             border: Some(base_color.mix_oklab(transparent_white(), 0.4)),
+        }
+    }
+
+    pub fn solid(base_color: Hsla, bg_color: Hsla, cx: &App) -> Self {
+        Self {
+            bg: bg_color,
+            hover: base_color.mix_oklab(bg_color, 0.1),
+            active: base_color.mix_oklab(bg_color, 0.15),
+            border: Some(
+                base_color
+                    // .mix_oklab(gpui::white(), 0.7)
+                    .mix_oklab(cx.theme().border, 0.5),
+            ),
+            // border: Some(cx.theme().border),
         }
     }
 }
@@ -63,6 +79,28 @@ impl ButtonColorizeExt for Stateful<Div> {
         self.bg(colors.bg)
             .hover(|s| s.bg(colors.hover))
             .active(|s| s.bg(colors.active))
+            .when_some(colors.border, |this, color| {
+                this.border_1().border_color(color)
+            })
+    }
+}
+
+impl ButtonColorizeExt for Squircle {
+    fn button_colors(self, colors: ButtonColors) -> Self {
+        self.bg(colors.bg)
+            .bg_hover(colors.hover)
+            .bg_active(colors.active)
+            .when_some(colors.border, |this, color| {
+                this.border_1p5().border_color(color)
+            })
+    }
+}
+
+impl ButtonColorizeExt for Button {
+    fn button_colors(self, colors: ButtonColors) -> Self {
+        self.bg(colors.bg)
+            .hover(|s| s.bg(colors.hover))
+            // .active(|s| s.bg(colors.active))
             .when_some(colors.border, |this, color| {
                 this.border_1().border_color(color)
             })

@@ -3,7 +3,9 @@ package com.example.subroutine_simple.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.subroutine_simple.data.models.Action
+import com.example.subroutine_simple.data.models.ActionTemplate
 import com.example.subroutine_simple.data.models.Event
+import com.example.subroutine_simple.data.models.EventTemplate
 import com.example.subroutine_simple.data.models.QueueItem
 import com.example.subroutine_simple.data.models.isBacklogged
 import com.example.subroutine_simple.data.models.isNotFullyPassed
@@ -23,6 +25,8 @@ sealed interface ActionsUiState {
     data class Success(
         val queueItems: List<QueueItem>,
         val backlogged: List<Action>,
+        val actionTemplates: List<ActionTemplate> = emptyList(),
+        val eventTemplates: List<EventTemplate> = emptyList(),
     ) : ActionsUiState
     data class Error(val message: String) : ActionsUiState
 }
@@ -83,21 +87,23 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             _uiState.value = ActionsUiState.Loading
             runCatching { repository.fetchAll() }
-                .onSuccess { (actions, events) ->
+                .onSuccess { all ->
                     // Keep caches fresh so saves survive transient Loading states.
-                    actions.forEach { actionCache[it.id] = it }
-                    events.forEach { eventCache[it.id] = it }
-                    val queuedActions = actions
+                    all.actions.forEach { actionCache[it.id] = it }
+                    all.events.forEach { eventCache[it.id] = it }
+                    val queuedActions = all.actions
                         .filter { it.isQueued }
                         .map { QueueItem.ActionItem(it) }
-                    val relevantEvents = events
+                    val relevantEvents = all.events
                         .filter { it.isNotFullyPassed }
                         .map { QueueItem.EventItem(it) }
                     val queueItems = (queuedActions + relevantEvents)
                         .sortedBy { it.sortKey }
                     _uiState.value = ActionsUiState.Success(
                         queueItems = queueItems,
-                        backlogged = actions.filter { it.isBacklogged },
+                        backlogged = all.actions.filter { it.isBacklogged },
+                        actionTemplates = all.actionTemplates,
+                        eventTemplates = all.eventTemplates,
                     )
                 }
                 .onFailure { e ->

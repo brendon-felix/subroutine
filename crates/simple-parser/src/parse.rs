@@ -10,82 +10,40 @@
 //!   `fn try_<clause>(tokens, pos, ctx, now) -> Option<(Value, usize)>`
 //! returning `Some((value, next_pos))` on success or `None` on no-match.
 
-use anyhow::{Result, bail};
 use chrono::{
     DateTime, Datelike, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc,
     Weekday,
 };
+use thiserror::Error;
 
-use crate::ast::{
-    EntityKind, HighlightKind, ParseDraft, Priority, RecurrenceSpec, WeekdaySet, WhenSpec,
-};
+use crate::ast::{EntityKind, HighlightKind, ParseDraft, RecurrenceSpec, WeekdaySet, WhenSpec};
 use crate::lexer::{SpannedToken, Token, lex};
 
-// ---------------------------------------------------------------------------
-// ParseContext — user-supplied hints for context-dependent clauses
-// ---------------------------------------------------------------------------
-
-/// Hints passed into the parser for context-dependent resolution.
-///
-/// The parser does not look up database records itself; callers supply raw
-/// string slices and the parser matches tokens against them.  Resolution
-/// against actual DB entities is a separate post-parse step.
-#[derive(Debug, Default, Clone)]
-pub struct ParseContext<'a> {
-    /// Known location names (e.g. `["home", "work", "the office"]`).
-    pub locations: &'a [&'a str],
-    /// Known tag names (e.g. `["work", "personal", "deep work"]`).
-    pub tags: &'a [&'a str],
-    /// Known people / contact names (e.g. `["Isabel", "Bob"]`).
-    pub people: &'a [&'a str],
+#[derive(Error, Debug)]
+pub enum ParseError {
+    #[error("missing title")]
+    MissingTitle,
 }
 
-// ---------------------------------------------------------------------------
-// Public entry points
-// ---------------------------------------------------------------------------
-
-/// Parse a free-form action description.
-///
-/// All specifiers are optional; an absent time is not an error.
-pub fn parse_action_input(input: &str) -> Result<ParseDraft> {
-    parse_action_input_ctx(input, &ParseContext::default())
+pub fn parse_action(input: &str) -> Result<ParseDraft, ParseError> {
+    parse_impl(input, EntityKind::Action, Local::now())
 }
 
-/// Parse a free-form action description with user-supplied context hints.
-pub fn parse_action_input_ctx<'a>(input: &str, ctx: &ParseContext<'a>) -> Result<ParseDraft> {
-    parse_impl(input, EntityKind::Action, ctx, Local::now())
-}
-
-/// Parse a free-form event description.
-///
-/// Unlike actions, events do not require a time at parse time; validation
-/// that a time is present is the caller's responsibility (e.g. `build_entity`
-/// enforces it).
-pub fn parse_event_input(input: &str) -> Result<ParseDraft> {
-    parse_event_input_ctx(input, &ParseContext::default())
-}
-
-/// Parse a free-form event description with user-supplied context hints.
-pub fn parse_event_input_ctx<'a>(input: &str, ctx: &ParseContext<'a>) -> Result<ParseDraft> {
-    parse_impl(input, EntityKind::Event, ctx, Local::now())
+pub fn parse_event(input: &str) -> Result<ParseDraft, ParseError> {
+    parse_impl(input, EntityKind::Event, Local::now())
 }
 
 /// Parse a free-form routine step description.
-pub fn parse_routine_step_input(input: &str) -> Result<ParseDraft> {
-    parse_routine_step_input_ctx(input, &ParseContext::default())
+pub fn parse_routine_step(input: &str) -> Result<ParseDraft, ParseError> {
+    parse_impl(input, EntityKind::RoutineStep, Local::now())
 }
 
-/// Parse a free-form routine step description with user-supplied context hints.
-pub fn parse_routine_step_input_ctx<'a>(input: &str, ctx: &ParseContext<'a>) -> Result<ParseDraft> {
-    parse_impl(input, EntityKind::RoutineStep, ctx, Local::now())
-}
-
-/// Parse a recurrence specifier string in isolation (used by tests and the
-/// `%` sigil handler).
-#[allow(dead_code)] // Used by tests and future external callers
-pub fn parse_recurrence_str(text: &str) -> Result<RecurrenceSpec> {
-    try_recurrence_text(text).ok_or_else(|| anyhow::anyhow!("unrecognised recurrence: {text}"))
-}
+// /// Parse a recurrence specifier string in isolation (used by tests and the
+// /// `%` sigil handler).
+// #[allow(dead_code)] // Used by tests and future external callers
+// pub fn parse_recurrence_str(text: &str) -> Result<RecurrenceSpec, ParseError> {
+//     try_recurrence_text(text).ok_or_else(|| ParseError::MissingTitle)
+// }
 
 // ---------------------------------------------------------------------------
 // Core scanner
@@ -94,9 +52,9 @@ pub fn parse_recurrence_str(text: &str) -> Result<RecurrenceSpec> {
 fn parse_impl(
     input: &str,
     kind: EntityKind,
-    ctx: &ParseContext<'_>,
+    // ctx: &ParseContext<'_>,
     now: DateTime<Local>,
-) -> Result<ParseDraft> {
+) -> Result<ParseDraft, ParseError> {
     let tokens = lex(input);
     let mut draft = ParseDraft::new(kind.clone(), input);
     let mut consumed = vec![false; tokens.len()];
@@ -114,7 +72,7 @@ fn parse_impl(
             continue;
         }
 
-        if let Some((len, kind, apply)) = longest_match(&tokens, i, ctx, now, &draft) {
+        if let Some((len, kind, apply)) = longest_match(&tokens, i, now, &draft) {
             apply(&mut draft);
             let start = tokens[i].span.start;
             let end = tokens[i + len - 1].span.end;
@@ -190,7 +148,7 @@ fn parse_impl(
     }
 
     if draft.title.trim().is_empty() {
-        bail!("could not determine title");
+        return Err(ParseError::MissingTitle);
     }
 
     Ok(draft)
@@ -208,7 +166,7 @@ fn parse_impl(
 fn longest_match<'t>(
     tokens: &'t [SpannedToken],
     i: usize,
-    ctx: &ParseContext<'_>,
+    // ctx: &ParseContext<'_>,
     now: DateTime<Local>,
     draft: &ParseDraft,
 ) -> Option<(usize, HighlightKind, Box<dyn FnOnce(&mut ParseDraft) + 't>)> {
@@ -225,58 +183,58 @@ fn longest_match<'t>(
         };
     }
 
-    // --- Sigil forms (unambiguous, always highest priority) ---
-    if matches!(tokens[i].token, Token::At) {
-        if let Some((when, len)) = try_sigil_time(tokens, i + 1, now.with_timezone(&Utc)) {
-            // The @ sigil always produces a full datetime.
-            consider!(1 + len, HighlightKind::When, move |d: &mut ParseDraft| {
-                d.when = Some(WhenSpec::DateTime(when))
-            });
-        }
-    }
-    if matches!(tokens[i].token, Token::Tilde) {
-        if let Some((dur, len)) = try_sigil_duration(tokens, i + 1) {
-            consider!(
-                1 + len,
-                HighlightKind::Duration,
-                move |d: &mut ParseDraft| { d.duration = Some(dur) }
-            );
-        }
-    }
-    if matches!(tokens[i].token, Token::Percent) {
-        if let Some((rec, len)) = try_sigil_recurrence(tokens, i + 1) {
-            consider!(
-                1 + len,
-                HighlightKind::Recurrence,
-                move |d: &mut ParseDraft| { d.recurrence = Some(rec) }
-            );
-        }
-    }
-    if matches!(tokens[i].token, Token::Bang) {
-        if let Some((pri, len)) = try_sigil_priority(tokens, i + 1) {
-            consider!(
-                1 + len,
-                HighlightKind::Priority,
-                move |d: &mut ParseDraft| { d.priority = Some(pri) }
-            );
-        }
-    }
-    if matches!(tokens[i].token, Token::Hash) {
-        if let Some((tag, len)) = try_sigil_tag(tokens, i + 1) {
-            consider!(1 + len, HighlightKind::Tag, move |d: &mut ParseDraft| {
-                d.tags.push(tag)
-            });
-        }
-    }
-    if matches!(tokens[i].token, Token::Amp) {
-        if let Some((loc, len)) = try_sigil_location(tokens, i + 1) {
-            consider!(
-                1 + len,
-                HighlightKind::Location,
-                move |d: &mut ParseDraft| { d.location = Some(loc) }
-            );
-        }
-    }
+    // // --- Sigil forms (unambiguous, always highest priority) ---
+    // if matches!(tokens[i].token, Token::At) {
+    //     if let Some((when, len)) = try_sigil_time(tokens, i + 1, now.with_timezone(&Utc)) {
+    //         // The @ sigil always produces a full datetime.
+    //         consider!(1 + len, HighlightKind::When, move |d: &mut ParseDraft| {
+    //             d.when = Some(WhenSpec::DateTime(when))
+    //         });
+    //     }
+    // }
+    // if matches!(tokens[i].token, Token::Tilde) {
+    //     if let Some((dur, len)) = try_sigil_duration(tokens, i + 1) {
+    //         consider!(
+    //             1 + len,
+    //             HighlightKind::Duration,
+    //             move |d: &mut ParseDraft| { d.duration = Some(dur) }
+    //         );
+    //     }
+    // }
+    // if matches!(tokens[i].token, Token::Percent) {
+    //     if let Some((rec, len)) = try_sigil_recurrence(tokens, i + 1) {
+    //         consider!(
+    //             1 + len,
+    //             HighlightKind::Recurrence,
+    //             move |d: &mut ParseDraft| { d.recurrence = Some(rec) }
+    //         );
+    //     }
+    // }
+    // if matches!(tokens[i].token, Token::Bang) {
+    //     if let Some((pri, len)) = try_sigil_priority(tokens, i + 1) {
+    //         consider!(
+    //             1 + len,
+    //             HighlightKind::Priority,
+    //             move |d: &mut ParseDraft| { d.priority = Some(pri) }
+    //         );
+    //     }
+    // }
+    // if matches!(tokens[i].token, Token::Hash) {
+    //     if let Some((tag, len)) = try_sigil_tag(tokens, i + 1) {
+    //         consider!(1 + len, HighlightKind::Tag, move |d: &mut ParseDraft| {
+    //             d.tags.push(tag)
+    //         });
+    //     }
+    // }
+    // if matches!(tokens[i].token, Token::Amp) {
+    //     if let Some((loc, len)) = try_sigil_location(tokens, i + 1) {
+    //         consider!(
+    //             1 + len,
+    //             HighlightKind::Location,
+    //             move |d: &mut ParseDraft| { d.location = Some(loc) }
+    //         );
+    //     }
+    // }
 
     // --- Natural-language clauses ---
 
@@ -311,33 +269,33 @@ fn longest_match<'t>(
         }
     }
 
-    if draft.location.is_none() {
-        if let Some((loc, len)) = try_nl_location(tokens, i, ctx) {
-            consider!(len, HighlightKind::Location, move |d: &mut ParseDraft| {
-                d.location = Some(loc)
-            });
-        }
-    }
+    // if draft.location.is_none() {
+    //     if let Some((loc, len)) = try_nl_location(tokens, i, ctx) {
+    //         consider!(len, HighlightKind::Location, move |d: &mut ParseDraft| {
+    //             d.location = Some(loc)
+    //         });
+    //     }
+    // }
 
-    if let Some((names, len)) = try_nl_people(tokens, i, ctx) {
-        consider!(len, HighlightKind::People, move |d: &mut ParseDraft| {
-            d.people.extend(names)
-        });
-    }
+    // if let Some((names, len)) = try_nl_people(tokens, i, ctx) {
+    //     consider!(len, HighlightKind::People, move |d: &mut ParseDraft| {
+    //         d.people.extend(names)
+    //     });
+    // }
 
-    if let Some((tag, len)) = try_nl_tag(tokens, i, ctx) {
-        consider!(len, HighlightKind::Tag, move |d: &mut ParseDraft| {
-            d.tags.push(tag)
-        });
-    }
+    // if let Some((tag, len)) = try_nl_tag(tokens, i, ctx) {
+    //     consider!(len, HighlightKind::Tag, move |d: &mut ParseDraft| {
+    //         d.tags.push(tag)
+    //     });
+    // }
 
-    if draft.priority.is_none() {
-        if let Some((pri, len)) = try_nl_priority(tokens, i) {
-            consider!(len, HighlightKind::Priority, move |d: &mut ParseDraft| {
-                d.priority = Some(pri)
-            });
-        }
-    }
+    // if draft.priority.is_none() {
+    //     if let Some((pri, len)) = try_nl_priority(tokens, i) {
+    //         consider!(len, HighlightKind::Priority, move |d: &mut ParseDraft| {
+    //             d.priority = Some(pri)
+    //         });
+    //     }
+    // }
 
     best
 }
@@ -363,95 +321,95 @@ fn assemble_title(draft: &mut ParseDraft, tokens: &[SpannedToken], consumed: &[b
     draft.title = words.join(" ").trim().to_string();
 }
 
-// ---------------------------------------------------------------------------
-// Sigil clause handlers
-// ---------------------------------------------------------------------------
-// Each takes `tokens` starting AFTER the sigil and returns
-// `Some((value, tokens_consumed_after_sigil))` or `None`.
+// // ---------------------------------------------------------------------------
+// // Sigil clause handlers
+// // ---------------------------------------------------------------------------
+// // Each takes `tokens` starting AFTER the sigil and returns
+// // `Some((value, tokens_consumed_after_sigil))` or `None`.
 
-fn try_sigil_time(
-    tokens: &[SpannedToken],
-    start: usize,
-    now: DateTime<Utc>,
-) -> Option<(DateTime<Utc>, usize)> {
-    // `now` is UTC; date_at() converts naive-local → UTC correctly.
-    // Try up to 4 tokens (date + time can be 2; with keyword 3; padding for
-    // day-name + time combos).
-    for len in (1..=usize::min(4, tokens.len().saturating_sub(start))).rev() {
-        let text = join_adjacent(tokens, start, len);
-        if let Some(dt) = parse_datetime_expr(&text, now) {
-            return Some((dt, len));
-        }
-    }
-    None
-}
+// fn try_sigil_time(
+//     tokens: &[SpannedToken],
+//     start: usize,
+//     now: DateTime<Utc>,
+// ) -> Option<(DateTime<Utc>, usize)> {
+//     // `now` is UTC; date_at() converts naive-local → UTC correctly.
+//     // Try up to 4 tokens (date + time can be 2; with keyword 3; padding for
+//     // day-name + time combos).
+//     for len in (1..=usize::min(4, tokens.len().saturating_sub(start))).rev() {
+//         let text = join_adjacent(tokens, start, len);
+//         if let Some(dt) = parse_datetime_expr(&text, now) {
+//             return Some((dt, len));
+//         }
+//     }
+//     None
+// }
 
-fn try_sigil_duration(tokens: &[SpannedToken], start: usize) -> Option<(Duration, usize)> {
-    for len in (1..=usize::min(3, tokens.len().saturating_sub(start))).rev() {
-        let text = join_adjacent(tokens, start, len);
-        if let Some(dur) = parse_duration_expr(&text) {
-            return Some((dur, len));
-        }
-    }
-    None
-}
+// fn try_sigil_duration(tokens: &[SpannedToken], start: usize) -> Option<(Duration, usize)> {
+//     for len in (1..=usize::min(3, tokens.len().saturating_sub(start))).rev() {
+//         let text = join_adjacent(tokens, start, len);
+//         if let Some(dur) = parse_duration_expr(&text) {
+//             return Some((dur, len));
+//         }
+//     }
+//     None
+// }
 
-fn try_sigil_recurrence(tokens: &[SpannedToken], start: usize) -> Option<(RecurrenceSpec, usize)> {
-    for len in (1..=usize::min(5, tokens.len().saturating_sub(start))).rev() {
-        let text = join_adjacent(tokens, start, len);
-        if let Some(rec) = try_recurrence_text(&text) {
-            return Some((rec, len));
-        }
-    }
-    None
-}
+// fn try_sigil_recurrence(tokens: &[SpannedToken], start: usize) -> Option<(RecurrenceSpec, usize)> {
+//     for len in (1..=usize::min(5, tokens.len().saturating_sub(start))).rev() {
+//         let text = join_adjacent(tokens, start, len);
+//         if let Some(rec) = try_recurrence_text(&text) {
+//             return Some((rec, len));
+//         }
+//     }
+//     None
+// }
 
-fn try_sigil_priority(tokens: &[SpannedToken], start: usize) -> Option<(Priority, usize)> {
-    if start >= tokens.len() {
-        return None;
-    }
-    let text = tokens[start].text.to_ascii_lowercase();
-    match text.as_str() {
-        "high" | "urgent" | "critical" => Some((Priority::High, 1)),
-        "medium" | "normal" => Some((Priority::Medium, 1)),
-        "low" => Some((Priority::Low, 1)),
-        _ => None,
-    }
-}
+// fn try_sigil_priority(tokens: &[SpannedToken], start: usize) -> Option<(Priority, usize)> {
+//     if start >= tokens.len() {
+//         return None;
+//     }
+//     let text = tokens[start].text.to_ascii_lowercase();
+//     match text.as_str() {
+//         "high" | "urgent" | "critical" => Some((Priority::High, 1)),
+//         "medium" | "normal" => Some((Priority::Medium, 1)),
+//         "low" => Some((Priority::Low, 1)),
+//         _ => None,
+//     }
+// }
 
-fn try_sigil_tag(tokens: &[SpannedToken], start: usize) -> Option<(String, usize)> {
-    if start >= tokens.len() {
-        return None;
-    }
-    match tokens[start].token {
-        Token::Word => Some((tokens[start].text.to_ascii_lowercase(), 1)),
-        Token::Quoted => Some((strip_quotes(&tokens[start].text), 1)),
-        _ => None,
-    }
-}
+// fn try_sigil_tag(tokens: &[SpannedToken], start: usize) -> Option<(String, usize)> {
+//     if start >= tokens.len() {
+//         return None;
+//     }
+//     match tokens[start].token {
+//         Token::Word => Some((tokens[start].text.to_ascii_lowercase(), 1)),
+//         Token::Quoted => Some((strip_quotes(&tokens[start].text), 1)),
+//         _ => None,
+//     }
+// }
 
-fn try_sigil_location(tokens: &[SpannedToken], start: usize) -> Option<(String, usize)> {
-    if start >= tokens.len() {
-        return None;
-    }
-    match tokens[start].token {
-        Token::Word => {
-            // Collect consecutive words (e.g. `&the office` → "the office")
-            let mut end = start + 1;
-            while end < tokens.len() && matches!(tokens[end].token, Token::Word) {
-                end += 1;
-            }
-            let text = tokens[start..end]
-                .iter()
-                .map(|t| t.text.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
-            Some((text.to_ascii_lowercase(), end - start))
-        }
-        Token::Quoted => Some((strip_quotes(&tokens[start].text), 1)),
-        _ => None,
-    }
-}
+// fn try_sigil_location(tokens: &[SpannedToken], start: usize) -> Option<(String, usize)> {
+//     if start >= tokens.len() {
+//         return None;
+//     }
+//     match tokens[start].token {
+//         Token::Word => {
+//             // Collect consecutive words (e.g. `&the office` → "the office")
+//             let mut end = start + 1;
+//             while end < tokens.len() && matches!(tokens[end].token, Token::Word) {
+//                 end += 1;
+//             }
+//             let text = tokens[start..end]
+//                 .iter()
+//                 .map(|t| t.text.as_str())
+//                 .collect::<Vec<_>>()
+//                 .join(" ");
+//             Some((text.to_ascii_lowercase(), end - start))
+//         }
+//         Token::Quoted => Some((strip_quotes(&tokens[start].text), 1)),
+//         _ => None,
+//     }
+// }
 
 // ---------------------------------------------------------------------------
 // Natural-language: Time
@@ -1094,10 +1052,10 @@ fn try_nl_duration(tokens: &[SpannedToken], i: usize) -> Option<(Duration, usize
 pub fn parse_duration_expr(text: &str) -> Option<Duration> {
     let t = text.trim();
 
-    // "H:MM" colon form → hours + minutes
-    if let Some(dur) = parse_colon_duration(t) {
-        return Some(dur);
-    }
+    // // "H:MM" colon form → hours + minutes
+    // if let Some(dur) = parse_colon_duration(t) {
+    //     return Some(dur);
+    // }
 
     // Combined "1h30m" or "1h 30m" form
     if let Some(dur) = parse_combined_duration(t) {
@@ -1108,19 +1066,19 @@ pub fn parse_duration_expr(text: &str) -> Option<Duration> {
     parse_simple_duration(t)
 }
 
-fn parse_colon_duration(text: &str) -> Option<Duration> {
-    // "1:30" → 1h30m, "0:45" → 45m
-    let parts: Vec<&str> = text.splitn(2, ':').collect();
-    if parts.len() != 2 {
-        return None;
-    }
-    let h: i64 = parts[0].parse().ok()?;
-    let m: i64 = parts[1].parse().ok()?;
-    if m >= 60 {
-        return None;
-    }
-    Some(Duration::hours(h) + Duration::minutes(m))
-}
+// fn parse_colon_duration(text: &str) -> Option<Duration> {
+//     // "1:30" → 1h30m, "0:45" → 45m
+//     let parts: Vec<&str> = text.splitn(2, ':').collect();
+//     if parts.len() != 2 {
+//         return None;
+//     }
+//     let h: i64 = parts[0].parse().ok()?;
+//     let m: i64 = parts[1].parse().ok()?;
+//     if m >= 60 {
+//         return None;
+//     }
+//     Some(Duration::hours(h) + Duration::minutes(m))
+// }
 
 fn parse_combined_duration(text: &str) -> Option<Duration> {
     // Matches patterns like "1h30m", "1h 30min", "1hr30mins", "2h 15m"
@@ -1184,281 +1142,281 @@ fn parse_simple_duration(text: &str) -> Option<Duration> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Natural-language: Location
-// ---------------------------------------------------------------------------
+// // ---------------------------------------------------------------------------
+// // Natural-language: Location
+// // ---------------------------------------------------------------------------
 
-fn try_nl_location<'a>(
-    tokens: &[SpannedToken],
-    i: usize,
-    ctx: &ParseContext<'a>,
-) -> Option<(String, usize)> {
-    let n = tokens.len();
-    if i >= n {
-        return None;
-    }
-    let lower = tokens[i].text.to_ascii_lowercase();
+// fn try_nl_location<'a>(
+//     tokens: &[SpannedToken],
+//     i: usize,
+//     ctx: &ParseContext<'a>,
+// ) -> Option<(String, usize)> {
+//     let n = tokens.len();
+//     if i >= n {
+//         return None;
+//     }
+//     let lower = tokens[i].text.to_ascii_lowercase();
 
-    // "at <location>" or "in <location>" — only if NOT a time expression
-    if (lower == "at" || lower == "in") && i + 1 < n {
-        // Don't steal "at <time>" from the time clause — check the next token
-        if matches!(tokens[i + 1].token, Token::Time12 | Token::Time24) {
-            return None;
-        }
+//     // "at <location>" or "in <location>" — only if NOT a time expression
+//     if (lower == "at" || lower == "in") && i + 1 < n {
+//         // Don't steal "at <time>" from the time clause — check the next token
+//         if matches!(tokens[i + 1].token, Token::Time12 | Token::Time24) {
+//             return None;
+//         }
 
-        // Try to match "at <multi-word-location>"
-        let loc = try_match_location(tokens, i + 1, ctx)?;
-        return Some((loc.0, 1 + loc.1));
-    }
+//         // Try to match "at <multi-word-location>"
+//         let loc = try_match_location(tokens, i + 1, ctx)?;
+//         return Some((loc.0, 1 + loc.1));
+//     }
 
-    // Bare known location name
-    if !ctx.locations.is_empty() {
-        let loc = try_match_location(tokens, i, ctx)?;
-        return Some(loc);
-    }
+//     // Bare known location name
+//     if !ctx.locations.is_empty() {
+//         let loc = try_match_location(tokens, i, ctx)?;
+//         return Some(loc);
+//     }
 
-    None
-}
+//     None
+// }
 
-/// Try to match a location from `tokens[start]` against the context list.
-/// Returns `(location_string, tokens_consumed)`.
-fn try_match_location(
-    tokens: &[SpannedToken],
-    start: usize,
-    ctx: &ParseContext<'_>,
-) -> Option<(String, usize)> {
-    if start >= tokens.len() {
-        return None;
-    }
-    // Try matching longest spans first (multi-word locations)
-    for len in (1..=usize::min(4, tokens.len() - start)).rev() {
-        let candidate = tokens[start..start + len]
-            .iter()
-            .map(|t| t.text.as_str())
-            .collect::<Vec<_>>()
-            .join(" ")
-            .to_ascii_lowercase();
-        if ctx
-            .locations
-            .iter()
-            .any(|loc| loc.to_ascii_lowercase() == candidate)
-        {
-            return Some((candidate, len));
-        }
-    }
-    // Also accept a quoted string as a location
-    if matches!(tokens[start].token, Token::Quoted) {
-        return Some((strip_quotes(&tokens[start].text), 1));
-    }
-    None
-}
+// /// Try to match a location from `tokens[start]` against the context list.
+// /// Returns `(location_string, tokens_consumed)`.
+// fn try_match_location(
+//     tokens: &[SpannedToken],
+//     start: usize,
+//     ctx: &ParseContext<'_>,
+// ) -> Option<(String, usize)> {
+//     if start >= tokens.len() {
+//         return None;
+//     }
+//     // Try matching longest spans first (multi-word locations)
+//     for len in (1..=usize::min(4, tokens.len() - start)).rev() {
+//         let candidate = tokens[start..start + len]
+//             .iter()
+//             .map(|t| t.text.as_str())
+//             .collect::<Vec<_>>()
+//             .join(" ")
+//             .to_ascii_lowercase();
+//         if ctx
+//             .locations
+//             .iter()
+//             .any(|loc| loc.to_ascii_lowercase() == candidate)
+//         {
+//             return Some((candidate, len));
+//         }
+//     }
+//     // Also accept a quoted string as a location
+//     if matches!(tokens[start].token, Token::Quoted) {
+//         return Some((strip_quotes(&tokens[start].text), 1));
+//     }
+//     None
+// }
 
-// ---------------------------------------------------------------------------
-// Natural-language: People
-// ---------------------------------------------------------------------------
+// // ---------------------------------------------------------------------------
+// // Natural-language: People
+// // ---------------------------------------------------------------------------
 
-fn try_nl_people<'a>(
-    tokens: &[SpannedToken],
-    i: usize,
-    ctx: &ParseContext<'a>,
-) -> Option<(Vec<String>, usize)> {
-    let n = tokens.len();
-    if i >= n {
-        return None;
-    }
-    let lower = tokens[i].text.to_ascii_lowercase();
+// fn try_nl_people<'a>(
+//     tokens: &[SpannedToken],
+//     i: usize,
+//     ctx: &ParseContext<'a>,
+// ) -> Option<(Vec<String>, usize)> {
+//     let n = tokens.len();
+//     if i >= n {
+//         return None;
+//     }
+//     let lower = tokens[i].text.to_ascii_lowercase();
 
-    if lower != "with" || i + 1 >= n {
-        return None;
-    }
+//     if lower != "with" || i + 1 >= n {
+//         return None;
+//     }
 
-    // Collect names: "with Isabel", "with Bob and Alice"
-    // Stop at hard clause-boundary words so "with Isabel at 8pm" doesn't
-    // consume "at" and "8pm" as person names.
-    const STOP_WORDS: &[&str] = &[
-        "at", "for", "by", "on", "in", "every", "daily", "weekly", "weekdays", "weekends",
-        "lasting", "takes", "urgent", "asap", "high", "low", "medium", "priority", "whenever",
-    ];
+//     // Collect names: "with Isabel", "with Bob and Alice"
+//     // Stop at hard clause-boundary words so "with Isabel at 8pm" doesn't
+//     // consume "at" and "8pm" as person names.
+//     const STOP_WORDS: &[&str] = &[
+//         "at", "for", "by", "on", "in", "every", "daily", "weekly", "weekdays", "weekends",
+//         "lasting", "takes", "urgent", "asap", "high", "low", "medium", "priority", "whenever",
+//     ];
 
-    let mut names: Vec<String> = Vec::new();
-    let mut pos = i + 1;
+//     let mut names: Vec<String> = Vec::new();
+//     let mut pos = i + 1;
 
-    loop {
-        if pos >= n {
-            break;
-        }
-        // Stop at non-word tokens (sigils, time tokens, etc.)
-        if !matches!(tokens[pos].token, Token::Word | Token::Quoted) {
-            break;
-        }
-        let word = tokens[pos].text.to_ascii_lowercase();
-        // Stop at clause-introducing words
-        if STOP_WORDS.contains(&word.as_str()) {
-            break;
-        }
-        // "and" is a connector between names — skip it but don't add it
-        if word == "and" {
-            pos += 1;
-            continue;
-        }
-        // Accept: known person, capitalised word (likely a proper name),
-        // or any word when a people list is provided (context-guided mode).
-        let is_known = ctx.people.iter().any(|p| p.to_ascii_lowercase() == word);
-        let is_capitalised = tokens[pos]
-            .text
-            .chars()
-            .next()
-            .map_or(false, |c| c.is_uppercase());
-        if is_known || is_capitalised {
-            names.push(tokens[pos].text.clone());
-            pos += 1;
-        } else {
-            break;
-        }
-    }
+//     loop {
+//         if pos >= n {
+//             break;
+//         }
+//         // Stop at non-word tokens (sigils, time tokens, etc.)
+//         if !matches!(tokens[pos].token, Token::Word | Token::Quoted) {
+//             break;
+//         }
+//         let word = tokens[pos].text.to_ascii_lowercase();
+//         // Stop at clause-introducing words
+//         if STOP_WORDS.contains(&word.as_str()) {
+//             break;
+//         }
+//         // "and" is a connector between names — skip it but don't add it
+//         if word == "and" {
+//             pos += 1;
+//             continue;
+//         }
+//         // Accept: known person, capitalised word (likely a proper name),
+//         // or any word when a people list is provided (context-guided mode).
+//         let is_known = ctx.people.iter().any(|p| p.to_ascii_lowercase() == word);
+//         let is_capitalised = tokens[pos]
+//             .text
+//             .chars()
+//             .next()
+//             .map_or(false, |c| c.is_uppercase());
+//         if is_known || is_capitalised {
+//             names.push(tokens[pos].text.clone());
+//             pos += 1;
+//         } else {
+//             break;
+//         }
+//     }
 
-    if names.is_empty() {
-        return None;
-    }
-    Some((names, pos - i))
-}
+//     if names.is_empty() {
+//         return None;
+//     }
+//     Some((names, pos - i))
+// }
 
-// ---------------------------------------------------------------------------
-// Natural-language: Tags
-// ---------------------------------------------------------------------------
+// // ---------------------------------------------------------------------------
+// // Natural-language: Tags
+// // ---------------------------------------------------------------------------
 
-fn try_nl_tag<'a>(
-    tokens: &[SpannedToken],
-    i: usize,
-    ctx: &ParseContext<'a>,
-) -> Option<(String, usize)> {
-    if ctx.tags.is_empty() {
-        return None;
-    }
-    let lower = tokens[i].text.to_ascii_lowercase();
-    if ctx.tags.iter().any(|t| t.to_ascii_lowercase() == lower) {
-        return Some((lower, 1));
-    }
-    None
-}
+// fn try_nl_tag<'a>(
+//     tokens: &[SpannedToken],
+//     i: usize,
+//     ctx: &ParseContext<'a>,
+// ) -> Option<(String, usize)> {
+//     if ctx.tags.is_empty() {
+//         return None;
+//     }
+//     let lower = tokens[i].text.to_ascii_lowercase();
+//     if ctx.tags.iter().any(|t| t.to_ascii_lowercase() == lower) {
+//         return Some((lower, 1));
+//     }
+//     None
+// }
 
-// ---------------------------------------------------------------------------
-// Natural-language: Priority
-// ---------------------------------------------------------------------------
+// // ---------------------------------------------------------------------------
+// // Natural-language: Priority
+// // ---------------------------------------------------------------------------
 
-fn try_nl_priority(tokens: &[SpannedToken], i: usize) -> Option<(Priority, usize)> {
-    let n = tokens.len();
-    if i >= n {
-        return None;
-    }
-    let lower = tokens[i].text.to_ascii_lowercase();
+// fn try_nl_priority(tokens: &[SpannedToken], i: usize) -> Option<(Priority, usize)> {
+//     let n = tokens.len();
+//     if i >= n {
+//         return None;
+//     }
+//     let lower = tokens[i].text.to_ascii_lowercase();
 
-    match lower.as_str() {
-        "urgent" | "asap" | "critical" => return Some((Priority::High, 1)),
-        "whenever" => return Some((Priority::Low, 1)),
-        _ => {}
-    }
+//     match lower.as_str() {
+//         "urgent" | "asap" | "critical" => return Some((Priority::High, 1)),
+//         "whenever" => return Some((Priority::Low, 1)),
+//         _ => {}
+//     }
 
-    // "high priority", "low priority", "medium priority", "normal priority"
-    if i + 1 < n {
-        let next = tokens[i + 1].text.to_ascii_lowercase();
-        if next == "priority" {
-            match lower.as_str() {
-                "high" => return Some((Priority::High, 2)),
-                "medium" | "normal" => return Some((Priority::Medium, 2)),
-                "low" => return Some((Priority::Low, 2)),
-                _ => {}
-            }
-        }
-    }
+//     // "high priority", "low priority", "medium priority", "normal priority"
+//     if i + 1 < n {
+//         let next = tokens[i + 1].text.to_ascii_lowercase();
+//         if next == "priority" {
+//             match lower.as_str() {
+//                 "high" => return Some((Priority::High, 2)),
+//                 "medium" | "normal" => return Some((Priority::Medium, 2)),
+//                 "low" => return Some((Priority::Low, 2)),
+//                 _ => {}
+//             }
+//         }
+//     }
 
-    // "not urgent" → Low
-    if lower == "not" && i + 1 < n {
-        let next = tokens[i + 1].text.to_ascii_lowercase();
-        if next == "urgent" {
-            return Some((Priority::Low, 2));
-        }
-    }
+//     // "not urgent" → Low
+//     if lower == "not" && i + 1 < n {
+//         let next = tokens[i + 1].text.to_ascii_lowercase();
+//         if next == "urgent" {
+//             return Some((Priority::Low, 2));
+//         }
+//     }
 
-    None
-}
+//     None
+// }
 
 // ---------------------------------------------------------------------------
 // Datetime helpers
 // ---------------------------------------------------------------------------
 
-fn parse_datetime_expr(text: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
-    let today = Local::now().date_naive();
-    let lower = text.trim().to_ascii_lowercase();
+// fn parse_datetime_expr(text: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+//     let today = Local::now().date_naive();
+//     let lower = text.trim().to_ascii_lowercase();
 
-    match lower.as_str() {
-        "now" => return Some(now),
-        "today" => return Some(date_at(today, default_time())),
-        "tomorrow" | "tom" => {
-            let d = today + chrono::Days::new(1);
-            return Some(date_at(d, default_time()));
-        }
-        "tonight" => {
-            let t = NaiveTime::from_hms_opt(20, 0, 0).unwrap();
-            return Some(date_at(today, t));
-        }
-        "later" => {
-            let t = NaiveTime::from_hms_opt(14, 0, 0).unwrap();
-            return Some(date_at(today, t));
-        }
-        _ => {}
-    }
+//     match lower.as_str() {
+//         "now" => return Some(now),
+//         "today" => return Some(date_at(today, default_time())),
+//         "tomorrow" | "tom" => {
+//             let d = today + chrono::Days::new(1);
+//             return Some(date_at(d, default_time()));
+//         }
+//         "tonight" => {
+//             let t = NaiveTime::from_hms_opt(20, 0, 0).unwrap();
+//             return Some(date_at(today, t));
+//         }
+//         "later" => {
+//             let t = NaiveTime::from_hms_opt(14, 0, 0).unwrap();
+//             return Some(date_at(today, t));
+//         }
+//         _ => {}
+//     }
 
-    // Try RFC-3339
-    if let Ok(dt) = DateTime::parse_from_rfc3339(text.trim()) {
-        return Some(dt.with_timezone(&Utc));
-    }
+//     // Try RFC-3339
+//     if let Ok(dt) = DateTime::parse_from_rfc3339(text.trim()) {
+//         return Some(dt.with_timezone(&Utc));
+//     }
 
-    // ISO date + space + time: treat as local time (e.g. "@2025-06-15 14:30"
-    // means 2:30pm in the user's local timezone).
-    if let Ok(ndt) = NaiveDateTime::parse_from_str(text.trim(), "%Y-%m-%d %H:%M") {
-        return Some(date_at(ndt.date(), ndt.time()));
-    }
+//     // ISO date + space + time: treat as local time (e.g. "@2025-06-15 14:30"
+//     // means 2:30pm in the user's local timezone).
+//     if let Ok(ndt) = NaiveDateTime::parse_from_str(text.trim(), "%Y-%m-%d %H:%M") {
+//         return Some(date_at(ndt.date(), ndt.time()));
+//     }
 
-    // ISO date alone
-    if let Ok(d) = NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d") {
-        return Some(date_at(d, default_time()));
-    }
+//     // ISO date alone
+//     if let Ok(d) = NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d") {
+//         return Some(date_at(d, default_time()));
+//     }
 
-    // "today 14:30", "today 3pm", "tomorrow 9am" etc.
-    // "today", "tomorrow" / "tom" etc.
-    let parts: Vec<&str> = text.trim().splitn(2, ' ').collect();
-    if parts.len() == 2 {
-        let base_date = match parts[0].to_ascii_lowercase().as_str() {
-            "today" => Some(today),
-            "tomorrow" | "tom" => Some(today + chrono::Days::new(1)),
-            _ => None,
-        };
-        if let Some(date) = base_date {
-            if let Some(t) = parse_time_str(parts[1]) {
-                return Some(date_at(date, t));
-            }
-        }
-    }
+//     // "today 14:30", "today 3pm", "tomorrow 9am" etc.
+//     // "today", "tomorrow" / "tom" etc.
+//     let parts: Vec<&str> = text.trim().splitn(2, ' ').collect();
+//     if parts.len() == 2 {
+//         let base_date = match parts[0].to_ascii_lowercase().as_str() {
+//             "today" => Some(today),
+//             "tomorrow" | "tom" => Some(today + chrono::Days::new(1)),
+//             _ => None,
+//         };
+//         if let Some(date) = base_date {
+//             if let Some(t) = parse_time_str(parts[1]) {
+//                 return Some(date_at(date, t));
+//             }
+//         }
+//     }
 
-    // A weekday name
-    if let Some(day) = parse_weekday_name(&lower) {
-        let date = next_weekday_strict(today, day);
-        return Some(date_at(date, default_time()));
-    }
+//     // A weekday name
+//     if let Some(day) = parse_weekday_name(&lower) {
+//         let date = next_weekday_strict(today, day);
+//         return Some(date_at(date, default_time()));
+//     }
 
-    None
-}
+//     None
+// }
 
-/// Parse a time string in any supported format.
-fn parse_time_str(text: &str) -> Option<NaiveTime> {
-    let lower = text.trim().to_ascii_lowercase();
-    // "14:30"
-    if let Ok(t) = NaiveTime::parse_from_str(&lower, "%H:%M") {
-        return Some(t);
-    }
-    parse_time12(&lower)
-}
+// /// Parse a time string in any supported format.
+// fn parse_time_str(text: &str) -> Option<NaiveTime> {
+//     let lower = text.trim().to_ascii_lowercase();
+//     // "14:30"
+//     if let Ok(t) = NaiveTime::parse_from_str(&lower, "%H:%M") {
+//         return Some(t);
+//     }
+//     parse_time12(&lower)
+// }
 
 /// Recognise named times when preceded by "at" or "this":
 /// noon, midnight, morning, afternoon, evening, night, midday.

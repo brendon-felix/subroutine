@@ -10,12 +10,12 @@ import kotlinx.serialization.json.JsonPrimitive
 data class Action(
     val id: String,
     @SerialName("lineage_id") val lineageId: String,
-    @SerialName("origin_routine_id") val originRoutineId: String? = null,
+    @SerialName("routine_id") val routineId: String? = null,
+    @SerialName("template_id") val templateId: String? = null,
     val title: String,
     val content: String? = null,
-    @SerialName("duration_secs") val durationSecs: Long? = null,
+    val duration: Long? = null,
     val recurrence: JsonElement? = null,
-    val saved: Boolean = false,
     val state: JsonElement,
 )
 
@@ -46,9 +46,32 @@ val Action.scheduledTimeIso: String?
     }
 
 @Serializable
+data class ActionTemplate(
+    val id: String,
+    @SerialName("lineage_id") val lineageId: String,
+    val title: String,
+    val content: String? = null,
+    val duration: Long? = null,
+    val recurrence: JsonElement? = null,
+)
+
+@Serializable
+data class EventTemplate(
+    val id: String,
+    @SerialName("lineage_id") val lineageId: String,
+    val title: String,
+    val content: String? = null,
+    val duration: Long,
+    val recurrence: JsonElement? = null,
+)
+
+@Serializable
 data class AllData(
     val actions: List<Action>,
     val events: List<Event>,
+    val routines: List<Routine> = emptyList(),
+    @SerialName("action_templates") val actionTemplates: List<ActionTemplate> = emptyList(),
+    @SerialName("event_templates") val eventTemplates: List<EventTemplate> = emptyList(),
 )
 
 @Serializable

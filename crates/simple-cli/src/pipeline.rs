@@ -70,7 +70,7 @@ impl AnyItem {
     fn time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
         match self {
             AnyItem::Action(a) => {
-                if let ActionState::Queued(target) = &a.state {
+                if let ActionState::Scheduled(target) = &a.state {
                     Some(target.time)
                 } else {
                     None
@@ -90,7 +90,7 @@ fn show(client: &Client, base: &str) -> Result<()> {
     let mut queue: Vec<AnyItem> = Vec::new();
 
     for action in data.actions {
-        if matches!(action.state, ActionState::Queued(_)) {
+        if matches!(action.state, ActionState::Scheduled(_)) {
             queue.push(AnyItem::Action(action));
         }
     }
@@ -207,7 +207,7 @@ fn promote(client: &Client, base: &str, identifier: &str, time: &str) -> Result<
 
     let title = action.title.clone();
     let id = action.id;
-    let updated = action.with_state(ActionState::Queued(ActionTarget {
+    let updated = action.with_state(ActionState::Scheduled(ActionTarget {
         time: target,
         is_static: true,
     }));
@@ -232,7 +232,7 @@ fn demote(client: &Client, base: &str, identifier: &str) -> Result<()> {
     let action = data
         .actions
         .into_iter()
-        .filter(|a| matches!(a.state, ActionState::Queued(_)))
+        .filter(|a| matches!(a.state, ActionState::Scheduled(_)))
         .find(|a| id_matches(a.id, &a.title, identifier))
         .ok_or_else(|| anyhow::anyhow!("No matching action found in the queue."))?;
 
@@ -261,7 +261,7 @@ fn complete(client: &Client, base: &str, identifier: &str, notes: Option<&str>) 
     let action = data
         .actions
         .into_iter()
-        .filter(|a| matches!(a.state, ActionState::Queued(_)))
+        .filter(|a| matches!(a.state, ActionState::Scheduled(_)))
         .find(|a| id_matches(a.id, &a.title, identifier))
         .ok_or_else(|| anyhow::anyhow!("No matching action found in the queue."))?;
 
@@ -318,7 +318,7 @@ fn remove(client: &Client, base: &str, identifier: &str) -> Result<()> {
     if let Some(action) = data
         .actions
         .iter()
-        .filter(|a| matches!(a.state, ActionState::Queued(_)))
+        .filter(|a| matches!(a.state, ActionState::Scheduled(_)))
         .find(|a| id_matches(a.id, &a.title, identifier))
     {
         let title = action.title.clone();

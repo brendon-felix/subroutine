@@ -6,6 +6,8 @@ use gpui_component::{ActiveTheme, Colorize, h_flex};
 
 pub(super) const DEFAULT_HOUR_HEIGHT: Pixels = px(280.);
 pub enum TimeDivisionStyle {
+    TickOnly,
+    // HourMinuteSecond,
     HourMinute,
     Hour,
     TimeOfDay,
@@ -22,6 +24,11 @@ pub enum TimeDivisionStyle {
 impl TimeDivisionStyle {
     pub(super) fn label(&self, datetime: DateTime<Local>, minimal: bool, cx: &App) -> Div {
         match self {
+            TimeDivisionStyle::TickOnly => div(),
+            // TimeDivisionStyle::HourMinuteSecond => match datetime.second() {
+            //     0 => hour_minute_label(datetime, minimal, false, cx).text_xs(),
+            //     _ => hour_minute_second_label(datetime, minimal, false, cx).text_xs(),
+            // },
             TimeDivisionStyle::HourMinute => match datetime.minute() {
                 0 => hour_label(datetime, cx),
                 _ => hour_minute_label(datetime, minimal, false, cx).text_xs(),
@@ -42,6 +49,7 @@ impl TimeDivisionStyle {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TimeSubDivision {
+    Second,
     Minute,
     FiveMinutes,
     TenMinutes,
@@ -60,6 +68,7 @@ pub enum TimeSubDivision {
 impl TimeSubDivision {
     pub(super) fn style(&self) -> TimeDivisionStyle {
         match self {
+            TimeSubDivision::Second => TimeDivisionStyle::TickOnly,
             TimeSubDivision::Minute => TimeDivisionStyle::HourMinute,
             TimeSubDivision::FiveMinutes => TimeDivisionStyle::HourMinute,
             TimeSubDivision::TenMinutes => TimeDivisionStyle::HourMinute,
@@ -76,12 +85,30 @@ impl TimeSubDivision {
         }
     }
 
+    pub(super) fn duration(&self) -> ChronoDuration {
+        match self {
+            TimeSubDivision::Second => ChronoDuration::seconds(1),
+            TimeSubDivision::Minute => ChronoDuration::minutes(1),
+            TimeSubDivision::FiveMinutes => ChronoDuration::minutes(5),
+            TimeSubDivision::TenMinutes => ChronoDuration::minutes(10),
+            TimeSubDivision::QuarterHour => ChronoDuration::minutes(15),
+            TimeSubDivision::Hour => ChronoDuration::hours(1),
+            TimeSubDivision::EvenHour => ChronoDuration::hours(2),
+            TimeSubDivision::HalfDay => ChronoDuration::hours(12),
+            TimeSubDivision::Day => ChronoDuration::days(1),
+            TimeSubDivision::Week => ChronoDuration::weeks(1),
+            TimeSubDivision::Month => ChronoDuration::weeks(4),
+            TimeSubDivision::QuarterYear => ChronoDuration::weeks(13),
+        }
+    }
+
     /// Returns the start of the next subdivision boundary after `start`.
     /// Sub-hour divisions use fixed durations (DST occurs on hour boundaries,
     /// so minutes are always exact). Day/Week/Month delegate to the calendar-aware
     /// `BaseTimeDivision` helpers so DST-affected days are correctly sized.
     pub(super) fn next_boundary(&self, start: DateTime<Local>) -> DateTime<Local> {
         match self {
+            TimeSubDivision::Second => start + ChronoDuration::seconds(1),
             TimeSubDivision::Minute => start + ChronoDuration::minutes(1),
             TimeSubDivision::FiveMinutes => start + ChronoDuration::minutes(5),
             TimeSubDivision::TenMinutes => start + ChronoDuration::minutes(10),
@@ -136,7 +163,7 @@ impl TimeSubDivision {
     /// Returns the start of the subdivision period that contains `time`.
     pub(super) fn floor_boundary(&self, time: DateTime<Local>) -> DateTime<Local> {
         match self {
-            TimeSubDivision::Minute => time
+            TimeSubDivision::Minute | TimeSubDivision::Second => time
                 .with_second(0)
                 .and_then(|t| t.with_nanosecond(0))
                 .unwrap(),
@@ -269,6 +296,7 @@ impl TimeSubDivision {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BaseTimeDivision {
+    Minute,
     FiveMinutes,
     Hour,
     Day,
@@ -289,6 +317,7 @@ impl BaseTimeDivision {
     /// month/year lengths.
     pub(super) fn next_boundary(&self, start: DateTime<Local>) -> DateTime<Local> {
         match self {
+            BaseTimeDivision::Minute => start + ChronoDuration::minutes(1),
             BaseTimeDivision::FiveMinutes => start + ChronoDuration::minutes(5),
             BaseTimeDivision::Hour => start + ChronoDuration::hours(1),
             BaseTimeDivision::Day => {
@@ -333,6 +362,10 @@ impl BaseTimeDivision {
     /// Returns the start of the division period that contains `time`.
     pub(super) fn floor_boundary(&self, time: DateTime<Local>) -> DateTime<Local> {
         match self {
+            BaseTimeDivision::Minute => time
+                .with_second(0)
+                .and_then(|t| t.with_nanosecond(0))
+                .unwrap(),
             BaseTimeDivision::FiveMinutes => time
                 .with_minute((time.minute() / 5) * 5)
                 .and_then(|t| t.with_second(0))
@@ -379,14 +412,25 @@ impl BaseTimeDivision {
         }
     }
 
-    /// Returns the ceil boundary — start of the next period if `time` is not
-    /// already on a boundary, or `time` itself if it is.
-    pub(super) fn ceil_boundary(&self, time: DateTime<Local>) -> DateTime<Local> {
-        let floor = self.floor_boundary(time);
-        if floor == time {
-            time
-        } else {
-            self.next_boundary(floor)
+    // /// Returns the ceil boundary — start of the next period if `time` is not
+    // /// already on a boundary, or `time` itself if it is.
+    // pub(super) fn ceil_boundary(&self, time: DateTime<Local>) -> DateTime<Local> {
+    //     let floor = self.floor_boundary(time);
+    //     if floor == time {
+    //         time
+    //     } else {
+    //         self.next_boundary(floor)
+    //     }
+    // }
+
+    pub(super) fn approximate_duration(&self) -> ChronoDuration {
+        match self {
+            BaseTimeDivision::Minute => ChronoDuration::minutes(1),
+            BaseTimeDivision::FiveMinutes => ChronoDuration::minutes(5),
+            BaseTimeDivision::Hour => ChronoDuration::hours(1),
+            BaseTimeDivision::Day => ChronoDuration::days(1),
+            BaseTimeDivision::Month => ChronoDuration::weeks(4),
+            BaseTimeDivision::Year => ChronoDuration::weeks(52),
         }
     }
 
@@ -400,6 +444,7 @@ impl BaseTimeDivision {
     /// The `TimeDivisionStyle` used to render each item's primary label.
     pub(super) fn base_label_style(&self) -> TimeDivisionStyle {
         match self {
+            BaseTimeDivision::Minute => TimeDivisionStyle::HourMinute,
             BaseTimeDivision::FiveMinutes => TimeDivisionStyle::HourMinute,
             BaseTimeDivision::Hour => TimeDivisionStyle::Hour,
             BaseTimeDivision::Day => TimeDivisionStyle::WeekDayDate,
@@ -412,6 +457,7 @@ impl BaseTimeDivision {
     /// (e.g. midnight for Hour, the 1st of the month for Day).
     pub(super) fn is_outer_boundary(&self, time: DateTime<Local>) -> bool {
         match self {
+            BaseTimeDivision::Minute => time.minute() == 0 && time.second() == 0,
             BaseTimeDivision::FiveMinutes => time.minute() == 0,
             BaseTimeDivision::Hour => time.hour() == 0,
             BaseTimeDivision::Day => time.day() == 1,
@@ -424,6 +470,8 @@ impl BaseTimeDivision {
     /// Returns `None` for Year (no outer) or if the time is not a boundary.
     pub(super) fn outer_label(&self, time: DateTime<Local>) -> Option<String> {
         match self {
+            // Outer of Minute is FiveMinutes → show e.g. "2 PM"
+            BaseTimeDivision::Minute => Some(time.format("%-I %p").to_string()),
             // Outer of FiveMinutes is Hour → show e.g. "2 PM"
             BaseTimeDivision::FiveMinutes => Some(time.format("%-I %p").to_string()),
             // Outer of Hour is Day → show e.g. "Mon 15"
@@ -438,6 +486,7 @@ impl BaseTimeDivision {
 
     pub(super) fn outer_division(&self) -> Option<BaseTimeDivision> {
         match self {
+            BaseTimeDivision::Minute => Some(BaseTimeDivision::FiveMinutes),
             BaseTimeDivision::FiveMinutes => Some(BaseTimeDivision::Hour),
             BaseTimeDivision::Hour => Some(BaseTimeDivision::Day),
             BaseTimeDivision::Day => Some(BaseTimeDivision::Month),
@@ -465,6 +514,7 @@ impl TimeDivisionState {
     pub(super) fn current_subdivision(&self) -> Option<TimeSubDivision> {
         match self.zoom_level {
             TimeZoomLevel::ZoomedIn => match self.base_division {
+                BaseTimeDivision::Minute => Some(TimeSubDivision::Second),
                 BaseTimeDivision::FiveMinutes => Some(TimeSubDivision::Minute),
                 BaseTimeDivision::Hour => Some(TimeSubDivision::FiveMinutes),
                 BaseTimeDivision::Day => Some(TimeSubDivision::Hour),
@@ -472,6 +522,7 @@ impl TimeDivisionState {
                 BaseTimeDivision::Year => Some(TimeSubDivision::Month),
             },
             TimeZoomLevel::Normal => match self.base_division {
+                BaseTimeDivision::Minute => Some(TimeSubDivision::Second),
                 BaseTimeDivision::FiveMinutes => Some(TimeSubDivision::Minute),
                 BaseTimeDivision::Hour => Some(TimeSubDivision::TenMinutes),
                 BaseTimeDivision::Day => Some(TimeSubDivision::EvenHour),
@@ -479,6 +530,7 @@ impl TimeDivisionState {
                 BaseTimeDivision::Year => Some(TimeSubDivision::QuarterYear),
             },
             TimeZoomLevel::ZoomedOut => match self.base_division {
+                BaseTimeDivision::Minute => None,
                 BaseTimeDivision::FiveMinutes => None,
                 BaseTimeDivision::Hour => Some(TimeSubDivision::QuarterHour),
                 BaseTimeDivision::Day => Some(TimeSubDivision::HalfDay),
@@ -486,6 +538,7 @@ impl TimeDivisionState {
                 BaseTimeDivision::Year => None,
             },
             TimeZoomLevel::ZoomedOutFar => match self.base_division {
+                BaseTimeDivision::Minute => None,
                 BaseTimeDivision::FiveMinutes => None,
                 BaseTimeDivision::Hour => None,
                 BaseTimeDivision::Day => None,
@@ -522,6 +575,19 @@ pub(super) fn ceil_division(division: ChronoDuration, time: DateTime<Local>) -> 
         floor + division
     }
 }
+
+// fn hour_minute_second_label(datetime: DateTime<Local>, muted: bool, pm: bool, cx: &App) -> Div {
+//     let format = if pm {
+//         "%-I:%M:%S %p" // "2:30:00 PM"
+//     } else {
+//         "%-I:%M:%S" // "2:30:00"
+//     };
+//     let str = datetime.format(format).to_string();
+//     div()
+//         .child(str)
+//         .text_sm()
+//         .when(muted, |this| this.text_color(cx.theme().muted_foreground))
+// }
 
 fn hour_minute_label(datetime: DateTime<Local>, muted: bool, pm: bool, cx: &App) -> Div {
     let format = if pm {

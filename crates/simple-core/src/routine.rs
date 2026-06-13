@@ -2,11 +2,12 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::RecurrenceRule;
+use crate::{RecurrenceRule, duration_nanos_opt};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutineStep {
     pub title: String,
+    #[serde(with = "duration_nanos_opt")]
     pub duration: Option<Duration>,
 }
 

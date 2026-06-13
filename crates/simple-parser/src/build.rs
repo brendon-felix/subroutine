@@ -1,8 +1,19 @@
-use anyhow::{Result, bail};
 use serde::Serialize;
 use simple_core::{Action, ActionState, ActionTarget, Event, RecurrenceRule, RoutineStep};
 
 use crate::ast::{ParseDraft, RecurrenceSpec, WhenSpec};
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ParserBuildError {
+    #[error("missing time")]
+    MissingTime,
+    #[error("invalid time: {0}")]
+    InvalidTime(String),
+    #[error("missing duration")]
+    MissingDuration,
+    #[error("invalid recurrence: {0}")]
+    InvalidRecurrence(String),
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum BuildTarget {
@@ -19,7 +30,10 @@ pub enum BuiltEntity {
     RoutineStep(RoutineStep),
 }
 
-pub fn build_entity(draft: &ParseDraft, target: BuildTarget) -> Result<BuiltEntity> {
+pub fn build_entity(
+    draft: &ParseDraft,
+    target: BuildTarget,
+) -> Result<BuiltEntity, ParserBuildError> {
     match target {
         BuildTarget::Action => Ok(BuiltEntity::Action(build_action(draft))),
         BuildTarget::Event => Ok(BuiltEntity::Event(build_event(draft)?)),
@@ -41,7 +55,7 @@ fn build_action(draft: &ParseDraft) -> Action {
                 time: *dt,
                 is_static: true,
             };
-            action = action.with_state(ActionState::Queued(target));
+            action = action.with_state(ActionState::Scheduled(target));
         }
         // Date only → place the action in the backlog with a floating date hint.
         // The pipeline will promote it once the date arrives.
@@ -57,13 +71,13 @@ fn build_action(draft: &ParseDraft) -> Action {
     }
 
     if let Some(rule) = recurrence_to_rule(draft.recurrence.as_ref()) {
-        action = action.with_recurrence(rule);
+        action = action.with_recurrence_rule(rule);
     }
 
     action
 }
 
-fn build_event(draft: &ParseDraft) -> Result<Event> {
+fn build_event(draft: &ParseDraft) -> Result<Event, ParserBuildError> {
     // Events always need a concrete datetime. A NaiveDate (date-only) is
     // accepted and resolved to that date at the default time (09:00 local),
     // which the parser already converts to UTC via `date_at`. In practice,
@@ -72,25 +86,24 @@ fn build_event(draft: &ParseDraft) -> Result<Event> {
     let time = match &draft.when {
         Some(WhenSpec::DateTime(dt)) => *dt,
         Some(WhenSpec::NaiveDate(_)) => {
-            bail!("event build requires a concrete @ time; a date-only specifier is not enough");
+            return Err(ParserBuildError::InvalidTime(
+                "a date-only specifier is not enough".to_string(),
+            ));
         }
         None => {
-            bail!("event build requires a concrete @ time");
+            return Err(ParserBuildError::MissingTime);
         }
     };
 
-    let mut event = Event::new(&draft.title, time);
+    let duration = draft.duration.ok_or(ParserBuildError::MissingDuration)?;
+    let mut event = Event::new(&draft.title, time, duration);
 
     if let Some(content) = &draft.content {
         event = event.with_content(content.clone());
     }
 
-    if let Some(duration) = draft.duration {
-        event = event.with_duration(duration);
-    }
-
     if let Some(rule) = recurrence_to_rule(draft.recurrence.as_ref()) {
-        event = event.with_recurrence(rule);
+        event = event.with_recurrence_rule(rule);
     }
 
     Ok(event)

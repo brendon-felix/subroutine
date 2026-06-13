@@ -1,7 +1,6 @@
 use chrono::{DateTime, Duration, NaiveDate, Utc, Weekday};
 use serde::Serialize;
 
-/// Which entity this draft should be built into.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub enum EntityKind {
     Action,
@@ -9,31 +8,6 @@ pub enum EntityKind {
     RoutineStep,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[allow(dead_code)] // Priority variants are defined for future sigil parsing
-pub enum Priority {
-    Low,
-    Medium,
-    High,
-}
-
-// ---------------------------------------------------------------------------
-// WeekdaySet — compact bitmask representation
-// ---------------------------------------------------------------------------
-
-/// A set of weekdays stored as a `u8` bitmask.
-///
-/// Bit layout (LSB = 0):
-///   bit 0 → Monday
-///   bit 1 → Tuesday
-///   bit 2 → Wednesday
-///   bit 3 → Thursday
-///   bit 4 → Friday
-///   bit 5 → Saturday
-///   bit 6 → Sunday
-///
-/// This avoids the `Ord` requirement that `BTreeSet<Weekday>` would impose,
-/// while remaining compact, `Copy`, and trivially comparable.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Hash)]
 pub struct WeekdaySet(pub u8);
 
@@ -272,11 +246,6 @@ pub struct ParseDraft {
     pub duration: Option<Duration>,
     pub recurrence: Option<RecurrenceSpec>,
 
-    pub priority: Option<Priority>,
-    pub location: Option<String>,
-    pub tags: Vec<String>,
-    pub people: Vec<String>,
-
     pub content: Option<String>,
     pub warnings: Vec<String>,
     /// Byte-range → highlight kind for each recognized span of the raw input.
@@ -293,10 +262,6 @@ impl ParseDraft {
             when: None,
             duration: None,
             recurrence: None,
-            priority: None,
-            location: None,
-            tags: Vec::new(),
-            people: Vec::new(),
             content: None,
             warnings: Vec::new(),
             highlights: Vec::new(),

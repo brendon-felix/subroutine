@@ -11,8 +11,7 @@ use gpui_component::{
     v_flex,
 };
 use simple_parser::{
-    BuildTarget, BuiltEntity, ParseDraft, RecurrenceSpec, WeekdaySet, build_entity,
-    parse_event_input,
+    BuildTarget, BuiltEntity, ParseDraft, RecurrenceSpec, WeekdaySet, build_entity, parse_event,
 };
 
 use crate::{
@@ -124,7 +123,7 @@ impl EventCreator {
                     let value = this.title_input.read(cx).value().to_string();
                     this.current_title = value.trim().to_string();
                     // Re-parse eagerly so the draft stays fresh.
-                    this.current_draft = parse_event_input(&this.current_title).ok();
+                    this.current_draft = parse_event(&this.current_title).ok();
                     cx.notify();
                 }
             }),
@@ -179,7 +178,7 @@ impl EventCreator {
         let (draft, warnings) = match self
             .current_draft
             .clone()
-            .or_else(|| parse_event_input(&self.current_title).ok())
+            .or_else(|| parse_event(&self.current_title).ok())
         {
             Some(draft) => {
                 let w = draft.warnings.clone();
@@ -204,9 +203,10 @@ impl EventCreator {
             Err(e) => return Err(e.to_string()),
         };
 
-        // The `save` checkbox controls ephemerality regardless of what the
-        // parser inferred.
-        event.saved = self.save;
+        // The `save` checkbox controls whether this event is also saved as a template.
+        if self.save {
+            event.template_id = Some(event.id);
+        }
 
         // An explicit description always takes precedence over the parsed one.
         if !self.current_content.is_empty() {
@@ -332,18 +332,6 @@ impl Render for EventCreator {
             }
             if let Some(rec) = &draft.recurrence {
                 parts.push(format_recurrence(rec));
-            }
-            if let Some(loc) = &draft.location {
-                parts.push(loc.clone());
-            }
-            if !draft.tags.is_empty() {
-                parts.push(draft.tags.join(", "));
-            }
-            if !draft.people.is_empty() {
-                parts.push(draft.people.join(", "));
-            }
-            if let Some(pri) = &draft.priority {
-                parts.push(format!("{pri:?}"));
             }
 
             if parts.is_empty() {

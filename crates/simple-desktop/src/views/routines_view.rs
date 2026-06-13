@@ -69,14 +69,14 @@ impl RoutinesView {
         }
     }
 
-    fn set_item_size(&mut self, index: usize, height: Pixels, cx: &mut Context<Self>) {
-        let mut sizes = self.item_sizes.to_vec();
-        if index < sizes.len() {
-            sizes[index].height = height;
-        }
-        self.item_sizes = Rc::new(sizes);
-        cx.notify();
-    }
+    // fn set_item_size(&mut self, index: usize, height: Pixels, cx: &mut Context<Self>) {
+    //     let mut sizes = self.item_sizes.to_vec();
+    //     if index < sizes.len() {
+    //         sizes[index].height = height;
+    //     }
+    //     self.item_sizes = Rc::new(sizes);
+    //     cx.notify();
+    // }
 
     fn refresh_item_sizes(&mut self, height: Pixels) {
         let num_items = self.routines.len();
@@ -110,12 +110,18 @@ impl RoutinesView {
                             let title: SharedString = routine.title().into();
                             let num_steps = routine.steps().len();
                             let id = routine.id;
-                            let duration_opt = routine.duration();
-                            let colors = ButtonColors::normal(cx.theme().foreground, cx);
+                            // let duration_opt = routine.duration();
+                            // let colors = ButtonColors::normal(cx.theme().foreground, cx);
+                            let colors = ButtonColors::outline(cx.theme().foreground, cx);
                             let preview_title = title.clone();
                             let preview_colors = colors;
-                            let height_transition = window.use_keyed_transition(("height-transition", id.as_u64_pair().1), cx, Duration::from_millis(150), |_, _,| ITEM_HEIGHT);
-                            let height = *height_transition.evaluate(window, cx);
+                            let height_transition = window.use_keyed_transition(
+                                ("height-transition", id.as_u64_pair().1),
+                                cx,
+                                Duration::from_millis(150),
+                                |_, _| ITEM_HEIGHT,
+                            );
+                            // let height = *height_transition.evaluate(window, cx);
                             let drag_data = DragData::new(AnyItem::Routine(routine))
                                 .with_label(title.clone())
                                 .with_preview(move || {
@@ -140,7 +146,7 @@ impl RoutinesView {
                                             .button_colors(colors)
                                             .text_ellipsis()
                                             .overflow_hidden()
-                                            .on_click(cx.listener(move |view, event, window, cx| {
+                                            .on_click(cx.listener(move |view, _, _, cx| {
                                                 view.toggle_expand(id, cx);
                                                 height_transition.update(cx, |value, _| {
                                                     *value = ITEM_HEIGHT * 4;
@@ -158,14 +164,14 @@ impl RoutinesView {
                                                             // .text_color(cx.theme().muted_foreground)
                                                             .block_mouse_except_scroll()
                                                             .label("start")
-                                                            .on_click(cx.listener(
-                                                                move |view, event, window, cx| {
-                                                                    AppDatabaseStore::global(cx)
-                                                                        .update(cx, |store, cx| {
-                                                                            store.instantiate_routine(id, None, cx);
-                                                                        });
-                                                                },
-                                                            )),
+                                                            .on_click(move |_, _, cx| {
+                                                                AppDatabaseStore::global(cx)
+                                                                    .update(cx, |store, cx| {
+                                                                        store.instantiate_routine(
+                                                                            id, None, cx,
+                                                                        );
+                                                                    });
+                                                            }),
                                                     )
                                                     .child(Label::new(title))
                                                     .child(
@@ -188,7 +194,7 @@ impl RoutinesView {
 }
 
 impl Render for RoutinesView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // v_flex().w_full().items_center().child("Routines")
         self.render_items(cx)
     }

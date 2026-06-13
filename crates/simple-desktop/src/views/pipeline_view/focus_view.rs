@@ -25,7 +25,7 @@ use crate::{
 const COMPLETE_CHECKBOX_DURATION: Duration = Duration::from_millis(250);
 
 pub struct FocusView {
-    focus_handle: FocusHandle,
+    pub(super) focus_handle: FocusHandle,
     scroll_handle: VirtualListScrollHandle,
     items: Vec<AnyItem>,
     item_focus_handles: HashMap<Uuid, FocusHandle>,
@@ -56,7 +56,8 @@ impl FocusView {
 
     pub fn refresh_items(&mut self, queue: Vec<AnyItem>, cx: &mut Context<Self>) {
         self.items = queue;
-        self.items.sort_by_key(|i| i.time().map(|t| t.timestamp()));
+        self.items
+            .sort_by_key(|i| i.start_time().map(|t| t.timestamp()));
 
         // Create focus handles for any new items; drop handles for removed items.
         let current_ids: HashSet<Uuid> = self.items.iter().map(|i| i.id()).collect();
@@ -136,8 +137,6 @@ impl FocusView {
         };
         if let Some(handle) = next_focus {
             handle.focus(window, cx);
-        } else {
-            self.focus_handle.focus(window, cx);
         }
         self.completing_items.insert(action_id);
         cx.notify();
@@ -194,18 +193,32 @@ impl Render for FocusView {
                                     .unwrap_or_else(|| cx.focus_handle());
                                 let is_focused = item_focus_handle.is_focused(window);
 
+                                // let button_colors = match item {
+                                //     AnyItem::Action(_) => {
+                                //         ButtonColors::normal(cx.theme().button_primary, cx)
+                                //     }
+                                //     AnyItem::Event(_) => ButtonColors::normal(
+                                //         cx.theme()
+                                //             .button_primary
+                                //             .mix_oklab(cx.theme().foreground, 0.5),
+                                //         cx,
+                                //     ),
+                                //     AnyItem::Routine(_) => {
+                                //         ButtonColors::normal(cx.theme().button_primary, cx)
+                                //     }
+                                // };
                                 let button_colors = match item {
                                     AnyItem::Action(_) => {
-                                        ButtonColors::normal(cx.theme().button_primary, cx)
+                                        ButtonColors::outline(cx.theme().button_primary, cx)
                                     }
-                                    AnyItem::Event(_) => ButtonColors::normal(
+                                    AnyItem::Event(_) => ButtonColors::outline(
                                         cx.theme()
                                             .button_primary
                                             .mix_oklab(cx.theme().foreground, 0.5),
                                         cx,
                                     ),
                                     AnyItem::Routine(_) => {
-                                        ButtonColors::normal(cx.theme().button_primary, cx)
+                                        ButtonColors::outline(cx.theme().button_primary, cx)
                                     }
                                 };
 
@@ -241,9 +254,12 @@ impl Render for FocusView {
                                     .size_full()
                                     .context_menu(
                                         move |menu, window, cx| match &any_item_for_menu {
-                                            AnyItem::Action(a) => {
-                                                super::action_context_menu(a.id)(menu, window, cx)
-                                            }
+                                            AnyItem::Action(a) => super::action_context_menu(
+                                                a.id,
+                                                a.template_id.is_some(),
+                                            )(
+                                                menu, window, cx
+                                            ),
                                             AnyItem::Event(e) => {
                                                 super::event_context_menu(e.id)(menu, window, cx)
                                             }

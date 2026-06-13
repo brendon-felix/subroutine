@@ -86,37 +86,29 @@ impl<T: Clone + Debug + 'static> Render for DragData<T> {
         if let Some(factory) = &self.preview_factory {
             let preview = factory();
 
-            // `self.position` is the cursor offset from the dragged element's
-            // origin (set by GPUI's on_drag callback). GPUI positions the drag
-            // overlay at `mouse_pos - cursor_offset`, so adding `cursor_offset`
-            // back via `.left/.top` places the preview's top-left at the cursor.
+            // GPUI places the overlay's top-left at `mouse_pos - self.position`,
+            // so with no extra adjustment the cursor naturally lands at
+            // `(self.position.x, self.position.y)` within the preview.
             //
-            // When the preview is smaller than the dragged element, a raw
-            // cursor_offset that exceeds the preview dimensions would place the
-            // cursor outside the preview bounds. We clamp the grab-point so the
-            // cursor always lands within the preview.
-            let edge_margin = px(16.0);
-            let (grab_x, grab_y) = if let Some(preview_size) = self.preview_size {
-                let gx = self
-                    .position
-                    .x
-                    .min(preview_size.width - edge_margin)
-                    .max(px(0.0));
-                let gy = self
-                    .position
-                    .y
-                    .min(preview_size.height - edge_margin)
-                    .max(px(0.0));
-                (gx, gy)
+            // Hybrid strategy: use that natural grab-point when it already falls
+            // inside the preview (with a small inset), otherwise clamp it to the
+            // nearest point that keeps the cursor solidly within the bounds and
+            // shift the overlay to compensate.
+            let (offset_x, offset_y) = if let Some(preview_size) = self.preview_size {
+                let padding = px(8.0);
+                // Safe upper bound in case the preview itself is narrower than 2×padding.
+                let max_x = (preview_size.width - padding).max(padding);
+                let max_y = (preview_size.height - padding).max(padding);
+                let clamped_x = self.position.x.max(padding).min(max_x);
+                let clamped_y = self.position.y.max(padding).min(max_y);
+                // When the natural position is already in-bounds, clamped == position
+                // and both offsets are zero (no adjustment needed).
+                (self.position.x - clamped_x, self.position.y - clamped_y)
             } else {
-                (self.position.x, self.position.y)
+                (px(0.0), px(0.0))
             };
 
-            return div()
-                .absolute()
-                .left(self.position.x - grab_x)
-                .top(self.position.y - grab_y)
-                .child(preview);
+            return div().absolute().left(offset_x).top(offset_y).child(preview);
         }
 
         let size = gpui::size(px(250.0), px(80.0));

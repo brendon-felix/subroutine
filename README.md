@@ -4,12 +4,11 @@
 
 ---
 
-*"Externalize your executive function. We can't all be multithreaded."*
+### About
+
+Subroutine is an executive function prosthetic designed to minimize decision fatigue and smooth over planning gaps. Instead of a traditional task manager, it adapts to your current mental state and context, surfacing the right actions exactly when you need them.
 
 ---
 
-A context-aware action recommender and executive function prosthetic built for monotropic minds and executive dysfunction. Rather than a traditional task manager, Subroutine adapts to your current mental state and context — surfacing the right actions at the right time, minimizing decision fatigue, and smoothing over the rough edges of planning and transitions. It's designed to be a trusted tool in your daily life, helping you get things get done without the overhead of constant decision-making.
-
----
-
-> ⚠️ This project is in early development. Nothing is stable, and large parts of the design are still being built.
+> **Development Status**
+> This project is in active development. Large parts of the design are still evolving, so expect changes—nothing is stable yet.

@@ -19,13 +19,13 @@ use uuid::Uuid;
 use crate::{
     components::{Checkbox, DragData, Draggable, DropZone},
     stores::AppDatabaseStore,
-    utils::{ButtonColorizeExt, ButtonColors},
+    utils::ButtonColors,
 };
 
 const COMPLETE_CHECKBOX_DURATION: Duration = Duration::from_millis(250);
 
 pub struct QueueView {
-    focus_handle: FocusHandle,
+    pub(super) focus_handle: FocusHandle,
     scroll_handle: VirtualListScrollHandle,
     items: Vec<AnyItem>,
     item_focus_handles: HashMap<Uuid, FocusHandle>,
@@ -56,7 +56,8 @@ impl QueueView {
 
     pub fn refresh_items(&mut self, queue: Vec<AnyItem>, cx: &mut Context<Self>) {
         self.items = queue;
-        self.items.sort_by_key(|i| i.time().map(|t| t.timestamp()));
+        self.items
+            .sort_by_key(|i| i.start_time().map(|t| t.timestamp()));
 
         // Create focus handles for any new items; drop handles for removed items.
         let current_ids: HashSet<Uuid> = self.items.iter().map(|i| i.id()).collect();
@@ -136,8 +137,6 @@ impl QueueView {
         };
         if let Some(handle) = next_focus {
             handle.focus(window, cx);
-        } else {
-            self.focus_handle.focus(window, cx);
         }
         self.completing_items.insert(action_id);
         cx.notify();
@@ -168,70 +167,95 @@ impl Render for QueueView {
         let completing_items = self.completing_items.clone();
         let ring_color = cx.theme().ring;
 
-        self.drop_zone(window, cx)
+        div()
             .track_focus(&self.focus_handle)
-            .pt_8()
+            .size_full()
+            .flex()
+            .justify_center()
             .child(
-                v_virtual_list(
-                    cx.entity(),
-                    "queue-view-list",
-                    self.list_item_sizes.clone(),
-                    move |view, visible_range, window, cx| {
-                        visible_range
-                            .map(|i| {
-                                let item = &view.items[i];
-                                let item_id = item.id();
-                                let any_item = item.clone();
-                                let any_item_for_drag = item.clone();
-                                let any_item_for_menu = item.clone();
-                                let is_completing = completing_items.contains(&item_id);
-                                let item_focus_handle = view
-                                    .item_focus_handles
-                                    .get(&item_id)
-                                    .cloned()
-                                    .unwrap_or_else(|| cx.focus_handle());
-                                let is_focused = item_focus_handle.is_focused(window);
+                self.drop_zone(window, cx).w_128().flex_initial().child(
+                    v_virtual_list(
+                        cx.entity(),
+                        "queue-view-list",
+                        self.list_item_sizes.clone(),
+                        move |view, visible_range, window, cx| {
+                            visible_range
+                                .map(|i| {
+                                    let item = &view.items[i];
+                                    let item_id = item.id();
+                                    let any_item = item.clone();
+                                    let any_item_for_drag = item.clone();
+                                    let any_item_for_menu = item.clone();
+                                    let is_completing = completing_items.contains(&item_id);
+                                    let item_focus_handle = view
+                                        .item_focus_handles
+                                        .get(&item_id)
+                                        .cloned()
+                                        .unwrap_or_else(|| cx.focus_handle());
+                                    let is_focused = item_focus_handle.is_focused(window);
 
-                                let button_colors = match item {
-                                    AnyItem::Action(_) => {
-                                        ButtonColors::normal(cx.theme().button_primary, cx)
-                                    }
-                                    AnyItem::Event(_) => ButtonColors::normal(
-                                        cx.theme()
-                                            .button_primary
-                                            .mix_oklab(cx.theme().foreground, 0.5),
-                                        cx,
-                                    ),
-                                    AnyItem::Routine(_) => {
-                                        ButtonColors::normal(cx.theme().foreground, cx)
-                                    }
-                                };
-
-                                let is_action = matches!(item, AnyItem::Action(_));
-                                let preview_title: gpui::SharedString = any_item.title().into();
-                                let fg = cx.theme().muted_foreground;
-                                let colors = button_colors;
-                                let meta_text = super::format_item_meta(&any_item);
-
-                                let drag_data = DragData::new(any_item_for_drag.clone())
-                                    .with_label(any_item_for_drag.title())
-                                    .with_preview(move || {
-                                        let mut preview = div()
-                                            .w(px(64. * 4.))
-                                            .h(px(52.))
-                                            .rounded_lg()
-                                            .bg(colors.bg)
-                                            .p_2()
-                                            .text_color(fg)
-                                            .child(preview_title.clone());
-                                        if let Some(border_color) = colors.border {
-                                            preview = preview.border_1().border_color(border_color);
+                                    // let button_colors = match item {
+                                    //     AnyItem::Action(_) => {
+                                    //         ButtonColors::normal(cx.theme().button_primary, cx)
+                                    //     }
+                                    //     AnyItem::Event(_) => ButtonColors::normal(
+                                    //         cx.theme()
+                                    //             .button_primary
+                                    //             .mix_oklab(cx.theme().foreground, 0.5),
+                                    //         cx,
+                                    //     ),
+                                    //     AnyItem::Routine(_) => {
+                                    //         ButtonColors::normal(cx.theme().foreground, cx)
+                                    //     }
+                                    // };
+                                    let button_colors = match item {
+                                        AnyItem::Action(_) => {
+                                            ButtonColors::outline(cx.theme().button_primary, cx)
                                         }
-                                        preview.into_any_element()
-                                    })
-                                    .with_preview_size(gpui::size(px(64. * 4.), px(52.)));
+                                        AnyItem::Event(_) => ButtonColors::outline(
+                                            cx.theme()
+                                                .button_primary
+                                                .mix_oklab(cx.theme().foreground, 0.5),
+                                            cx,
+                                        ),
+                                        AnyItem::Routine(_) => {
+                                            ButtonColors::outline(cx.theme().foreground, cx)
+                                        }
+                                    };
 
-                                div().size_full().px_2().py_1().child(
+                                    let is_action = matches!(item, AnyItem::Action(_));
+                                    let preview_title: gpui::SharedString = any_item.title().into();
+                                    let fg = cx.theme().muted_foreground;
+                                    let colors = button_colors;
+                                    let meta_text = super::format_item_meta(&any_item);
+
+                                    let drag_data = DragData::new(any_item_for_drag.clone())
+                                        // .with_label(any_item_for_drag.title())
+                                        .with_preview(move || {
+                                            let mut preview = div()
+                                                // .w(px(64. * 4.))
+                                                // .h(px(52.))
+                                                .rounded_lg()
+                                                .shadow_md()
+                                                .bg(colors.bg)
+                                                .p_2()
+                                                .text_color(fg)
+                                                .child(preview_title.clone());
+                                            if let Some(border_color) = colors.border {
+                                                preview =
+                                                    preview.border_1().border_color(border_color);
+                                            }
+                                            preview.into_any_element()
+                                        })
+                                        // .with_preview_size(gpui::size(px(64. * 4.), px(52.)));
+
+                                        ;
+                                    div()
+                                .size_full()
+                                .when(i != 0, |this| {
+                                    this.border_t_1().border_color(cx.theme().border)
+                                })
+                                .child(
                                     Draggable::new(
                                         ("queue-view-draggable", item_id.as_u128() as u64),
                                         drag_data,
@@ -240,7 +264,7 @@ impl Render for QueueView {
                                     .context_menu(
                                         move |menu, window, cx| match &any_item_for_menu {
                                             AnyItem::Action(a) => {
-                                                super::action_context_menu(a.id)(menu, window, cx)
+                                                super::action_context_menu(a.id, a.template_id.is_some())(menu, window, cx)
                                             }
                                             AnyItem::Event(e) => {
                                                 super::event_context_menu(e.id)(menu, window, cx)
@@ -255,8 +279,8 @@ impl Render for QueueView {
                                             .id(("queue-view-item", item_id.as_u128() as u64))
                                             .track_focus(&item_focus_handle.tab_stop(true))
                                             .size_full()
-                                            .button_colors(button_colors)
-                                            .rounded_lg()
+                                            // .button_colors(button_colors)
+                                            // .rounded_lg()
                                             .p_2()
                                             .when(is_focused, |el| el.border_color(ring_color))
                                             .on_key_down(cx.listener(
@@ -374,13 +398,14 @@ impl Render for QueueView {
                                             ),
                                     ),
                                 )
-                            })
-                            .collect()
-                    },
-                )
-                .min_w(px(64. * 4. - 4.))
-                .my_1()
-                .track_scroll(&self.scroll_handle),
+                                })
+                                .collect()
+                        },
+                    )
+                    .min_w(px(64. * 4. - 4.))
+                    .my_1()
+                    .track_scroll(&self.scroll_handle),
+                ),
             )
     }
 }

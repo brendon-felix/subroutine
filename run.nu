@@ -1,1 +1,2 @@
-cargo run -p simple-desktop
+cd crates/simple-desktop
+cargo run

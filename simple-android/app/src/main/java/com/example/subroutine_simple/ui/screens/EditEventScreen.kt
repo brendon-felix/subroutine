@@ -98,10 +98,10 @@ private fun EditEventContent(
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
 
     // Time summary shown read-only (editing time not yet supported)
-    val durationMins = event.durationSecs?.let { it / 60 }
+    val durationMins = event.durationSecs / 60
     val timeLabel = buildString {
         append(formatIsoTime(event.time))
-        if (durationMins != null && durationMins > 0) append(" · ${durationMins}min")
+        if (durationMins > 0) append(" · ${durationMins}min")
     }
 
     Scaffold(

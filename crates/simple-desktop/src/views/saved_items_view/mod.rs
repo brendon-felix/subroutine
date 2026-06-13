@@ -9,13 +9,13 @@ use crate::stores::{AppDatabaseStore, DataChanged};
 mod list;
 use list::*;
 
-pub struct AllItemsView {
-    list_state: Entity<ListState<AllItemsList>>,
+pub struct SavedItemsView {
+    list_state: Entity<ListState<SavedItemsList>>,
 }
 
-impl AllItemsView {
+impl SavedItemsView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let delegate = AllItemsList::new();
+        let delegate = SavedItemsList::new();
         let list_state = cx.new(|cx| ListState::new(delegate, window, cx).searchable(true));
 
         let db_store = AppDatabaseStore::global(cx);
@@ -24,9 +24,24 @@ impl AllItemsView {
             view.list_state.update(cx, |list, cx| {
                 let store = store.read(cx);
                 let d = list.delegate_mut();
-                d.actions = store.actions().into_iter().map(|a| (a, true)).collect();
-                d.events = store.events().into_iter().map(|e| (e, true)).collect();
-                d.routines = store.routines().into_iter().map(|r| (r, true)).collect();
+                d.saved_actions = store
+                    .actions()
+                    .into_iter()
+                    .filter(|a| a.template_id.is_some())
+                    .collect();
+                d.saved_events = store
+                    .events()
+                    .into_iter()
+                    .filter(|e| e.template_id.is_some())
+                    .collect();
+                d.saved_routines = store.routines();
+                d.filtered_ids = d
+                    .saved_actions
+                    .iter()
+                    .map(|a| a.id)
+                    .chain(d.saved_events.iter().map(|e| e.id))
+                    .chain(d.saved_routines.iter().map(|r| r.id))
+                    .collect();
                 if d.loading {
                     d.loading = false;
                 }
@@ -39,7 +54,7 @@ impl AllItemsView {
     }
 }
 
-impl Render for AllItemsView {
+impl Render for SavedItemsView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .absolute()

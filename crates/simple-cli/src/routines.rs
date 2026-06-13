@@ -169,17 +169,12 @@ fn run(
         let step_duration = step.duration.unwrap_or(default_step_duration);
 
         let action = Action::new(&step.title)
-            .with_state(ActionState::Queued(ActionTarget {
+            .with_state(ActionState::Scheduled(ActionTarget {
                 time: cursor,
                 is_static: true,
             }))
             .with_duration(step_duration)
             .with_origin_routine(routine.id);
-
-        let action = Action {
-            saved: false,
-            ..action
-        };
 
         let title = action.title.clone();
         let id = action.id;

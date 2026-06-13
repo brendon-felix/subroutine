@@ -1,6 +1,5 @@
 use std::{rc::Rc, time::Duration};
 
-use chrono::Local;
 use gpui::{
     App, AppContext as _, Context, DefiniteLength, Entity, FocusHandle, Focusable, KeyBinding,
     Pixels, Point, SharedString, Size, Window, actions, div, prelude::*, px, rems,
@@ -18,8 +17,7 @@ use gpui_component::{
 };
 use simple_core::{Routine, RoutineStep};
 use simple_parser::{
-    BuildTarget, BuiltEntity, ParseDraft, RecurrenceSpec, WeekdaySet, build_entity,
-    parse::parse_routine_step_input,
+    BuildTarget, BuiltEntity, ParseDraft, build_entity, parse::parse_routine_step,
 };
 
 use gpui_transitions::WindowUseTransition;
@@ -36,70 +34,6 @@ const SCROLL_DURATION: Duration = Duration::from_millis(200);
 
 const ITEM_HEIGHT: Pixels = px(12. * 4.);
 
-/// Format a day number as an ordinal string: 1 → "1st", 2 → "2nd", etc.
-fn ordinal(n: u32) -> String {
-    let suffix = match n % 100 {
-        11 | 12 | 13 => "th",
-        _ => match n % 10 {
-            1 => "st",
-            2 => "nd",
-            3 => "rd",
-            _ => "th",
-        },
-    };
-    format!("{n}{suffix}")
-}
-
-/// Format a [`WeekdaySet`] as a short human-readable string.
-fn format_weekday_set(set: &WeekdaySet) -> String {
-    use chrono::Weekday::*;
-
-    // Named combinations first.
-    if *set == WeekdaySet::every_day() {
-        return "daily".into();
-    }
-    if *set == WeekdaySet::weekdays() {
-        return "weekdays".into();
-    }
-    if *set == WeekdaySet::weekends() {
-        return "weekends".into();
-    }
-
-    // Fall back to comma-joined abbreviated names in Mon→Sun order.
-    let names: Vec<&str> = [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
-        .iter()
-        .filter(|&&d| set.contains(d))
-        .map(|d| match d {
-            Mon => "Mon",
-            Tue => "Tue",
-            Wed => "Wed",
-            Thu => "Thu",
-            Fri => "Fri",
-            Sat => "Sat",
-            Sun => "Sun",
-        })
-        .collect();
-
-    names.join(", ")
-}
-
-fn format_recurrence(spec: &RecurrenceSpec) -> String {
-    match spec {
-        RecurrenceSpec::EveryDays(1) => "daily".into(),
-        RecurrenceSpec::EveryDays(7) => "weekly".into(),
-        RecurrenceSpec::EveryDays(n) => format!("every {n} days"),
-        RecurrenceSpec::EveryWeeks(1) => "weekly".into(),
-        RecurrenceSpec::EveryWeeks(n) => format!("every {n} weeks"),
-        RecurrenceSpec::EveryMonths(1) => "monthly".into(),
-        RecurrenceSpec::EveryMonths(3) => "quarterly".into(),
-        RecurrenceSpec::EveryMonths(n) => format!("every {n} months"),
-        RecurrenceSpec::EveryYears(1) => "yearly".into(),
-        RecurrenceSpec::EveryYears(n) => format!("every {n} years"),
-        RecurrenceSpec::OnMonthDay(day) => format!("the {}", ordinal(*day)),
-        RecurrenceSpec::OnWeekdays(set) => format_weekday_set(set),
-    }
-}
-
 pub struct RoutineCreator {
     pub focus_handle: FocusHandle,
     scroll_handle: VirtualListScrollHandle,
@@ -109,14 +43,10 @@ pub struct RoutineCreator {
     title_input: Entity<InputState>,
     step_input: Entity<InputState>,
 
-    save: bool,
-
     current_title: String,
     current_step_input: String,
     current_step_draft: Option<ParseDraft>,
     current_steps: Vec<RoutineStep>,
-
-    batch_mode: bool,
 
     pending_scroll_item: Option<usize>,
 
@@ -165,8 +95,7 @@ impl RoutineCreator {
                 if let InputEvent::Change = event {
                     let value = this.step_input.read(cx).value().to_string();
                     this.current_step_input = value.trim().to_string();
-                    this.current_step_draft =
-                        parse_routine_step_input(&this.current_step_input).ok();
+                    this.current_step_draft = parse_routine_step(&this.current_step_input).ok();
                     cx.notify();
                 }
             }),
@@ -188,12 +117,10 @@ impl RoutineCreator {
             db_store,
             title_input,
             step_input,
-            save: false,
             current_title: String::new(),
             current_steps: Vec::new(),
             current_step_input: String::new(),
             current_step_draft: None,
-            batch_mode: false,
             pending_scroll_item: None,
             _subscriptions: subscriptions,
         }
@@ -220,7 +147,7 @@ impl RoutineCreator {
         let (draft, mut warnings) = match self
             .current_step_draft
             .clone()
-            .or_else(|| parse_routine_step_input(&self.current_step_input).ok())
+            .or_else(|| parse_routine_step(&self.current_step_input).ok())
         {
             Some(draft) => {
                 let w = draft.warnings.clone();
@@ -457,66 +384,6 @@ impl Render for RoutineCreator {
         let theme = cx.theme().clone();
         // let can_submit = !self.current_title.is_empty();
 
-        // Build a one-line preview string from the current draft so the user
-        // can see at a glance what the parser understood.
-        let preview_text: Option<SharedString> = self.current_step_draft.as_ref().map(|draft| {
-            let mut parts: Vec<String> = Vec::new();
-
-            if let Some(when) = &draft.when {
-                use simple_parser::ast::WhenSpec;
-                match when {
-                    WhenSpec::DateTime(dt) => {
-                        let local = dt.with_timezone(&Local);
-                        // e.g. "Fri Dec 20 3:00pm" or "Fri Dec 20 12:00pm"
-                        let time_str = local.format("%-I:%M%P").to_string();
-                        // Trim ":00" from whole-hour times → "3pm" instead of "3:00pm"
-                        let time_str = if time_str.contains(":00") {
-                            time_str.replace(":00", "")
-                        } else {
-                            time_str
-                        };
-                        parts.push(local.format(&format!("%a %b %-d {time_str}")).to_string());
-                    }
-                    WhenSpec::NaiveDate(date) => {
-                        // Date-only — no time component yet (floating backlog date).
-                        parts.push(date.format("%a %b %-d").to_string());
-                    }
-                }
-            }
-            if let Some(dur) = draft.duration {
-                let total_mins = dur.num_minutes();
-                if total_mins % 60 == 0 {
-                    parts.push(format!("{}h", total_mins / 60));
-                } else if total_mins >= 60 {
-                    parts.push(format!("{}h {}m", total_mins / 60, total_mins % 60));
-                } else {
-                    parts.push(format!("{}m", total_mins));
-                }
-            }
-            if let Some(rec) = &draft.recurrence {
-                parts.push(format_recurrence(rec));
-            }
-            if let Some(loc) = &draft.location {
-                parts.push(loc.clone());
-            }
-            if !draft.tags.is_empty() {
-                parts.push(format!("{}", draft.tags.join(", ")));
-            }
-            if !draft.people.is_empty() {
-                parts.push(format!("{}", draft.people.join(", ")));
-            }
-            if let Some(pri) = &draft.priority {
-                parts.push(format!("{pri:?}"));
-            }
-
-            if parts.is_empty() {
-                SharedString::from("")
-            } else {
-                // SharedString::from(parts.join("  ·  "))
-                SharedString::from(parts.join(" "))
-            }
-        });
-
         let inner = v_flex().w(px(144. * 4.)).child(
             v_flex()
                 .track_focus(&self.focus_handle)
@@ -525,7 +392,7 @@ impl Render for RoutineCreator {
                 .border_1()
                 .border_color(theme.border)
                 // .rounded_full()
-                .rounded(px(28.))
+                .rounded(px(24.))
                 .shadow_md()
                 .on_action(cx.listener(|view, _: &SubmitRoutine, window, cx| {
                     view.submit(window, cx);
@@ -539,7 +406,16 @@ impl Render for RoutineCreator {
                         .w_full()
                         .items_center()
                         .child(Icon::new(AppIcon::Repeat).large())
-                        .child(self.render_title_input()),
+                        .child(self.render_title_input())
+                        .child(
+                            Button::new("reset-routine")
+                                .ghost()
+                                .size_6()
+                                .child(Icon::new(AppIcon::RotateCcw).size_3())
+                                .on_click(cx.listener(|view, _, window, cx| {
+                                    view.reset(window, cx);
+                                })),
+                        ),
                 )
                 .when(!self.current_title.is_empty(), |this| {
                     this.child(self.render_steps(window, cx)).child(

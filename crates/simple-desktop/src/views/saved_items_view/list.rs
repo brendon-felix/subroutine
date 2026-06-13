@@ -53,6 +53,7 @@ fn render_item_preview(
         .gap_2()
         .py_0p5()
         .rounded_lg()
+        .shadow_md()
         .border_1()
         .bg(colors.bg)
         .when_some(colors.border, |this, c| this.border_color(c))
@@ -63,14 +64,16 @@ fn action_context_menu(
     action_id: Uuid,
 ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
     move |menu, _window, _cx| {
-        menu.item(PopupMenuItem::new("Delete").icon(AppIcon::Trash).on_click(
-            move |_event, _window, cx: &mut App| {
-                let db_store = AppDatabaseStore::global(cx);
-                db_store.update(cx, |store, cx| {
-                    store.delete_action(action_id, cx);
-                });
-            },
-        ))
+        menu.item(
+            PopupMenuItem::new("Delete saved action")
+                .icon(AppIcon::Trash)
+                .on_click(move |_event, _window, cx: &mut App| {
+                    let db_store = AppDatabaseStore::global(cx);
+                    db_store.update(cx, |store, cx| {
+                        store.delete_action(action_id, cx);
+                    });
+                }),
+        )
     }
 }
 
@@ -79,13 +82,13 @@ fn event_context_menu(
 ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
     move |menu, _window, _cx| {
         menu.item(
-            PopupMenuItem::new("Reschedule")
+            PopupMenuItem::new("Reschedule saved event")
                 .icon(AppIcon::CalendarClock)
                 .on_click(|_, _, _cx| {}),
         )
         .separator()
         .item(
-            PopupMenuItem::new("Delete event")
+            PopupMenuItem::new("Delete saved event")
                 .icon(AppIcon::Trash)
                 .on_click(move |_event, _window, cx| {
                     let db_store = AppDatabaseStore::global(cx);
@@ -102,13 +105,13 @@ fn routine_context_menu(
 ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
     move |menu, _window, _cx| {
         menu.item(
-            PopupMenuItem::new("Reschedule")
+            PopupMenuItem::new("Reschedule saved routine")
                 .icon(AppIcon::CalendarClock)
                 .on_click(|_, _, _cx| {}),
         )
         .separator()
         .item(
-            PopupMenuItem::new("Delete routine")
+            PopupMenuItem::new("Delete saved routine")
                 .icon(AppIcon::Trash)
                 .on_click(move |_event, _window, cx| {
                     let db_store = AppDatabaseStore::global(cx);
@@ -120,56 +123,55 @@ fn routine_context_menu(
     }
 }
 
-pub struct AllItemsList {
+pub struct SavedItemsList {
     pub selected: Option<IndexPath>,
     pub right_clicked: Option<IndexPath>,
-    pub actions: Vec<(Action, bool)>,
-    pub events: Vec<(Event, bool)>,
-    pub routines: Vec<(Routine, bool)>,
+    pub saved_actions: Vec<Action>,
+    pub saved_events: Vec<Event>,
+    pub saved_routines: Vec<Routine>,
+    pub filtered_ids: Vec<Uuid>,
     pub loading: bool,
 }
 
-impl AllItemsList {
+impl SavedItemsList {
     pub fn new() -> Self {
         Self {
             selected: None,
             right_clicked: None,
-            actions: vec![],
-            events: vec![],
-            routines: vec![],
+            saved_actions: vec![],
+            saved_events: vec![],
+            saved_routines: vec![],
+            filtered_ids: vec![],
             loading: true,
         }
     }
 
     fn get_action(&self, ix: usize) -> Option<&Action> {
-        self.actions
+        self.saved_actions
             .iter()
-            .filter(|(_, included)| *included)
+            .filter(|action| self.filtered_ids.contains(&action.id))
             .nth(ix)
-            .map(|(action, _)| action)
     }
 
     fn get_event(&self, ix: usize) -> Option<&Event> {
-        self.events
+        self.saved_events
             .iter()
-            .filter(|(_, included)| *included)
+            .filter(|event| self.filtered_ids.contains(&event.id))
             .nth(ix)
-            .map(|(event, _)| event)
     }
 
     fn get_routine(&self, ix: usize) -> Option<&Routine> {
-        self.routines
+        self.saved_routines
             .iter()
-            .filter(|(_, included)| *included)
+            .filter(|routine| self.filtered_ids.contains(&routine.id))
             .nth(ix)
-            .map(|(routine, _)| routine)
     }
 
     fn _render_section_header(&self, section: usize, cx: &App) -> Option<impl IntoElement> {
         match section {
-            0 => Some(Label::new("Actions")),
-            1 => Some(Label::new("Events")),
-            2 => Some(Label::new("Routines")),
+            0 => Some(Label::new("Saved actions")),
+            1 => Some(Label::new("Saved events")),
+            2 => Some(Label::new("Saved routines")),
             _ => None,
         }
         .map(|label| {
@@ -178,14 +180,38 @@ impl AllItemsList {
                 .w_full()
                 .h_8()
                 .px_2()
+                .justify_between()
                 .child(label.text_xs().text_color(cx.theme().muted_foreground))
+            // .child(
+            //     Button::new(("saved-section", section as u32))
+            //         .ghost()
+            //         .small()
+            //         .map(|b| match section {
+            //             0 => b.when_else(
+            //                 self.actions_hidden,
+            //                 |b| b.icon(IconName::ChevronUp),
+            //                 |b| b.icon(IconName::ChevronDown),
+            //             ),
+            //             1 => b.when_else(
+            //                 self.events_hidden,
+            //                 |b| b.icon(IconName::ChevronUp),
+            //                 |b| b.icon(IconName::ChevronDown),
+            //             ),
+            //             2 => b.when_else(
+            //                 self.routines_hidden,
+            //                 |b| b.icon(IconName::ChevronUp),
+            //                 |b| b.icon(IconName::ChevronDown),
+            //             ),
+            //             _ => b,
+            //         }),
+            // )
         })
     }
 
     fn render_action(&self, ix: usize, cx: &App) -> Option<ListItem> {
         let action = self.get_action(ix)?;
-        let element_id = ("list-action", action.id.as_u64_pair().1);
-        let preview_colors = ButtonColors::normal(cx.theme().button_primary, cx);
+        let element_id = ("saved-action", action.id.as_u64_pair().1);
+        let preview_colors = ButtonColors::outline(cx.theme().button_primary, cx);
         let text_color = cx.theme().muted_foreground;
         let title = action.title.clone();
         let duration_str = action.duration.map(|d| duration_str(d));
@@ -226,8 +252,8 @@ impl AllItemsList {
 
     fn render_event(&self, ix: usize, cx: &App) -> Option<ListItem> {
         let event = self.get_event(ix)?;
-        let element_id = ("list-event", event.id.as_u64_pair().1);
-        let preview_colors = ButtonColors::normal(
+        let element_id = ("saved-event", event.id.as_u64_pair().1);
+        let preview_colors = ButtonColors::outline(
             cx.theme()
                 .button_primary
                 .mix_oklab(cx.theme().foreground, 0.5),
@@ -259,8 +285,8 @@ impl AllItemsList {
 
     fn render_routine(&self, ix: usize, cx: &App) -> Option<ListItem> {
         let routine = self.get_routine(ix)?;
-        let element_id = ("list-routine", routine.id.as_u64_pair().1);
-        let preview_colors = ButtonColors::normal(cx.theme().foreground, cx);
+        let element_id = ("saved-routine", routine.id.as_u64_pair().1);
+        let preview_colors = ButtonColors::outline(cx.theme().foreground, cx);
         let text_color = cx.theme().muted_foreground;
         let preview_title = SharedString::new(routine.title.clone());
         let drag_data = DragData::new(AnyItem::Routine(routine.clone()))
@@ -286,7 +312,7 @@ impl AllItemsList {
     }
 }
 
-impl ListDelegate for AllItemsList {
+impl ListDelegate for SavedItemsList {
     type Item = ListItem;
 
     // fn cancel(&mut self, window: &mut Window, cx: &mut Context<gpui_component::list::ListState<Self>>) {
@@ -303,9 +329,9 @@ impl ListDelegate for AllItemsList {
 
     fn items_count(&self, section: usize, _cx: &App) -> usize {
         match section {
-            0 => self.actions.len(),
-            1 => self.events.len(),
-            2 => self.routines.len(),
+            0 => self.saved_actions.len(),
+            1 => self.saved_events.len(),
+            2 => self.saved_routines.len(),
             _ => 0,
         }
     }
@@ -328,16 +354,22 @@ impl ListDelegate for AllItemsList {
         _window: &mut Window,
         _cx: &mut Context<ListState<Self>>,
     ) -> Task<()> {
-        self.actions.iter_mut().for_each(|(item, included)| {
-            *included = item.title.to_lowercase().contains(&query.to_lowercase())
-        });
-        self.events.iter_mut().for_each(|(item, included)| {
-            *included = item.title.to_lowercase().contains(&query.to_lowercase())
-        });
-        self.routines.iter_mut().for_each(|(item, included)| {
-            *included = item.title.to_lowercase().contains(&query.to_lowercase())
-        });
-
+        let action_ids = self
+            .saved_actions
+            .iter()
+            .filter(|action| action.title.to_lowercase().contains(&query.to_lowercase()))
+            .map(|a| a.id);
+        let event_ids = self
+            .saved_events
+            .iter()
+            .filter(|event| event.title.to_lowercase().contains(&query.to_lowercase()))
+            .map(|e| e.id);
+        let routine_ids = self
+            .saved_routines
+            .iter()
+            .filter(|routine| routine.title.to_lowercase().contains(&query.to_lowercase()))
+            .map(|r| r.id);
+        self.filtered_ids = action_ids.chain(event_ids).chain(routine_ids).collect();
         Task::ready(())
     }
 

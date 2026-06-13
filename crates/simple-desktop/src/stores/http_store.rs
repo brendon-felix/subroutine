@@ -4,7 +4,8 @@ use chrono::{DateTime, Utc};
 use flume;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global};
 use simple_core::{
-    Action, ActionState, AllData, AnyItem, CompleteResult, Event, Routine, next_queue_slot,
+    Action, ActionState, ActionTemplate, AllData, AnyItem, CompleteResult, Event, EventTemplate,
+    Routine, pipeline,
 };
 use uuid::Uuid;
 
@@ -25,6 +26,8 @@ pub struct DataChanged;
 pub struct ActionDataChanged;
 pub struct EventDataChanged;
 pub struct RoutineDataChanged;
+pub struct ActionTemplateDataChanged;
+pub struct EventTemplateDataChanged;
 
 // ── Internal channel payload types ───────────────────────────────────────────
 
@@ -39,18 +42,23 @@ enum Cmd {
     DeleteEvent(Uuid, Reply<()>),
     UpsertRoutine(Routine, Reply<()>),
     DeleteRoutine(Uuid, Reply<()>),
+    // UpsertActionTemplate(ActionTemplate, Reply<()>),
+    // DeleteActionTemplate(Uuid, Reply<()>),
+    // UpsertEventTemplate(EventTemplate, Reply<()>),
+    // DeleteEventTemplate(Uuid, Reply<()>),
     // Combined create + follow-up, sequenced atomically in the worker
     UpsertAndQueueAction(Action, Reply<Vec<Action>>),
-    // UpsertAndScheduleEvent(Event, Reply<Event>),
-    UpsertAndInstantiateRoutine(Routine, Option<DateTime<Utc>>, Reply<Vec<Action>>),
+    // // UpsertAndScheduleEvent(Event, Reply<Event>),
+    // UpsertAndInstantiateRoutine(Routine, Option<DateTime<Utc>>, Reply<Vec<Action>>),
     // State transitions
+    SaveAction(Uuid, Reply<Action>),
     CompleteAction(Uuid, Reply<CompleteResult>),
     QueueAction(Uuid, Reply<Vec<Action>>),
     ClearActionDuration(Uuid, Reply<Action>),
     BacklogAction(Uuid, Reply<Action>),
     InstantiateRoutine(Uuid, Option<DateTime<Utc>>, Reply<Vec<Action>>),
     RefreshPipeline(Reply<Vec<Action>>),
-    ExpeditePipeline(Reply<Vec<Action>>),
+    // ExpeditePipeline(Reply<Vec<Action>>),
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -62,6 +70,8 @@ pub struct AppDatabaseStore {
     actions: Vec<Action>,
     events: Vec<Event>,
     routines: Vec<Routine>,
+    action_templates: Vec<ActionTemplate>,
+    event_templates: Vec<EventTemplate>,
 }
 
 impl AppDatabaseStore {
@@ -113,11 +123,15 @@ impl AppDatabaseStore {
                     store.actions = data.actions;
                     store.events = data.events;
                     store.routines = data.routines;
+                    store.action_templates = data.action_templates;
+                    store.event_templates = data.event_templates;
                     store.status = StoreStatus::Ready;
                     cx.emit(DataChanged);
                     cx.emit(ActionDataChanged);
                     cx.emit(EventDataChanged);
                     cx.emit(RoutineDataChanged);
+                    cx.emit(ActionTemplateDataChanged);
+                    cx.emit(EventTemplateDataChanged);
                     cx.notify();
                 }
                 Err(e) => {
@@ -146,9 +160,14 @@ impl AppDatabaseStore {
                         store.actions = data.actions;
                         store.events = data.events;
                         store.routines = data.routines;
+                        store.action_templates = data.action_templates;
+                        store.event_templates = data.event_templates;
                         cx.emit(DataChanged);
                         cx.emit(ActionDataChanged);
                         cx.emit(EventDataChanged);
+                        cx.emit(RoutineDataChanged);
+                        cx.emit(ActionTemplateDataChanged);
+                        cx.emit(EventTemplateDataChanged);
                         cx.notify();
                     });
                 }
@@ -163,6 +182,8 @@ impl AppDatabaseStore {
             actions: vec![],
             events: vec![],
             routines: vec![],
+            action_templates: vec![],
+            event_templates: vec![],
         }
     }
 
@@ -204,6 +225,30 @@ impl AppDatabaseStore {
             self.routines.push(routine);
         }
     }
+
+    // fn upsert_action_template_local(&mut self, template: ActionTemplate) {
+    //     if let Some(pos) = self
+    //         .action_templates
+    //         .iter()
+    //         .position(|t| t.id == template.id)
+    //     {
+    //         self.action_templates[pos] = template;
+    //     } else {
+    //         self.action_templates.push(template);
+    //     }
+    // }
+
+    // fn upsert_event_template_local(&mut self, template: EventTemplate) {
+    //     if let Some(pos) = self
+    //         .event_templates
+    //         .iter()
+    //         .position(|t| t.id == template.id)
+    //     {
+    //         self.event_templates[pos] = template;
+    //     } else {
+    //         self.event_templates.push(template);
+    //     }
+    // }
 
     // Sends a command and spawns a smol task that awaits the reply, then calls
     // `apply` on the entity.  Used for operations where the server response
@@ -267,7 +312,7 @@ impl AppDatabaseStore {
             .chain(self.events.iter().map(|e| AnyItem::Event(e.clone())))
             .collect();
         items.sort_by_key(|item| {
-            item.time()
+            item.start_time()
                 .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC)
         });
         items
@@ -288,7 +333,7 @@ impl AppDatabaseStore {
             )
             .collect();
         items.sort_by_key(|item| {
-            item.time()
+            item.start_time()
                 .unwrap_or(chrono::DateTime::<chrono::Utc>::MAX_UTC)
         });
         items
@@ -306,9 +351,25 @@ impl AppDatabaseStore {
         self.routines.clone()
     }
 
-    pub fn get_routine(&self, id: Uuid) -> Option<Routine> {
-        self.routines.iter().find(|r| r.id == id).cloned()
-    }
+    // pub fn get_routine(&self, id: Uuid) -> Option<Routine> {
+    //     self.routines.iter().find(|r| r.id == id).cloned()
+    // }
+
+    // pub fn action_templates(&self) -> Vec<ActionTemplate> {
+    //     self.action_templates.clone()
+    // }
+
+    // pub fn get_action_template(&self, id: Uuid) -> Option<ActionTemplate> {
+    //     self.action_templates.iter().find(|t| t.id == id).cloned()
+    // }
+
+    // pub fn event_templates(&self) -> Vec<EventTemplate> {
+    //     self.event_templates.clone()
+    // }
+
+    // pub fn get_event_template(&self, id: Uuid) -> Option<EventTemplate> {
+    //     self.event_templates.iter().find(|t| t.id == id).cloned()
+    // }
 
     // ── Write API — simple CRUD (optimistic) ──────────────────────────────────
     // Update local state immediately so the UI is responsive, then fire-and-
@@ -379,11 +440,71 @@ impl AppDatabaseStore {
         self.dispatch(Cmd::DeleteRoutine(id, tx), rx, cx, |_store, _, _cx| {});
     }
 
+    // pub fn upsert_action_template(&mut self, template: ActionTemplate, cx: &mut Context<Self>) {
+    //     self.upsert_action_template_local(template.clone());
+    //     cx.emit(ActionTemplateDataChanged);
+    //     cx.emit(DataChanged);
+    //     cx.notify();
+
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(
+    //         Cmd::UpsertActionTemplate(template, tx),
+    //         rx,
+    //         cx,
+    //         |_store, _, _cx| {},
+    //     );
+    // }
+
+    // pub fn delete_action_template(&mut self, id: Uuid, cx: &mut Context<Self>) {
+    //     self.action_templates.retain(|t| t.id != id);
+    //     cx.emit(ActionTemplateDataChanged);
+    //     cx.emit(DataChanged);
+    //     cx.notify();
+
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(
+    //         Cmd::DeleteActionTemplate(id, tx),
+    //         rx,
+    //         cx,
+    //         |_store, _, _cx| {},
+    //     );
+    // }
+
+    // pub fn upsert_event_template(&mut self, template: EventTemplate, cx: &mut Context<Self>) {
+    //     self.upsert_event_template_local(template.clone());
+    //     cx.emit(EventTemplateDataChanged);
+    //     cx.emit(DataChanged);
+    //     cx.notify();
+
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(
+    //         Cmd::UpsertEventTemplate(template, tx),
+    //         rx,
+    //         cx,
+    //         |_store, _, _cx| {},
+    //     );
+    // }
+
+    // pub fn delete_event_template(&mut self, id: Uuid, cx: &mut Context<Self>) {
+    //     self.event_templates.retain(|t| t.id != id);
+    //     cx.emit(EventTemplateDataChanged);
+    //     cx.emit(DataChanged);
+    //     cx.notify();
+
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(
+    //         Cmd::DeleteEventTemplate(id, tx),
+    //         rx,
+    //         cx,
+    //         |_store, _, _cx| {},
+    //     );
+    // }
+
     pub fn upsert_and_queue_action(&mut self, action: Action, cx: &mut Context<Self>) {
         let optimistic = if action.is_queued() {
             action.clone()
         } else {
-            let slot = next_queue_slot(&self.actions, &self.events, chrono::Utc::now());
+            let slot = pipeline::next_queue_slot(&self.actions, &self.events, chrono::Utc::now());
             action.clone().with_state(ActionState::queued(slot, false))
         };
         self.upsert_action_local(optimistic);
@@ -427,26 +548,41 @@ impl AppDatabaseStore {
     //     );
     // }
 
-    pub fn upsert_and_instantiate_routine(
-        &mut self,
-        routine: Routine,
-        start_time: Option<DateTime<Utc>>,
-        cx: &mut Context<Self>,
-    ) {
-        self.upsert_routine_local(routine.clone());
-        cx.emit(RoutineDataChanged);
-        cx.emit(DataChanged);
-        cx.notify();
+    // pub fn upsert_and_instantiate_routine(
+    //     &mut self,
+    //     routine: Routine,
+    //     start_time: Option<DateTime<Utc>>,
+    //     cx: &mut Context<Self>,
+    // ) {
+    //     self.upsert_routine_local(routine.clone());
+    //     cx.emit(RoutineDataChanged);
+    //     cx.emit(DataChanged);
+    //     cx.notify();
 
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(
+    //         Cmd::UpsertAndInstantiateRoutine(routine, start_time, tx),
+    //         rx,
+    //         cx,
+    //         |store, actions: Vec<Action>, cx| {
+    //             for a in actions {
+    //                 store.upsert_action_local(a);
+    //             }
+    //             cx.emit(ActionDataChanged);
+    //             cx.emit(DataChanged);
+    //             cx.notify();
+    //         },
+    //     );
+    // }
+
+    pub fn save_action(&mut self, id: Uuid, cx: &mut Context<Self>) {
         let (tx, rx) = flume::bounded(1);
         self.dispatch(
-            Cmd::UpsertAndInstantiateRoutine(routine, start_time, tx),
+            Cmd::SaveAction(id, tx),
             rx,
             cx,
-            |store, actions: Vec<Action>, cx| {
-                for a in actions {
-                    store.upsert_action_local(a);
-                }
+            |store, action: Action, cx| {
+                store.upsert_action_local(action);
                 cx.emit(ActionDataChanged);
                 cx.emit(DataChanged);
                 cx.notify();
@@ -537,22 +673,22 @@ impl AppDatabaseStore {
         );
     }
 
-    pub fn expedite_actions(&mut self, cx: &mut Context<Self>) {
-        let (tx, rx) = flume::bounded(1);
-        self.dispatch(
-            Cmd::ExpeditePipeline(tx),
-            rx,
-            cx,
-            |store, changed: Vec<Action>, cx| {
-                for action in changed {
-                    store.upsert_action_local(action);
-                }
-                cx.emit(ActionDataChanged);
-                cx.emit(DataChanged);
-                cx.notify();
-            },
-        );
-    }
+    // pub fn expedite_actions(&mut self, cx: &mut Context<Self>) {
+    //     let (tx, rx) = flume::bounded(1);
+    //     self.dispatch(
+    //         Cmd::ExpeditePipeline(tx),
+    //         rx,
+    //         cx,
+    //         |store, changed: Vec<Action>, cx| {
+    //             for action in changed {
+    //                 store.upsert_action_local(action);
+    //             }
+    //             cx.emit(ActionDataChanged);
+    //             cx.emit(DataChanged);
+    //             cx.notify();
+    //         },
+    //     );
+    // }
 
     pub fn instantiate_routine(
         &mut self,
@@ -584,6 +720,8 @@ impl EventEmitter<DataChanged> for AppDatabaseStore {}
 impl EventEmitter<ActionDataChanged> for AppDatabaseStore {}
 impl EventEmitter<EventDataChanged> for AppDatabaseStore {}
 impl EventEmitter<RoutineDataChanged> for AppDatabaseStore {}
+impl EventEmitter<ActionTemplateDataChanged> for AppDatabaseStore {}
+impl EventEmitter<EventTemplateDataChanged> for AppDatabaseStore {}
 
 // ── Global ────────────────────────────────────────────────────────────────────
 
@@ -751,39 +889,52 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
         //     };
         //     let _ = tx.send(result);
         // }
-        Cmd::UpsertAndInstantiateRoutine(routine, start_time, tx) => {
-            let id = routine.id;
-            // PUT the routine first, then instantiate it.
-            let put = client
-                .put(format!("{base}/api/routines/{id}"))
-                .json(&routine)
+        // Cmd::UpsertAndInstantiateRoutine(routine, start_time, tx) => {
+        //     let id = routine.id;
+        //     // PUT the routine first, then instantiate it.
+        //     let put = client
+        //         .put(format!("{base}/api/routines/{id}"))
+        //         .json(&routine)
+        //         .send()
+        //         .await
+        //         .and_then(|r| r.error_for_status())
+        //         .map_err(|e| e.to_string());
+
+        //     let result = match put {
+        //         Err(e) => Err(e),
+        //         Ok(_) => {
+        //             let body = serde_json::json!({
+        //                 "start_time": start_time,
+        //             });
+        //             let r = client
+        //                 .post(format!("{base}/api/routines/{id}/instantiate"))
+        //                 .json(&body)
+        //                 .send()
+        //                 .await
+        //                 .and_then(|r| r.error_for_status())
+        //                 .map_err(|e| e.to_string());
+        //             match r {
+        //                 Ok(resp) => resp
+        //                     .json::<Vec<Action>>()
+        //                     .await
+        //                     .map(|v| v)
+        //                     .map_err(|e| e.to_string()),
+        //                 Err(e) => Err(e),
+        //             }
+        //         }
+        //     };
+        //     let _ = tx.send(result);
+        // }
+        Cmd::SaveAction(id, tx) => {
+            let result = client
+                .post(format!("{base}/api/actions/{id}/save"))
                 .send()
                 .await
                 .and_then(|r| r.error_for_status())
                 .map_err(|e| e.to_string());
-
-            let result = match put {
+            let result = match result {
+                Ok(resp) => resp.json::<Action>().await.map_err(|e| e.to_string()),
                 Err(e) => Err(e),
-                Ok(_) => {
-                    let body = serde_json::json!({
-                        "start_time": start_time,
-                    });
-                    let r = client
-                        .post(format!("{base}/api/routines/{id}/instantiate"))
-                        .json(&body)
-                        .send()
-                        .await
-                        .and_then(|r| r.error_for_status())
-                        .map_err(|e| e.to_string());
-                    match r {
-                        Ok(resp) => resp
-                            .json::<Vec<Action>>()
-                            .await
-                            .map(|v| v)
-                            .map_err(|e| e.to_string()),
-                        Err(e) => Err(e),
-                    }
-                }
             };
             let _ = tx.send(result);
         }
@@ -897,6 +1048,51 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
             let _ = tx.send(result);
         }
 
+        // Cmd::UpsertActionTemplate(template, tx) => {
+        //     let result = client
+        //         .put(format!("{base}/api/actions/templates/{}", template.id))
+        //         .json(&template)
+        //         .send()
+        //         .await
+        //         .and_then(|r| r.error_for_status())
+        //         .map(|_| ())
+        //         .map_err(|e| e.to_string());
+        //     let _ = tx.send(result);
+        // }
+
+        // Cmd::DeleteActionTemplate(id, tx) => {
+        //     let result = client
+        //         .delete(format!("{base}/api/actions/templates/{id}"))
+        //         .send()
+        //         .await
+        //         .and_then(|r| r.error_for_status())
+        //         .map(|_| ())
+        //         .map_err(|e| e.to_string());
+        //     let _ = tx.send(result);
+        // }
+
+        // Cmd::UpsertEventTemplate(template, tx) => {
+        //     let result = client
+        //         .put(format!("{base}/api/events/templates/{}", template.id))
+        //         .json(&template)
+        //         .send()
+        //         .await
+        //         .and_then(|r| r.error_for_status())
+        //         .map(|_| ())
+        //         .map_err(|e| e.to_string());
+        //     let _ = tx.send(result);
+        // }
+
+        // Cmd::DeleteEventTemplate(id, tx) => {
+        //     let result = client
+        //         .delete(format!("{base}/api/events/templates/{id}"))
+        //         .send()
+        //         .await
+        //         .and_then(|r| r.error_for_status())
+        //         .map(|_| ())
+        //         .map_err(|e| e.to_string());
+        //     let _ = tx.send(result);
+        // }
         Cmd::InstantiateRoutine(id, start_time, tx) => {
             let body = serde_json::json!({
                 "start_time": start_time,
@@ -935,24 +1131,22 @@ async fn run(client: &reqwest::Client, base: &str, cmd: Cmd) {
                 Err(e) => Err(e),
             };
             let _ = tx.send(result);
-        }
-
-        Cmd::ExpeditePipeline(tx) => {
-            let result = client
-                .post(format!("{base}/api/pipeline/expedite"))
-                .send()
-                .await
-                .and_then(|r| r.error_for_status())
-                .map_err(|e| e.to_string());
-            let result = match result {
-                Ok(resp) => resp
-                    .json::<Vec<Action>>()
-                    .await
-                    .map(|v| v)
-                    .map_err(|e| e.to_string()),
-                Err(e) => Err(e),
-            };
-            let _ = tx.send(result);
-        }
+        } // Cmd::ExpeditePipeline(tx) => {
+          //     let result = client
+          //         .post(format!("{base}/api/pipeline/expedite"))
+          //         .send()
+          //         .await
+          //         .and_then(|r| r.error_for_status())
+          //         .map_err(|e| e.to_string());
+          //     let result = match result {
+          //         Ok(resp) => resp
+          //             .json::<Vec<Action>>()
+          //             .await
+          //             .map(|v| v)
+          //             .map_err(|e| e.to_string()),
+          //         Err(e) => Err(e),
+          //     };
+          //     let _ = tx.send(result);
+          // }
     }
 }

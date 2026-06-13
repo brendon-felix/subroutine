@@ -90,10 +90,10 @@ pub fn init(cx: &mut App) {
         // KeyBinding::new("ctrl-w", actions::CloseWindow, None),
     ]);
     AppDatabaseStore::initialize_global(url, cx);
-    let db_store = AppDatabaseStore::global(cx);
-    db_store.update(cx, |store, cx| {
-        store.refresh_pipeline(cx);
-    });
+    // let db_store = AppDatabaseStore::global(cx);
+    // db_store.update(cx, |store, cx| {
+    //     store.refresh_pipeline(cx);
+    // });
 
     let mut titlebar_options = if cfg!(target_os = "macos") {
         TitlebarOptions {

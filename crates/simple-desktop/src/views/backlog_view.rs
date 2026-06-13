@@ -5,6 +5,7 @@ use gpui::{
     Render, SharedString, Size, Styled, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{ActiveTheme, VirtualListScrollHandle, h_flex, label::Label, v_virtual_list};
+use gpui_squircle::{SquircleStyled, squircle};
 use simple_core::{Action, AnyItem};
 use uuid::Uuid;
 
@@ -31,6 +32,7 @@ fn render_backlog_item_preview(
         .gap_2()
         .py_0p5()
         .rounded_lg()
+        .shadow_md()
         .border_1()
         .bg(colors.bg)
         .when_some(colors.border, |this, c| this.border_color(c))
@@ -166,7 +168,13 @@ impl BacklogView {
                             let action_id = action.id;
                             let item = AnyItem::Action(action);
                             let title: SharedString = item.title().into();
-                            let colors = ButtonColors::normal(cx.theme().button_primary, cx);
+                            // let colors = ButtonColors::normal(cx.theme().button_primary, cx);
+                            let colors = ButtonColors::outline(cx.theme().button_primary, cx);
+                            // let colors = ButtonColors::solid(
+                            //     cx.theme().button_primary,
+                            //     cx.theme().background,
+                            //     cx,
+                            // );
                             let preview_title = title.clone();
                             let preview_colors = colors;
                             let is_completing = completing_items.contains(&action_id);
@@ -182,40 +190,46 @@ impl BacklogView {
                                     .into_any_element()
                                 })
                                 .with_preview_size(gpui::size(px(64. * 4.), ITEM_HEIGHT));
-                            div().size_full().px_2().py_1().child(
-                                Draggable::new(("backlog-draggable", i as u32), drag_data)
+                            div().px_2().py_1().size_full().child(
+                                squircle()
+                                    .rounded(px(10.))
+                                    // .border_1()
+                                    // .border_color(cx.theme().primary)
+                                    .button_colors(colors)
                                     .size_full()
                                     .child(
-                                        h_flex()
-                                            .id(("backlog-item", i as u32))
+                                        Draggable::new(("backlog-draggable", i as u32), drag_data)
                                             .size_full()
-                                            .rounded_lg()
-                                            .button_colors(colors)
-                                            .text_ellipsis()
-                                            .overflow_hidden()
                                             .child(
                                                 h_flex()
+                                                    .id(("backlog-item", i as u32))
                                                     .size_full()
-                                                    .px_2()
-                                                    .gap_2()
+                                                    .text_ellipsis()
+                                                    .overflow_hidden()
                                                     .child(
-                                                        Checkbox::new((
-                                                            "backlog-complete",
-                                                            action_id.as_u128() as u64,
-                                                        ))
-                                                        .checked(is_completing)
-                                                        .tab_stop(false)
-                                                        // .occlude()
-                                                        .cursor_default()
-                                                        .on_click(cx.listener(
-                                                            move |this, _, _window, cx| {
-                                                                this.begin_complete_item(
-                                                                    action_id, cx,
-                                                                );
-                                                            },
-                                                        )),
-                                                    )
-                                                    .child(Label::new(title).text_sm()),
+                                                        h_flex()
+                                                            .size_full()
+                                                            .px_2()
+                                                            .gap_2()
+                                                            .child(
+                                                                Checkbox::new((
+                                                                    "backlog-complete",
+                                                                    action_id.as_u128() as u64,
+                                                                ))
+                                                                .checked(is_completing)
+                                                                .tab_stop(false)
+                                                                // .occlude()
+                                                                .cursor_default()
+                                                                .on_click(cx.listener(
+                                                                    move |this, _, _window, cx| {
+                                                                        this.begin_complete_item(
+                                                                            action_id, cx,
+                                                                        );
+                                                                    },
+                                                                )),
+                                                            )
+                                                            .child(Label::new(title).text_sm()),
+                                                    ),
                                             ),
                                     ),
                             )

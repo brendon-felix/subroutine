@@ -1,9 +1,9 @@
 use gpui::{
-    AnyElement, ClickEvent, Context, ElementId, Entity, FocusHandle, IntoElement, Pixels,
+    AnyElement, Bounds, ClickEvent, Context, ElementId, Entity, FocusHandle, IntoElement, Pixels,
     SharedString, Window, div, prelude::FluentBuilder, px,
 };
 use gpui::{
-    AppContext, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled, TextOverflow,
+    AppContext, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled, point,
 };
 use gpui_component::Sizable;
 use gpui_component::input::{Input, InputState, Position};
@@ -11,17 +11,19 @@ use gpui_component::{
     ActiveTheme, Icon, IconName, h_flex, label::Label, menu::ContextMenuExt, skeleton::Skeleton,
     v_flex,
 };
+use gpui_squircle::{SquircleStyled, squircle};
 
+use super::super::HOUR_DIVIDER_HEIGHT;
 use super::super::TimelineView;
-use super::super::{HOUR_DIVIDER_HEIGHT, TimeSubDivision};
 use super::{
     ATTACHED_ITEM_LEFT, ActiveDropState, ActiveResizeState, FALLBACK_ITEM_DURATION,
-    ItemTimelineBounds, META_ROW_HEIGHT, RESCHEDULE_TRANSITION_DURATION, RESIZE_HANDLE_HEIGHT,
-    ResizeDragData, ResizeEdge, ResizeGhost, SLOT_GAP, STICKY_TITLE_HEIGHT, STICKY_TITLE_PADDING,
-    SlotLayout, attach_transition, render_item_preview,
+    META_ROW_HEIGHT, RESCHEDULE_TRANSITION_DURATION, RESIZE_HANDLE_HEIGHT, ResizeDragData,
+    ResizeEdge, ResizeGhost, SLOT_GAP, STICKY_TITLE_HEIGHT, STICKY_TITLE_PADDING,
+    attach_transition, render_item_preview,
 };
 use crate::components::Checkbox;
 use crate::views::format_item_meta;
+use crate::views::pipeline_view::timeline_view::MIN_ITEM_WIDTH;
 use crate::views::pipeline_view::{action_context_menu, event_context_menu, routine_context_menu};
 use crate::{
     components::{DragData, Draggable},
@@ -243,7 +245,7 @@ impl TimelineView {
         title_input: Option<Entity<InputState>>,
         focus_handle: FocusHandle,
         is_completing: bool,
-        layout: Option<SlotLayout>,
+        bounds: Option<Bounds<Pixels>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
@@ -254,29 +256,40 @@ impl TimelineView {
         let any_item = item_any;
         let preview_title: SharedString = any_item.title().into();
 
-        let total_w = self.item_area_width();
-        let half_gap = SLOT_GAP * 0.5;
-        let scroll = self.scroll_offset();
+        // let total_w = self.item_area_width();
+        // let half_gap = SLOT_GAP * 0.5;
+        // let scroll = self.scroll_offset();
 
-        let target = if let Some(ref layout) = layout {
-            ItemTimelineBounds {
-                elapsed_secs: layout.visual_start.timestamp() as f64,
-                duration_secs: (layout.visual_end - layout.visual_start).num_seconds() as f64,
-                left_fraction: layout.column_index as f32 / layout.total_columns as f32,
-                width_fraction: 1.0 / layout.total_columns as f32,
-            }
-        } else {
-            let time = any_item.time_local()?;
-            ItemTimelineBounds {
-                elapsed_secs: time.timestamp() as f64,
-                duration_secs: any_item
-                    .duration()
-                    .unwrap_or(FALLBACK_ITEM_DURATION)
-                    .num_seconds() as f64,
-                left_fraction: 0.0,
-                width_fraction: 1.0,
-            }
-        };
+        // let target = if let Some(ref layout) = layout {
+        //     ItemTimelineBounds {
+        //         elapsed_secs: layout.visual_start.timestamp() as f64,
+        //         duration_secs: (layout.visual_end - layout.visual_start).num_seconds() as f64,
+        //         left_fraction: layout.column_index as f32 / layout.total_columns as f32,
+        //         width_fraction: 1.0 / layout.total_columns as f32,
+        //     }
+        // } else {
+        //     let time = any_item.time_local()?;
+        //     ItemTimelineBounds {
+        //         elapsed_secs: time.timestamp() as f64,
+        //         duration_secs: any_item
+        //             .duration()
+        //             .unwrap_or(FALLBACK_ITEM_DURATION)
+        //             .num_seconds() as f64,
+        //         left_fraction: 0.0,
+        //         width_fraction: 1.0,
+        //     }
+        // };
+
+        let start_time = any_item.time_local()?;
+        let target = bounds.unwrap_or_else(|| {
+            let duration = any_item.duration().unwrap_or(FALLBACK_ITEM_DURATION);
+            let slot_top = self.time_to_offset(start_time);
+            let slot_bottom = self.time_to_offset(start_time + duration) - SLOT_GAP;
+            Bounds::from_corners(
+                point(ATTACHED_ITEM_LEFT, slot_top),
+                point(ATTACHED_ITEM_LEFT + MIN_ITEM_WIDTH, slot_bottom),
+            )
+        });
 
         let bounds_t = attach_transition(
             ("item-bounds", any_item.truncated_id()),
@@ -287,28 +300,36 @@ impl TimelineView {
         );
         // Skip animation while the user is actively dragging a resize handle so
         // the item tracks the cursor instantly rather than lagging behind.
-        let is_being_resized = self
-            .active_resize
-            .as_ref()
-            .map_or(false, |r| r.item_id == item_id);
-        if is_being_resized {
-            bounds_t.jump_to(target, cx);
-        } else {
-            let changed = bounds_t.update(cx, |val, _| *val = target);
-            if changed {
-                cx.notify();
-            }
-        }
+        // let is_being_resized = self
+        //     .active_resize
+        //     .as_ref()
+        //     .map_or(false, |r| r.item_id == item_id);
+        // if is_being_resized || self.scroll_target.is_some()
+        // // || self.last_scroll_offset != self.scroll_offset()
+        // {
+        //     bounds_t.jump_to(target, cx);
+        // } else {
+        //     let changed = bounds_t.update(cx, |val, _| *val = target);
+        //     if changed {
+        //         cx.notify();
+        //     }
+        // }
+        bounds_t.jump_to(target, cx);
         let anim = *bounds_t.evaluate(window, cx);
 
-        let start_secs = self.start.timestamp() as f64;
-        let y = self.hour_height * ((anim.elapsed_secs - start_secs) / 3600.0) as f32
-            + HOUR_DIVIDER_HEIGHT / 2.0
-            + half_gap
-            + scroll;
-        let h = self.hour_height * (anim.duration_secs / 3600.0) as f32 - SLOT_GAP;
-        let item_left = ATTACHED_ITEM_LEFT + total_w * anim.left_fraction + half_gap;
-        let item_w = total_w * anim.width_fraction - SLOT_GAP;
+        // let start_secs = self.start.timestamp() as f64;
+        // let y = self.hour_height * ((anim.elapsed_secs - start_secs) / 3600.0) as f32
+        //     + HOUR_DIVIDER_HEIGHT / 2.0
+        //     // + half_gap
+        //     + scroll;
+        // let h = self.hour_height * (anim.duration_secs / 3600.0) as f32 - SLOT_GAP;
+        // let item_left = ATTACHED_ITEM_LEFT + total_w * anim.left_fraction + half_gap;
+        // let item_w = total_w * anim.width_fraction - SLOT_GAP;
+
+        let y = anim.top();
+        let h = anim.size.height;
+        let item_left = anim.left();
+        let item_w = anim.size.width;
 
         let fg = cx.theme().muted_foreground;
 
@@ -325,18 +346,26 @@ impl TimelineView {
 
         let title_y = (y + STICKY_TITLE_PADDING)
             .max(STICKY_TITLE_PADDING)
-            .min(y + h - title_block_h - STICKY_TITLE_PADDING);
+            .min(y + h - title_block_h - px(8.));
         let title_rel_y = title_y - y;
 
         let is_action = matches!(any_item, AnyItem::Action(_));
         let ring_color = cx.theme().ring;
         let inner = div()
+            .child(
+                squircle()
+                    .absolute()
+                    .size_full()
+                    .button_colors(colors)
+                    .border_inside()
+                    .rounded(px(14.)),
+            )
             .id(id)
             .track_focus(&focus_handle.clone().tab_stop(true))
-            .relative()
             .size_full()
-            .rounded_lg()
-            .button_colors(colors)
+            // .rounded_lg()
+            // .button_colors(colors)
+            .shadow_xs()
             .overflow_hidden()
             .when(focus_handle.is_focused(window), |el| {
                 el.border_color(ring_color)
@@ -490,7 +519,9 @@ impl TimelineView {
                         .child(inner)
                         .on_aux_click(|_, _, cx| cx.stop_propagation())
                         .context_menu(move |menu, window, cx| match &any_item {
-                            AnyItem::Action(a) => action_context_menu(a.id)(menu, window, cx),
+                            AnyItem::Action(a) => {
+                                action_context_menu(a.id, a.template_id.is_some())(menu, window, cx)
+                            }
                             AnyItem::Event(e) => event_context_menu(e.id)(menu, window, cx),
                             AnyItem::Routine(r) => routine_context_menu(r.id)(menu, window, cx),
                         }),
@@ -542,7 +573,7 @@ impl TimelineView {
             .iter()
             .map(|(_, _, _, _, _, any, _, _)| any.clone())
             .collect();
-        let slot_layouts = self.compute_slot_layouts(&any_items);
+        let items_bounds = self.compute_item_bounds(&any_items);
 
         // Step 2.5: cull items that are entirely outside the viewport.
         // Positions are approximated from target (non-animated) values with a generous
@@ -554,17 +585,10 @@ impl TimelineView {
 
         let visibilities: Vec<bool> = item_data
             .iter()
-            .zip(slot_layouts.iter())
-            .map(|((_, _, _, _, _, any_item, _, _), layout)| {
-                let (y, h) = if let Some(layout) = layout {
-                    let elapsed = layout.visual_start.timestamp() as f64;
-                    let dur = (layout.visual_end - layout.visual_start).num_seconds() as f64;
-                    let y = self.hour_height * ((elapsed - start_secs) / 3600.0) as f32
-                        + HOUR_DIVIDER_HEIGHT / 2.0
-                        + SLOT_GAP * 0.5
-                        + scroll;
-                    let h = self.hour_height * (dur / 3600.0) as f32;
-                    (y, h)
+            .zip(items_bounds.iter())
+            .map(|((_, _, _, _, _, any_item, _, _), bounds)| {
+                let (y, h) = if let Some(bounds) = bounds {
+                    (bounds.origin.y, bounds.size.height)
                 } else if let Some(time) = any_item.time_local() {
                     let elapsed = time.timestamp() as f64;
                     let dur = any_item
@@ -617,7 +641,7 @@ impl TimelineView {
         item_data
             .into_iter()
             .zip(title_inputs)
-            .zip(slot_layouts)
+            .zip(items_bounds)
             .zip(visibilities)
             .filter_map(
                 |(
@@ -635,7 +659,7 @@ impl TimelineView {
                             ),
                             title_input,
                         ),
-                        layout,
+                        bounds,
                     ),
                     visible,
                 )| {
@@ -656,7 +680,7 @@ impl TimelineView {
                         title_input,
                         focus_handle,
                         transition_state == TransitionState::Completing,
-                        layout,
+                        bounds,
                         window,
                         cx,
                     )
@@ -712,68 +736,36 @@ impl TimelineView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let half_gap = SLOT_GAP * 0.5;
-        let state = self.current_division_state();
-        let base = state.base_division;
-        let sub = state.current_subdivision();
-        let visual_end = match drop_info.drop_duration {
-            Some(d) => {
-                let actual_end = drop_info.drop_time + d;
-                let ve_raw = sub
-                    .map(|s: TimeSubDivision| s.ceil_boundary(actual_end))
-                    .unwrap_or_else(|| base.ceil_boundary(actual_end));
-                if ve_raw <= drop_info.slot_visual_start {
-                    drop_info.slot_visual_end
-                } else {
-                    ve_raw
-                }
-            }
-            None => drop_info.slot_visual_end,
-        };
         let y = self.time_to_offset(drop_info.slot_visual_start) + half_gap;
-        let h = self.duration_to_height(visual_end - drop_info.slot_visual_start) - SLOT_GAP;
+        let slot_height =
+            self.duration_to_height(drop_info.slot_visual_end - drop_info.slot_visual_start);
+        let h = slot_height - SLOT_GAP;
         let area_w = self.item_area_width();
-        let col_w = area_w * (1.0 / drop_info.total_columns as f32);
-        let col_x = col_w * drop_info.column_index as f32;
-        let outline_left = ATTACHED_ITEM_LEFT + col_x + half_gap;
+        let outline_w = (area_w - SLOT_GAP).max(MIN_ITEM_WIDTH);
         let color = cx.theme().drag_border;
         let label_text = drop_info.drop_time.format("%-I:%M").to_string();
         div()
             .absolute()
             .top(y)
             .h(h)
-            .left(px(0.))
-            .w_full()
+            .left(ATTACHED_ITEM_LEFT + half_gap)
+            .w(outline_w)
+            .rounded_lg()
+            .border_1()
+            .border_dashed()
+            .border_color(color)
+            .flex()
+            .items_start()
+            .justify_start()
+            .p_1()
             .child(
                 div()
-                    .absolute()
-                    .top(px(0.))
-                    .left(px(0.))
-                    .w(outline_left)
-                    .h_full()
-                    .flex()
-                    .items_start()
-                    .justify_center()
-                    .child(
-                        div()
-                            .px(px(7.))
-                            .bg(cx.theme().background.alpha(0.8))
-                            .rounded_lg()
-                            .child(label_text)
-                            .text_sm()
-                            .text_color(color),
-                    ),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top(px(0.))
-                    .left(outline_left)
-                    .w(col_w - SLOT_GAP)
-                    .h_full()
+                    .px(px(7.))
+                    .bg(cx.theme().background.alpha(0.8))
                     .rounded_lg()
-                    .border_1()
-                    .border_dashed()
-                    .border_color(color),
+                    .child(label_text)
+                    .text_sm()
+                    .text_color(color),
             )
     }
 }

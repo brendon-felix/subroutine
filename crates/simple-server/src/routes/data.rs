@@ -8,14 +8,18 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn get_all_data(State(state): State<AppState>) -> Result<Json<AllData>> {
-    let (actions, events, routines) = tokio::try_join!(
+    let (actions, events, routines, action_templates, event_templates) = tokio::try_join!(
         db::actions::fetch_all(&state.pool),
         db::events::fetch_all(&state.pool),
         db::routines::fetch_all(&state.pool),
+        db::actions::fetch_all_templates(&state.pool),
+        db::events::fetch_all_event_templates(&state.pool),
     )?;
     Ok(Json(AllData {
         actions,
         events,
         routines,
+        action_templates,
+        event_templates,
     }))
 }

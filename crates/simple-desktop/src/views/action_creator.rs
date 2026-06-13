@@ -1,10 +1,11 @@
-use chrono::Local;
 use gpui::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString,
-    Window, actions, prelude::*, px, rems,
+    App, AppContext as _, Bounds, Context, DefiniteLength, Entity, FocusHandle, Focusable,
+    KeyBinding, Pixels, SharedString, Window, actions, div, prelude::*, px, rems,
 };
 use gpui_component::{
-    ActiveTheme, Colorize, Icon, IconName, Sizable, WindowExt, h_flex,
+    ActiveTheme, Colorize, ElementExt, Icon, IconName, Sizable, WindowExt,
+    button::Button,
+    h_flex,
     input::{Input, InputEvent, InputState},
     label::Label,
     notification::NotificationType,
@@ -12,11 +13,11 @@ use gpui_component::{
 };
 use simple_core::Action;
 use simple_parser::{
-    BuildTarget, BuiltEntity, ParseDraft, RecurrenceSpec, WeekdaySet, build_entity,
-    parse_action_input,
+    BuildTarget, BuiltEntity, HighlightKind, ParseDraft, build_entity, parse_action,
 };
 
 use crate::{
+    AppIcon,
     components::{CloseOverlay, OverlayPosition, overlay},
     stores::AppDatabaseStore,
 };
@@ -24,68 +25,68 @@ use crate::{
 actions!([ToggleBatchMode]);
 
 /// Format a day number as an ordinal string: 1 → "1st", 2 → "2nd", etc.
-fn ordinal(n: u32) -> String {
-    let suffix = match n % 100 {
-        11 | 12 | 13 => "th",
-        _ => match n % 10 {
-            1 => "st",
-            2 => "nd",
-            3 => "rd",
-            _ => "th",
-        },
-    };
-    format!("{n}{suffix}")
-}
+// fn ordinal(n: u32) -> String {
+//     let suffix = match n % 100 {
+//         11 | 12 | 13 => "th",
+//         _ => match n % 10 {
+//             1 => "st",
+//             2 => "nd",
+//             3 => "rd",
+//             _ => "th",
+//         },
+//     };
+//     format!("{n}{suffix}")
+// }
 
 /// Format a [`WeekdaySet`] as a short human-readable string.
-fn format_weekday_set(set: &WeekdaySet) -> String {
-    use chrono::Weekday::*;
+// fn format_weekday_set(set: &WeekdaySet) -> String {
+//     use chrono::Weekday::*;
 
-    // Named combinations first.
-    if *set == WeekdaySet::every_day() {
-        return "daily".into();
-    }
-    if *set == WeekdaySet::weekdays() {
-        return "weekdays".into();
-    }
-    if *set == WeekdaySet::weekends() {
-        return "weekends".into();
-    }
+//     // Named combinations first.
+//     if *set == WeekdaySet::every_day() {
+//         return "daily".into();
+//     }
+//     if *set == WeekdaySet::weekdays() {
+//         return "weekdays".into();
+//     }
+//     if *set == WeekdaySet::weekends() {
+//         return "weekends".into();
+//     }
 
-    // Fall back to comma-joined abbreviated names in Mon→Sun order.
-    let names: Vec<&str> = [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
-        .iter()
-        .filter(|&&d| set.contains(d))
-        .map(|d| match d {
-            Mon => "Mon",
-            Tue => "Tue",
-            Wed => "Wed",
-            Thu => "Thu",
-            Fri => "Fri",
-            Sat => "Sat",
-            Sun => "Sun",
-        })
-        .collect();
+//     // Fall back to comma-joined abbreviated names in Mon→Sun order.
+//     let names: Vec<&str> = [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+//         .iter()
+//         .filter(|&&d| set.contains(d))
+//         .map(|d| match d {
+//             Mon => "Mon",
+//             Tue => "Tue",
+//             Wed => "Wed",
+//             Thu => "Thu",
+//             Fri => "Fri",
+//             Sat => "Sat",
+//             Sun => "Sun",
+//         })
+//         .collect();
 
-    names.join(", ")
-}
+//     names.join(", ")
+// }
 
-fn format_recurrence(spec: &RecurrenceSpec) -> String {
-    match spec {
-        RecurrenceSpec::EveryDays(1) => "daily".into(),
-        RecurrenceSpec::EveryDays(7) => "weekly".into(),
-        RecurrenceSpec::EveryDays(n) => format!("every {n} days"),
-        RecurrenceSpec::EveryWeeks(1) => "weekly".into(),
-        RecurrenceSpec::EveryWeeks(n) => format!("every {n} weeks"),
-        RecurrenceSpec::EveryMonths(1) => "monthly".into(),
-        RecurrenceSpec::EveryMonths(3) => "quarterly".into(),
-        RecurrenceSpec::EveryMonths(n) => format!("every {n} months"),
-        RecurrenceSpec::EveryYears(1) => "yearly".into(),
-        RecurrenceSpec::EveryYears(n) => format!("every {n} years"),
-        RecurrenceSpec::OnMonthDay(day) => format!("the {}", ordinal(*day)),
-        RecurrenceSpec::OnWeekdays(set) => format_weekday_set(set),
-    }
-}
+// fn format_recurrence(spec: &RecurrenceSpec) -> String {
+//     match spec {
+//         RecurrenceSpec::EveryDays(1) => "daily".into(),
+//         RecurrenceSpec::EveryDays(7) => "weekly".into(),
+//         RecurrenceSpec::EveryDays(n) => format!("every {n} days"),
+//         RecurrenceSpec::EveryWeeks(1) => "weekly".into(),
+//         RecurrenceSpec::EveryWeeks(n) => format!("every {n} weeks"),
+//         RecurrenceSpec::EveryMonths(1) => "monthly".into(),
+//         RecurrenceSpec::EveryMonths(3) => "quarterly".into(),
+//         RecurrenceSpec::EveryMonths(n) => format!("every {n} months"),
+//         RecurrenceSpec::EveryYears(1) => "yearly".into(),
+//         RecurrenceSpec::EveryYears(n) => format!("every {n} years"),
+//         RecurrenceSpec::OnMonthDay(day) => format!("the {}", ordinal(*day)),
+//         RecurrenceSpec::OnWeekdays(set) => format_weekday_set(set),
+//     }
+// }
 
 pub struct ActionCreator {
     pub focus_handle: FocusHandle,
@@ -103,6 +104,8 @@ pub struct ActionCreator {
 
     batch_mode: bool,
 
+    input_bounds: Bounds<Pixels>,
+
     _subscriptions: Vec<gpui::Subscription>,
 }
 
@@ -112,6 +115,7 @@ impl ActionCreator {
 
         let title_input = cx.new(|cx| {
             let state = InputState::new(window, cx).placeholder("Action Name");
+            // .validate(|input, cx| input.contains("s"));
             state.focus(window, cx);
             state
         });
@@ -127,7 +131,7 @@ impl ActionCreator {
                     let value = this.title_input.read(cx).value().to_string();
                     this.current_title = value.trim().to_string();
                     // Re-parse eagerly so the draft stays fresh.
-                    this.current_draft = parse_action_input(&this.current_title).ok();
+                    this.current_draft = parse_action(&this.current_title).ok();
                     cx.notify();
                 }
             }),
@@ -164,6 +168,7 @@ impl ActionCreator {
             current_content: String::new(),
             current_draft: None,
             batch_mode: false,
+            input_bounds: Bounds::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -185,7 +190,7 @@ impl ActionCreator {
         let (draft, mut warnings) = match self
             .current_draft
             .clone()
-            .or_else(|| parse_action_input(&self.current_title).ok())
+            .or_else(|| parse_action(&self.current_title).ok())
         {
             Some(draft) => {
                 let w = draft.warnings.clone();
@@ -213,9 +218,10 @@ impl ActionCreator {
             Action::new(&self.current_title)
         };
 
-        // The `save` checkbox controls ephemerality regardless of what the
-        // parser inferred.
-        action.saved = self.save;
+        // The `save` checkbox controls whether this action is also saved as a template.
+        if self.save {
+            action.template_id = Some(action.id);
+        }
 
         // An explicit description always takes precedence over the parsed one.
         if !self.current_content.is_empty() {
@@ -226,9 +232,12 @@ impl ActionCreator {
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.current_title.is_empty() {
-            return;
-        }
+        // if self.current_title.is_empty() {
+        //     return;
+        // }
+        // if self.title_input.update(cx, |input, cx| {
+        //    input.set_highlighter(new_language, cx);
+        // });
 
         let (action, parse_warnings) = self.build();
 
@@ -291,75 +300,48 @@ impl Render for ActionCreator {
         let theme = cx.theme().clone();
         // let can_submit = !self.current_title.is_empty();
 
-        // Build a one-line preview string from the current draft so the user
-        // can see at a glance what the parser understood.
-        let preview_text: Option<SharedString> = self.current_draft.as_ref().map(|draft| {
-            let mut parts: Vec<String> = Vec::new();
+        // let preview_text = self.current_draft.as_ref().map(|draft| preview_text(draft));
 
-            if let Some(when) = &draft.when {
-                use simple_parser::ast::WhenSpec;
-                match when {
-                    WhenSpec::DateTime(dt) => {
-                        let local = dt.with_timezone(&Local);
-                        // e.g. "Fri Dec 20 3:00pm" or "Fri Dec 20 12:00pm"
-                        let time_str = local.format("%-I:%M%P").to_string();
-                        // Trim ":00" from whole-hour times → "3pm" instead of "3:00pm"
-                        let time_str = if time_str.contains(":00") {
-                            time_str.replace(":00", "")
-                        } else {
-                            time_str
-                        };
-                        parts.push(local.format(&format!("%a %b %-d {time_str}")).to_string());
-                    }
-                    WhenSpec::NaiveDate(date) => {
-                        // Date-only — no time component yet (floating backlog date).
-                        parts.push(date.format("%a %b %-d").to_string());
-                    }
-                }
-            }
-            if let Some(dur) = draft.duration {
-                let total_mins = dur.num_minutes();
-                if total_mins % 60 == 0 {
-                    parts.push(format!("{}h", total_mins / 60));
-                } else if total_mins >= 60 {
-                    parts.push(format!("{}h {}m", total_mins / 60, total_mins % 60));
-                } else {
-                    parts.push(format!("{}m", total_mins));
-                }
-            }
-            if let Some(rec) = &draft.recurrence {
-                parts.push(format_recurrence(rec));
-            }
-            if let Some(loc) = &draft.location {
-                parts.push(loc.clone());
-            }
-            if !draft.tags.is_empty() {
-                parts.push(format!("{}", draft.tags.join(", ")));
-            }
-            if !draft.people.is_empty() {
-                parts.push(format!("{}", draft.people.join(", ")));
-            }
-            if let Some(pri) = &draft.priority {
-                parts.push(format!("{pri:?}"));
-            }
+        let highlights = self
+            .current_draft
+            .as_ref()
+            .map(|draft| {
+                let x_pad = px(2.);
+                draft
+                    .highlights
+                    .iter()
+                    .filter_map(|h| {
+                        if h.1 == HighlightKind::Title {
+                            return None;
+                        }
+                        let range = &h.0;
+                        self.title_input
+                            .read_with(cx, |input, _cx| input.range_to_bounds(range))
+                    })
+                    .map(|mut bounds| {
+                        bounds.origin -= self.input_bounds.origin;
+                        div()
+                            .absolute()
+                            .top(bounds.origin.y)
+                            .left(bounds.origin.x - x_pad)
+                            .h(bounds.size.height)
+                            .w(bounds.size.width + x_pad * 2.)
+                            .rounded_md()
+                            .bg(cx.theme().primary.alpha(0.5))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
-            if parts.is_empty() {
-                SharedString::from("")
-            } else {
-                // SharedString::from(parts.join("  ·  "))
-                SharedString::from(parts.join(" "))
-            }
-        });
-
+        let entity = cx.entity();
         let inner = v_flex().w(px(144. * 4.)).child(
-            v_flex()
+            div()
                 .track_focus(&self.focus_handle)
                 .bg(theme.background.mix_oklab(gpui::black(), 0.95).alpha(0.9))
                 .text_color(theme.foreground)
                 .border_1()
-                .border_color(theme.border)
-                // .rounded_xl()
-                .rounded_full()
+                .border_color(theme.primary.mix_oklab(gpui::transparent_white(), 0.7))
+                .rounded(px(24.))
                 .shadow_md()
                 .on_any_mouse_down(|_event, _window, cx| {
                     cx.stop_propagation();
@@ -374,16 +356,25 @@ impl Render for ActionCreator {
                         .w_full()
                         .px_4()
                         // .gap_2()
-                        .items_center()
                         .child(Icon::new(IconName::Check).large())
                         .child(
-                            Input::new(&self.title_input)
-                                .h_12()
-                                .w_full()
-                                .text_size(rems(1.5))
-                                .line_height(rems(2.0))
-                                .focus_bordered(true)
-                                .appearance(false),
+                            div()
+                                .size_full()
+                                .overflow_hidden()
+                                .children(highlights)
+                                .on_prepaint(move |bounds, _, cx| {
+                                    entity.update(cx, |view, _cx| view.input_bounds = bounds)
+                                })
+                                .child(
+                                    Input::new(&self.title_input)
+                                        .px_0()
+                                        .h_12()
+                                        .w_full()
+                                        .text_size(rems(1.5))
+                                        .line_height(rems(2.0))
+                                        .focus_bordered(true)
+                                        .appearance(false),
+                                ),
                         )
                         // .child(
                         //     Checkbox::new("save")
@@ -395,34 +386,77 @@ impl Render for ActionCreator {
                         //         })),
                         // ),
                         // Live parse preview (only shown when there is something to show)
-                        .when(
-                            preview_text
-                                .as_ref()
-                                .map(|s| !s.is_empty())
-                                .unwrap_or(false),
-                            |el| {
-                                el.child(
-                                    h_flex()
-                                        // .px_4()
-                                        // .pb_4()
-                                        // .py_2()
-                                        // .w_full()
-                                        // .border_t_1()
-                                        // .border_color(theme.border)
-                                        // .justify_center()
-                                        .child(
-                                            Label::new(preview_text.unwrap_or_default())
-                                                .text_xs()
-                                                .text_color(theme.muted_foreground),
-                                        ),
-                                )
-                            },
-                        )
+                        // .when(
+                        //     preview_text
+                        //         .as_ref()
+                        //         .map(|s| !s.is_empty())
+                        //         .unwrap_or(false),
+                        //     |el| {
+                        //         el.child(
+                        //             h_flex()
+                        //                 // .px_4()
+                        //                 // .pb_4()
+                        //                 // .py_2()
+                        //                 // .w_full()
+                        //                 // .border_t_1()
+                        //                 // .border_color(theme.border)
+                        //                 // .justify_center()
+                        //                 .child(
+                        //                     Label::new(preview_text.unwrap_or_default())
+                        //                         .text_xs()
+                        //                         .text_color(theme.muted_foreground),
+                        //                 ),
+                        //         )
+                        //     },
+                        // )
                         .when(self.batch_mode, |this| {
                             this.child(Label::new("Batch Mode").text_xs().line_height(rems(1.)))
                         })
                         .when(false, |this| this),
                 )
+                .when(!self.current_title.is_empty(), |this| {
+                    this.child(
+                        h_flex()
+                            .w_full()
+                            .px_4()
+                            .py_2()
+                            .gap_2()
+                            .border_t_1()
+                            .border_color(cx.theme().border)
+                            .justify_end()
+                            // .child(
+                            //     Button::new("action-cancel")
+                            //         .label("Cancel")
+                            //         .outline()
+                            //         .secondary()
+                            //         .compact(),
+                            // )
+                            .child(
+                                Button::new("action-queue")
+                                    .icon(Icon::new(AppIcon::Play))
+                                    .tooltip("Add to queue")
+                                    // .label("Create")
+                                    .outline()
+                                    .compact(),
+                            )
+                            .child(
+                                Button::new("action-backlog")
+                                    .icon(Icon::new(AppIcon::Archive))
+                                    .tooltip("Add to backlog")
+                                    // .label("Backlog")
+                                    .outline()
+                                    .compact(),
+                            )
+                            .child(
+                                Button::new("action-saved-submit")
+                                    // .label("Save")
+                                    .icon(Icon::new(AppIcon::Save))
+                                    .tooltip("Save action")
+                                    .outline()
+                                    .compact(),
+                            ),
+                    )
+                })
                 // .child(
                 //     h_flex()
                 //         .w_full()
@@ -465,9 +499,53 @@ impl Render for ActionCreator {
 
         overlay(
             inner,
-            // OverlayPosition::Top(DefiniteLength::Fraction(0.25).into()),
-            OverlayPosition::Center,
+            OverlayPosition::Top(DefiniteLength::Fraction(0.25).into()),
             cx,
         )
     }
 }
+
+// fn preview_text(draft: &ParseDraft) -> SharedString {
+//     let mut parts: Vec<String> = Vec::new();
+
+//     if let Some(when) = &draft.when {
+//         use simple_parser::ast::WhenSpec;
+//         match when {
+//             WhenSpec::DateTime(dt) => {
+//                 let local = dt.with_timezone(&Local);
+//                 // e.g. "Fri Dec 20 3:00pm" or "Fri Dec 20 12:00pm"
+//                 let time_str = local.format("%-I:%M%P").to_string();
+//                 // Trim ":00" from whole-hour times → "3pm" instead of "3:00pm"
+//                 let time_str = if time_str.contains(":00") {
+//                     time_str.replace(":00", "")
+//                 } else {
+//                     time_str
+//                 };
+//                 parts.push(local.format(&format!("%a %b %-d {time_str}")).to_string());
+//             }
+//             WhenSpec::NaiveDate(date) => {
+//                 // Date-only — no time component yet (floating backlog date).
+//                 parts.push(date.format("%a %b %-d").to_string());
+//             }
+//         }
+//     }
+//     if let Some(dur) = draft.duration {
+//         let total_mins = dur.num_minutes();
+//         if total_mins % 60 == 0 {
+//             parts.push(format!("{}h", total_mins / 60));
+//         } else if total_mins >= 60 {
+//             parts.push(format!("{}h {}m", total_mins / 60, total_mins % 60));
+//         } else {
+//             parts.push(format!("{}m", total_mins));
+//         }
+//     }
+//     if let Some(rec) = &draft.recurrence {
+//         parts.push(format_recurrence(rec));
+//     }
+//     if parts.is_empty() {
+//         SharedString::from("")
+//     } else {
+//         // SharedString::from(parts.join("  ·  "))
+//         SharedString::from(parts.join(" "))
+//     }
+// }

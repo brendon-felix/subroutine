@@ -8,9 +8,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use simple_core::{
-    Action, ActionState, ActionTarget, ChangeEvent, Routine, quantize, quantize_duration,
-};
+use simple_core::{Action, ActionState, ActionTarget, ChangeEvent, Routine, pipeline};
 
 use crate::{db, error::Result, state::AppState};
 
@@ -89,17 +87,17 @@ async fn instantiate_routine(
         .await?
         .ok_or_else(|| crate::error::AppError::not_found(format!("routine {id} not found")))?;
 
-    let start = quantize(body.start_time.unwrap_or_else(Utc::now));
+    let start = pipeline::quantize(body.start_time.unwrap_or_else(Utc::now));
     let default_duration = Duration::minutes(15);
     let mut cursor = start;
     let mut actions: Vec<Action> = Vec::new();
 
     for step in &routine.steps {
-        let duration = quantize_duration(step.duration.unwrap_or(default_duration));
+        let duration = pipeline::quantize_duration(step.duration.unwrap_or(default_duration));
         let action = Action::new(step.title.clone())
             .with_origin_routine(routine.id)
             .with_duration(duration)
-            .with_state(ActionState::Queued(ActionTarget {
+            .with_state(ActionState::Scheduled(ActionTarget {
                 time: cursor,
                 is_static: true,
             }));

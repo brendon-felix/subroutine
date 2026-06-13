@@ -1,13 +1,66 @@
-use chrono::{DateTime, Duration, Local, Utc};
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use chrono::{DateTime, Duration, Utc};
 
-use crate::{Action, ActionState, ActionTarget, Event, Routine};
+use crate::{Action, ActionState, ActionTarget, Event};
 
 pub const DEFAULT_ACTION_DURATION: Duration = Duration::minutes(5);
 // const CONSECUTIVE_GAP_THRESHOLD: Duration = Duration::minutes(5);
 // const SEMI_CONSECUTIVE_GAP_THRESHOLD: Duration = Duration::minutes(30);
 pub const EXPEDITE_HORIZON: Duration = Duration::hours(6);
+pub const HIGH_PRIORITY_TIME_SLICE: Duration = Duration::minutes(5);
+pub const LOW_PRIORITY_TIME_SLICE: Duration = Duration::minutes(15);
+
+// /// Multi-level feedback queue for recommendations.
+// /// Dynamic prioritization: Lower priority items executed after high priority items.
+// /// Time Quantum: Time slice for high priority items is less than low priority items.
+// /// Demotion: Items are demoted from high to low priority if incomplete after a time quantum.
+// /// Retention: Items are retained as high priority if completed before the time quantum.
+// /// Priority boost: All items are boosted to high priority periodically.
+// pub(crate) struct FeedbackQueue {
+//     high_priority: VecDeque<AnyItem>,
+//     low_priority: VecDeque<AnyItem>,
+// }
+
+// impl FeedbackQueue {
+//     pub fn new() -> Self {
+//         Self {
+//             high_priority: VecDeque::new(),
+//             low_priority: VecDeque::new(),
+//         }
+//     }
+
+//     pub fn push_high_priority(&mut self, item: AnyItem) {
+//         self.high_priority.push_back(item);
+//     }
+
+//     pub fn push_low_priority(&mut self, item: AnyItem) {
+//         self.low_priority.push_back(item);
+//     }
+
+//     pub fn pop(&mut self) -> Option<AnyItem> {
+//         if let Some(item) = self.high_priority.pop_front() {
+//             return Some(item);
+//         }
+//         self.low_priority.pop_front()
+//     }
+
+//     pub fn peek(&self, ix: usize) -> Option<&AnyItem> {
+//         let len = self.high_priority.len();
+//         if ix < len {
+//             self.high_priority.get(ix)
+//         } else {
+//             self.low_priority.get(ix - len)
+//         }
+//     }
+
+//     pub fn peek_all(&self) -> Vec<&AnyItem> {
+//         self.high_priority
+//             .iter()
+//             .chain(self.low_priority.iter())
+//             .collect::<Vec<_>>()
+//     }
+// }
+
+// ------------------------------------------------------------------------------- //
 
 fn action_effective_duration(action: &Action) -> Duration {
     action.duration.unwrap_or(DEFAULT_ACTION_DURATION)
@@ -52,78 +105,6 @@ pub fn quantize_duration(duration: Duration) -> Duration {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AnyItem {
-    Action(Action),
-    Event(Event),
-    Routine(Routine),
-}
-
-impl AnyItem {
-    pub fn title(&self) -> &str {
-        match self {
-            AnyItem::Action(a) => &a.title,
-            AnyItem::Event(e) => &e.title,
-            AnyItem::Routine(r) => &r.title,
-        }
-    }
-
-    pub fn id(&self) -> Uuid {
-        match self {
-            AnyItem::Action(a) => a.id,
-            AnyItem::Event(e) => e.id,
-            AnyItem::Routine(r) => r.id,
-        }
-    }
-
-    pub fn truncated_id(&self) -> u64 {
-        // use second half of v7 UUID (timestamp based)
-        match self {
-            AnyItem::Action(a) => a.id.as_u64_pair().1,
-            AnyItem::Event(e) => e.id.as_u64_pair().1,
-            AnyItem::Routine(r) => r.id.as_u64_pair().1,
-        }
-    }
-
-    pub fn time(&self) -> Option<DateTime<Utc>> {
-        match self {
-            AnyItem::Action(a) => match a.state {
-                ActionState::Queued(t) => Some(t.time),
-                _ => None,
-            },
-            AnyItem::Event(e) => Some(e.time),
-            AnyItem::Routine(_) => None,
-        }
-    }
-
-    pub fn time_local(&self) -> Option<DateTime<Local>> {
-        match self {
-            AnyItem::Action(a) => match a.state {
-                ActionState::Queued(t) => Some(t.time.with_timezone(&Local)),
-                _ => None,
-            },
-            AnyItem::Event(e) => Some(e.time.with_timezone(&Local)),
-            AnyItem::Routine(_) => None,
-        }
-    }
-
-    pub fn duration(&self) -> Option<Duration> {
-        match self {
-            AnyItem::Action(a) => a.duration,
-            AnyItem::Event(e) => e.duration,
-            AnyItem::Routine(r) => r.duration(),
-        }
-    }
-
-    pub fn is_action(&self) -> bool {
-        matches!(self, AnyItem::Action(_))
-    }
-
-    pub fn is_event(&self) -> bool {
-        matches!(self, AnyItem::Event(_))
-    }
-}
-
 pub fn filter_queued(actions: &[Action]) -> Vec<Action> {
     actions.iter().filter(|a| a.is_queued()).cloned().collect()
 }
@@ -160,7 +141,7 @@ pub fn next_queue_slot(actions: &[Action], events: &[Event], now: DateTime<Utc>)
     let chain_end = actions
         .iter()
         .filter_map(|a| {
-            if let ActionState::Queued(t) = a.state {
+            if let ActionState::Scheduled(t) = a.state {
                 if !t.is_static {
                     return Some(t.time + action_effective_duration(a));
                 }
@@ -201,7 +182,7 @@ pub fn requeue_actions(actions: &[Action], events: &[Event], now: DateTime<Utc>)
         .cloned()
         .collect();
     missed.sort_by_key(|a| match a.state {
-        ActionState::Queued(t) => t.time,
+        ActionState::Scheduled(t) => t.time,
         _ => unreachable!(),
     });
 
@@ -216,7 +197,7 @@ pub fn requeue_actions(actions: &[Action], events: &[Event], now: DateTime<Utc>)
         let start = find_free_slot(cursor, duration, &anchors);
         cursor = start + duration;
         let is_static = action.is_queued_static();
-        updates.push(action.with_state(ActionState::Queued(ActionTarget {
+        updates.push(action.with_state(ActionState::Scheduled(ActionTarget {
             time: start,
             is_static,
         })));
@@ -254,7 +235,7 @@ pub fn expedite_actions(
 
     // Preserve relative order by sorting by current scheduled time.
     candidates.sort_by_key(|a| match a.state {
-        ActionState::Queued(t) => t.time,
+        ActionState::Scheduled(t) => t.time,
         _ => unreachable!(),
     });
 
@@ -272,16 +253,20 @@ pub fn expedite_actions(
         cursor = start;
 
         let old_time = match action.state {
-            ActionState::Queued(t) => t.time,
+            ActionState::Scheduled(t) => t.time,
             _ => unreachable!(),
         };
 
         // Only include this action if it actually moved earlier.
         if start < old_time {
-            updates.push(action.clone().with_state(ActionState::Queued(ActionTarget {
-                time: start,
-                is_static: false,
-            })));
+            updates.push(
+                action
+                    .clone()
+                    .with_state(ActionState::Scheduled(ActionTarget {
+                        time: start,
+                        is_static: false,
+                    })),
+            );
         }
     }
 
@@ -299,14 +284,9 @@ fn build_anchors(
 ) -> Vec<(DateTime<Utc>, DateTime<Utc>)> {
     let mut v: Vec<(DateTime<Utc>, DateTime<Utc>)> = events
         .iter()
-        .map(|e| {
-            (
-                e.time,
-                e.time + e.duration.unwrap_or(DEFAULT_ACTION_DURATION),
-            )
-        })
+        .map(|e| (e.time, e.end_time()))
         .chain(actions.iter().filter_map(|a| {
-            if let ActionState::Queued(t) = a.state {
+            if let ActionState::Scheduled(t) = a.state {
                 if t.is_static {
                     if let Some(from) = future_only_from {
                         if t.time < from {

@@ -92,8 +92,8 @@ private fun EventQueueRow(
 ) {
     val event = item.event
     val startText = formatIsoTime(event.time)
-    val durationMins = event.durationSecs?.let { it / 60 }
-    val timeText = if (durationMins != null && durationMins > 0) {
+    val durationMins = event.durationSecs / 60
+    val timeText = if (durationMins > 0) {
         "$startText · ${durationMins}min"
     } else {
         startText

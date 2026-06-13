@@ -258,6 +258,7 @@ impl TimelineView {
     /// Also used as the near-edge threshold for triggering a load.
     fn division_buffer_size(div: BaseTimeDivision) -> usize {
         match div {
+            BaseTimeDivision::Minute => 30,      // 5 minutes of minute items
             BaseTimeDivision::FiveMinutes => 12, // 1 hour of 5-min items
             BaseTimeDivision::Hour => 24,        // 1 day of hours
             BaseTimeDivision::Day => 30,         // ~1 month of days
@@ -274,6 +275,9 @@ impl TimelineView {
         n: usize,
     ) -> DateTime<Local> {
         match div {
+            BaseTimeDivision::Minute => {
+                BaseTimeDivision::Minute.floor_boundary(from - ChronoDuration::minutes(n as i64))
+            }
             BaseTimeDivision::FiveMinutes => BaseTimeDivision::FiveMinutes
                 .floor_boundary(from - ChronoDuration::minutes(5 * n as i64)),
             BaseTimeDivision::Hour => {
@@ -362,19 +366,31 @@ impl TimelineView {
         // <=-14  |    —        —        —        —      <=68 px  ZoomedOut
         let level = self.zoom_state.zoom.log2().floor() as i32;
         match level {
-            5..=i32::MAX => TimeDivisionState {
+            8..=i32::MAX => TimeDivisionState {
+                base_division: BaseTimeDivision::Minute,
+                zoom_level: TimeZoomLevel::ZoomedIn,
+            },
+            7 => TimeDivisionState {
+                base_division: BaseTimeDivision::Minute,
+                zoom_level: TimeZoomLevel::Normal,
+            },
+            6 => TimeDivisionState {
+                base_division: BaseTimeDivision::Minute,
+                zoom_level: TimeZoomLevel::ZoomedOut,
+            },
+            5 => TimeDivisionState {
                 base_division: BaseTimeDivision::FiveMinutes,
                 zoom_level: TimeZoomLevel::ZoomedIn,
             },
-            4 => TimeDivisionState {
+            3..=4 => TimeDivisionState {
                 base_division: BaseTimeDivision::FiveMinutes,
                 zoom_level: TimeZoomLevel::Normal,
             },
-            3 => TimeDivisionState {
+            2 => TimeDivisionState {
                 base_division: BaseTimeDivision::FiveMinutes,
                 zoom_level: TimeZoomLevel::ZoomedOut,
             },
-            1..=2 => TimeDivisionState {
+            1 => TimeDivisionState {
                 base_division: BaseTimeDivision::Hour,
                 zoom_level: TimeZoomLevel::ZoomedIn,
             },
@@ -458,15 +474,16 @@ impl TimelineView {
     /// True when the zoom level is fine enough to render individual items as full-height chips.
     /// At coarser zooms, a summary count label is shown instead.
     pub(super) fn should_render_items(&self) -> bool {
-        let state = self.current_division_state();
-        !matches!(
-            state.base_division,
-            BaseTimeDivision::Month | BaseTimeDivision::Year
-        ) && !(state.base_division == BaseTimeDivision::Day
-            && matches!(
-                state.zoom_level,
-                TimeZoomLevel::ZoomedOut | TimeZoomLevel::ZoomedOutFar
-            ))
+        // let state = self.current_division_state();
+        // !matches!(
+        //     state.base_division,
+        //     BaseTimeDivision::Month | BaseTimeDivision::Year
+        // ) && !(state.base_division == BaseTimeDivision::Day
+        //     && matches!(
+        //         state.zoom_level,
+        //         TimeZoomLevel::ZoomedOut | TimeZoomLevel::ZoomedOutFar
+        //     ))
+        true
     }
 
     // pub(super) fn nearest_time(&self, time: DateTime<Local>) -> DateTime<Local> {
@@ -576,6 +593,7 @@ impl TimelineView {
             let offset = a - d - (a - base - d) * self.zoom_state.zoom_factor;
             self.zoom_scroll_target = Some(offset);
             self.pending_zoom_transition = Some((new_zoom, offset, true, needs_jump));
+            // self.pending_zoom_transition = Some((new_zoom, offset, true, true));
             cx.notify();
         }
     }
@@ -592,6 +610,7 @@ impl TimelineView {
             let offset = a - d - (a - base - d) / self.zoom_state.zoom_factor;
             self.zoom_scroll_target = Some(offset);
             self.pending_zoom_transition = Some((new_zoom, offset, true, needs_jump));
+            // self.pending_zoom_transition = Some((new_zoom, offset, true, true));
             cx.notify();
         }
     }
@@ -690,6 +709,7 @@ impl TimelineView {
         self.zoom_scroll_target = Some(offset);
         let mut new_zoom = self.zoom_state.clone();
         new_zoom.zoom = clamped;
+        // self.pending_zoom_transition = Some((new_zoom, offset, true, needs_jump));
         self.pending_zoom_transition = Some((new_zoom, offset, true, needs_jump));
         cx.notify();
     }
@@ -1200,6 +1220,7 @@ impl TimelineView {
                         // GPUI doesn’t try to diff/reuse elements from the
                         // previous division when the list is rebuilt.
                         let division_ord: usize = match division {
+                            BaseTimeDivision::Minute => 0,
                             BaseTimeDivision::FiveMinutes => 0,
                             BaseTimeDivision::Hour => 1,
                             BaseTimeDivision::Day => 2,
@@ -1501,6 +1522,7 @@ impl TimelineView {
         let color = cx.theme().red.mix_oklab(cx.theme().foreground, 0.8);
 
         let time_label = match self.current_division_state().base_division {
+            BaseTimeDivision::Minute => now.format("%-I:%M:%S").to_string(),
             BaseTimeDivision::FiveMinutes | BaseTimeDivision::Hour | BaseTimeDivision::Day => {
                 now.format("%-I:%M").to_string()
             }

@@ -1,8 +1,8 @@
--- Actions
 CREATE TABLE IF NOT EXISTS actions (
     id                UUID        PRIMARY KEY,
     lineage_id        UUID        NOT NULL,
-    origin_routine_id UUID,
+    routine_id        UUID,
+    template_id       UUID,
     title             TEXT        NOT NULL,
     content           TEXT,
     state             TEXT        NOT NULL DEFAULT 'backlogged'
@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS actions (
     duration_secs     BIGINT,
     recurrence_count  INTEGER,
     recurrence_unit   TEXT        CHECK (recurrence_unit IN ('minutes', 'hours', 'days', 'weeks', 'months', 'years')),
-    saved             BOOLEAN     NOT NULL DEFAULT TRUE,
     deleted           BOOLEAN     NOT NULL DEFAULT FALSE,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -38,17 +37,48 @@ CREATE TABLE IF NOT EXISTS actions (
     )
 );
 
--- Events
+CREATE TABLE IF NOT EXISTS action_templates (
+    id                UUID        PRIMARY KEY,
+    lineage_id        UUID        NOT NULL,
+    title             TEXT        NOT NULL,
+    content           TEXT,
+    duration_secs     BIGINT,
+    recurrence_count  INTEGER,
+    recurrence_unit   TEXT        CHECK (recurrence_unit IN ('minutes', 'hours', 'days', 'weeks', 'months', 'years')),
+    deleted           BOOLEAN     NOT NULL DEFAULT FALSE,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT recurrence_all_or_nothing CHECK (
+        (recurrence_count IS NULL) = (recurrence_unit IS NULL)
+    )
+);
+
 CREATE TABLE IF NOT EXISTS events (
+    id               UUID        PRIMARY KEY,
+    lineage_id       UUID        NOT NULL,
+    template_id      UUID,
+    title            TEXT        NOT NULL,
+    content          TEXT,
+    starts_at        TIMESTAMPTZ NOT NULL,
+    duration_secs    BIGINT      NOT NULL DEFAULT 3600,
+    recurrence_count INTEGER,
+    recurrence_unit  TEXT        CHECK (recurrence_unit IN ('minutes', 'hours', 'days', 'weeks', 'months', 'years')),
+    deleted          BOOLEAN     NOT NULL DEFAULT FALSE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT recurrence_all_or_nothing CHECK (
+        (recurrence_count IS NULL) = (recurrence_unit IS NULL)
+    )
+);
+
+CREATE TABLE IF NOT EXISTS event_templates (
     id               UUID        PRIMARY KEY,
     lineage_id       UUID        NOT NULL,
     title            TEXT        NOT NULL,
     content          TEXT,
-    starts_at        TIMESTAMPTZ NOT NULL,
     duration_secs    BIGINT,
     recurrence_count INTEGER,
     recurrence_unit  TEXT        CHECK (recurrence_unit IN ('minutes', 'hours', 'days', 'weeks', 'months', 'years')),
-    saved            BOOLEAN     NOT NULL DEFAULT TRUE,
     deleted          BOOLEAN     NOT NULL DEFAULT FALSE,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),

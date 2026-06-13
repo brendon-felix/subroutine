@@ -62,12 +62,11 @@ pub fn handle_actions(command: &ActionsCommand, client: &Client, base: &str) -> 
     match command {
         ActionsCommand::List => {
             let actions = fetch_all_actions(client, base)?;
-            let saved: Vec<&Action> = actions.iter().filter(|a| a.saved).collect();
-            if saved.is_empty() {
+            if actions.is_empty() {
                 println!("No saved actions.");
                 return Ok(());
             }
-            for action in &saved {
+            for action in &actions {
                 println!("  {} {}", short_id(action.id), action.title);
             }
         }

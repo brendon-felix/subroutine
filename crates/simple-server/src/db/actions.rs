@@ -3,7 +3,9 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::{PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
 
-use simple_core::{Action, ActionState, ActionTarget, RecurrenceRule, RecurrenceUnit};
+use simple_core::{
+    Action, ActionState, ActionTarget, ActionTemplate, RecurrenceRule, RecurrenceUnit,
+};
 
 fn recurrence_from_row(row: &PgRow) -> Result<Option<RecurrenceRule>, sqlx::Error> {
     let count: Option<i32> = row.try_get("recurrence_count")?;
@@ -28,7 +30,7 @@ fn state_from_row(row: &PgRow) -> Result<ActionState, sqlx::Error> {
         "queued" => {
             let time: DateTime<Utc> = row.try_get("target")?;
             let is_static: bool = row.try_get("target_static")?;
-            Ok(ActionState::Queued(ActionTarget { time, is_static }))
+            Ok(ActionState::Scheduled(ActionTarget { time, is_static }))
         }
         "backlogged" => Ok(ActionState::Backlogged(row.try_get("naive_date")?)),
         "completed" => Ok(ActionState::Completed(row.try_get("completed_at")?)),
@@ -39,6 +41,7 @@ fn state_from_row(row: &PgRow) -> Result<ActionState, sqlx::Error> {
     }
 }
 
+/// wrapper around [`Action`] for sqlx
 struct ActionRow(Action);
 
 impl<'r> sqlx::FromRow<'r, PgRow> for ActionRow {
@@ -46,28 +49,39 @@ impl<'r> sqlx::FromRow<'r, PgRow> for ActionRow {
         Ok(ActionRow(Action {
             id: row.try_get("id")?,
             lineage_id: row.try_get("lineage_id")?,
-            origin_routine_id: row.try_get("origin_routine_id")?,
+            routine_id: row.try_get("routine_id")?,
+            template_id: row.try_get("template_id")?,
             title: row.try_get("title")?,
             content: row.try_get("content")?,
             duration: row
                 .try_get::<Option<i64>, _>("duration_secs")?
                 .map(Duration::seconds),
             recurrence: recurrence_from_row(row)?,
-            saved: row.try_get("saved")?,
             state: state_from_row(row)?,
         }))
     }
 }
 
 const ACTION_COLS: &str = r#"
-  id, lineage_id, origin_routine_id, title, content,
-  state, target, target_static, naive_date, completed_at,
-  duration_secs, recurrence_count, recurrence_unit, saved
+  id,
+  lineage_id,
+  routine_id,
+  template_id,
+  title,
+  content,
+  state,
+  target,
+  target_static,
+  naive_date,
+  completed_at,
+  duration_secs,
+  recurrence_count,
+  recurrence_unit
 "#;
 
 pub(crate) async fn upsert(pool: &PgPool, action: &Action) -> anyhow::Result<()> {
     let (state_str, target, target_static, naive_date, completed_at) = match action.state {
-        ActionState::Queued(t) => ("queued", Some(t.time), t.is_static, None, None),
+        ActionState::Scheduled(t) => ("queued", Some(t.time), t.is_static, None, None),
         ActionState::Backlogged(d) => ("backlogged", None, false, d, None),
         ActionState::Completed(at) => ("completed", None, false, None, Some(at)),
         ActionState::Skipped => ("skipped", None, false, None, None),
@@ -76,14 +90,26 @@ pub(crate) async fn upsert(pool: &PgPool, action: &Action) -> anyhow::Result<()>
     sqlx::query(
         r#"
         INSERT INTO actions (
-          id, lineage_id, origin_routine_id, title, content,
-          state, target, target_static, naive_date, completed_at,
-          duration_secs, recurrence_count, recurrence_unit, saved
+          id,
+          lineage_id,
+          routine_id,
+          template_id,
+          title,
+          content,
+          state,
+          target,
+          target_static,
+          naive_date,
+          completed_at,
+          duration_secs,
+          recurrence_count,
+          recurrence_unit
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (id) DO UPDATE SET
           lineage_id        = EXCLUDED.lineage_id,
-          origin_routine_id = EXCLUDED.origin_routine_id,
+          routine_id        = EXCLUDED.routine_id,
+          template_id       = EXCLUDED.template_id,
           title             = EXCLUDED.title,
           content           = EXCLUDED.content,
           state             = EXCLUDED.state,
@@ -94,13 +120,13 @@ pub(crate) async fn upsert(pool: &PgPool, action: &Action) -> anyhow::Result<()>
           duration_secs     = EXCLUDED.duration_secs,
           recurrence_count  = EXCLUDED.recurrence_count,
           recurrence_unit   = EXCLUDED.recurrence_unit,
-          saved             = EXCLUDED.saved,
           updated_at        = NOW()
     "#,
     )
     .bind(action.id)
     .bind(action.lineage_id)
-    .bind(action.origin_routine_id)
+    .bind(action.routine_id)
+    .bind(action.template_id)
     .bind(&action.title)
     .bind(&action.content)
     .bind(state_str)
@@ -111,7 +137,6 @@ pub(crate) async fn upsert(pool: &PgPool, action: &Action) -> anyhow::Result<()>
     .bind(action.duration.map(|d: chrono::Duration| d.num_seconds()))
     .bind(action.recurrence.map(|r| r.count as i32))
     .bind(action.recurrence.map(|r| r.unit.as_str()))
-    .bind(action.saved)
     .execute(pool)
     .await
     .context("upsert action")?;
@@ -148,6 +173,109 @@ pub(crate) async fn soft_delete(pool: &PgPool, id: Uuid) -> anyhow::Result<bool>
     .execute(pool)
     .await
     .context("soft delete action")?
+    .rows_affected();
+    Ok(rows > 0)
+}
+
+struct ActionTemplateRow(pub ActionTemplate);
+
+impl<'r> sqlx::FromRow<'r, PgRow> for ActionTemplateRow {
+    fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
+        Ok(ActionTemplateRow(ActionTemplate {
+            id: row.try_get("id")?,
+            lineage_id: row.try_get("lineage_id")?,
+            title: row.try_get("title")?,
+            content: row.try_get("content")?,
+            duration: row
+                .try_get::<Option<i64>, _>("duration_secs")?
+                .map(Duration::seconds),
+            recurrence: recurrence_from_row(row)?,
+        }))
+    }
+}
+
+const ACTION_TEMPLATE_COLS: &str = r#"
+  id,
+  lineage_id,
+  title,
+  content,
+  duration_secs,
+  recurrence_count,
+  recurrence_unit
+"#;
+
+pub(crate) async fn upsert_template(
+    pool: &PgPool,
+    template: &ActionTemplate,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO action_templates (
+          id,
+          lineage_id,
+          title,
+          content,
+          duration_secs,
+          recurrence_count,
+          recurrence_unit
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (id) DO UPDATE SET
+          lineage_id        = EXCLUDED.lineage_id,
+          title             = EXCLUDED.title,
+          content           = EXCLUDED.content,
+          duration_secs     = EXCLUDED.duration_secs,
+          recurrence_count  = EXCLUDED.recurrence_count,
+          recurrence_unit   = EXCLUDED.recurrence_unit,
+          updated_at        = NOW()
+    "#,
+    )
+    .bind(template.id)
+    .bind(template.lineage_id)
+    .bind(&template.title)
+    .bind(&template.content)
+    .bind(template.duration.map(|d: chrono::Duration| d.num_seconds()))
+    .bind(template.recurrence.map(|r| r.count as i32))
+    .bind(template.recurrence.map(|r| r.unit.as_str()))
+    .execute(pool)
+    .await
+    .context("upsert action template")?;
+
+    Ok(())
+}
+
+pub(crate) async fn fetch_all_templates(pool: &PgPool) -> anyhow::Result<Vec<ActionTemplate>> {
+    sqlx::query_as::<sqlx::Postgres, ActionTemplateRow>(&format!(
+        "SELECT {ACTION_TEMPLATE_COLS} FROM action_templates WHERE deleted = FALSE ORDER BY created_at"
+    ))
+    .fetch_all(pool)
+    .await
+    .context("fetch all action templates")
+    .map(|rows| rows.into_iter().map(|r| r.0).collect())
+}
+
+pub(crate) async fn fetch_template_by_id(
+    pool: &PgPool,
+    id: Uuid,
+) -> anyhow::Result<Option<ActionTemplate>> {
+    sqlx::query_as::<sqlx::Postgres, ActionTemplateRow>(&format!(
+        "SELECT {ACTION_TEMPLATE_COLS} FROM action_templates WHERE id = $1 AND deleted = FALSE"
+    ))
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .context("fetch action template by id")
+    .map(|opt| opt.map(|r| r.0))
+}
+
+pub(crate) async fn soft_delete_template(pool: &PgPool, id: Uuid) -> anyhow::Result<bool> {
+    let rows = sqlx::query(
+        "UPDATE action_templates SET deleted = TRUE, updated_at = NOW() WHERE id = $1 AND deleted = FALSE",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .context("soft delete action template")?
     .rows_affected();
     Ok(rows > 0)
 }

@@ -34,12 +34,11 @@ pub fn handle_events(command: &EventsCommand, client: &Client, base: &str) -> Re
     match command {
         EventsCommand::List => {
             let events = fetch_all_events(client, base)?;
-            let saved: Vec<&Event> = events.iter().filter(|e| e.saved).collect();
-            if saved.is_empty() {
+            if events.is_empty() {
                 println!("No saved events.");
                 return Ok(());
             }
-            for event in &saved {
+            for event in &events {
                 let local = event.time.with_timezone(&Local);
                 println!(
                     "  {} {}  [{}]",
@@ -65,7 +64,7 @@ pub fn handle_events(command: &EventsCommand, client: &Client, base: &str) -> Re
                 .ok_or_else(|| anyhow::anyhow!("Could not convert local time to UTC"))?;
             let utc_time = local_dt.with_timezone(&Utc);
 
-            let mut event = Event::saved(title, utc_time);
+            let mut event = Event::new(title, utc_time, Duration::minutes(duration.unwrap_or(60)));
             if let Some(c) = content {
                 event = event.with_content(c);
             }

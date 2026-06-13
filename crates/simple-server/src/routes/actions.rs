@@ -7,7 +7,7 @@ use axum::{
 use chrono::Utc;
 use uuid::Uuid;
 
-use simple_core::{Action, ActionState, ChangeEvent, DEFAULT_ACTION_DURATION, quantize};
+use simple_core::{Action, ActionState, ActionTemplate, ChangeEvent, pipeline};
 
 use crate::{db, error::Result, state::AppState};
 
@@ -22,8 +22,14 @@ pub fn router() -> Router<AppState> {
         .route("/actions/{id}", delete(trash_action))
         .route("/actions/{id}/queue", post(queue_action))
         .route("/actions/{id}/backlog", post(backlog_action))
+        .route("/actions/{id}/save", post(save_action))
         .route("/actions/{id}/complete", post(complete_action))
         .route("/actions/{id}/clear_duration", post(clear_action_duration))
+        .route("/actions/templates", get(list_action_templates))
+        .route("/actions/templates", post(create_action_template))
+        .route("/actions/templates/{id}", get(get_action_template))
+        .route("/actions/templates/{id}", put(upsert_action_template))
+        .route("/actions/templates/{id}", delete(trash_action_template))
 }
 
 /// GET /actions — list all non-deleted actions
@@ -82,7 +88,7 @@ async fn queue_action(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<Action>>> {
-    let now = quantize(Utc::now());
+    let now = pipeline::quantize(Utc::now());
     let mut all_actions: Vec<Action> = db::actions::fetch_all(&state.pool).await?;
     let events = db::events::fetch_all(&state.pool).await?;
 
@@ -90,17 +96,17 @@ async fn queue_action(
     let chain_end = all_actions
         .iter()
         .filter_map(|a| {
-            if let ActionState::Queued(t) = a.state
+            if let ActionState::Scheduled(t) = a.state
                 && !t.is_static
             {
-                return Some(t.time + a.duration.unwrap_or(DEFAULT_ACTION_DURATION));
+                return Some(t.time + a.duration.unwrap_or(pipeline::DEFAULT_ACTION_DURATION));
             }
             None
         })
         .max()
         .unwrap_or(now);
 
-    let slot = quantize(chain_end.max(now));
+    let slot = pipeline::quantize(chain_end.max(now));
 
     // Queue the target action.
     let action = all_actions
@@ -117,7 +123,7 @@ async fn queue_action(
     db::actions::upsert(&state.pool, &queued).await?;
 
     // Refresh pipeline to fix any ordering issues.
-    let rescheduled = simple_core::requeue_actions(&all_actions, &events, now);
+    let rescheduled = pipeline::requeue_actions(&all_actions, &events, now);
     for a in &rescheduled {
         db::actions::upsert(&state.pool, a).await?;
     }
@@ -147,12 +153,25 @@ async fn backlog_action(
     Ok(Json(action))
 }
 
+/// POST /actions/{id}/save — create template from action
+async fn save_action(State(state): State<AppState>, Path(id): Path<Uuid>) -> Result<Json<Action>> {
+    let action: Action = db::actions::fetch_by_id(&state.pool, id)
+        .await?
+        .ok_or_else(|| crate::error::AppError::not_found(format!("action {id} not found")))?;
+
+    let template = action.clone().into_template();
+    db::actions::upsert_template(&state.pool, &template).await?;
+    let _ = state.changes.send(ChangeEvent::ActionsChanged);
+    let _ = state.changes.send(ChangeEvent::ActionTemplatesChanged);
+    Ok(Json(action))
+}
+
 /// POST /actions/{id}/complete — mark an action complete and compute next occurrence
 async fn complete_action(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<CompleteResult>> {
-    let now = quantize(Utc::now());
+    let now = pipeline::quantize(Utc::now());
     let mut action: Action = db::actions::fetch_by_id(&state.pool, id)
         .await?
         .ok_or_else(|| crate::error::AppError::not_found(format!("action {id} not found")))?;
@@ -184,4 +203,61 @@ async fn clear_action_duration(
     db::actions::upsert(&state.pool, &action).await?;
     let _ = state.changes.send(ChangeEvent::ActionsChanged);
     Ok(Json(action))
+}
+
+// ── Action template routes ────────────────────────────────────────────────────
+
+/// GET /actions/templates — list all non-deleted action templates
+async fn list_action_templates(State(state): State<AppState>) -> Result<Json<Vec<ActionTemplate>>> {
+    let templates = db::actions::fetch_all_templates(&state.pool).await?;
+    Ok(Json(templates))
+}
+
+/// POST /actions/templates — create a new action template
+async fn create_action_template(
+    State(state): State<AppState>,
+    Json(template): Json<ActionTemplate>,
+) -> Result<(StatusCode, Json<ActionTemplate>)> {
+    db::actions::upsert_template(&state.pool, &template).await?;
+    let _ = state.changes.send(ChangeEvent::ActionTemplatesChanged);
+    Ok((StatusCode::CREATED, Json(template)))
+}
+
+/// GET /actions/templates/{id} — fetch a single action template
+async fn get_action_template(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ActionTemplate>> {
+    let template = db::actions::fetch_template_by_id(&state.pool, id)
+        .await?
+        .ok_or_else(|| {
+            crate::error::AppError::not_found(format!("action template {id} not found"))
+        })?;
+    Ok(Json(template))
+}
+
+/// PUT /actions/templates/{id} — upsert an action template (sync-friendly)
+async fn upsert_action_template(
+    State(state): State<AppState>,
+    Path(_id): Path<Uuid>,
+    Json(template): Json<ActionTemplate>,
+) -> Result<Json<ActionTemplate>> {
+    db::actions::upsert_template(&state.pool, &template).await?;
+    let _ = state.changes.send(ChangeEvent::ActionTemplatesChanged);
+    Ok(Json(template))
+}
+
+/// DELETE /actions/templates/{id} — soft-delete an action template
+async fn trash_action_template(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode> {
+    let existed = db::actions::soft_delete_template(&state.pool, id).await?;
+    if !existed {
+        return Err(crate::error::AppError::not_found(format!(
+            "action template {id} not found"
+        )));
+    }
+    let _ = state.changes.send(ChangeEvent::ActionTemplatesChanged);
+    Ok(StatusCode::NO_CONTENT)
 }

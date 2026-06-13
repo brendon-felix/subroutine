@@ -17,6 +17,7 @@ object RustBridge {
     // ── Native library (uncomment when .so is built) ──────────────────────────
     // init { System.loadLibrary("android_bridge") }
     // external fun createAction(title: String): String
+    // external fun createEventTemplate(title: String, durationNanos: Long): String
 
     // ── Kotlin stubs (remove when switching to native) ────────────────────────
 
@@ -29,16 +30,46 @@ object RustBridge {
         return buildJsonObject {
             put("id", id)
             put("lineage_id", id)
-            put("origin_routine_id", JsonNull)
+            put("routine_id", JsonNull)
+            put("template_id", JsonNull)
             put("title", title)
             put("content", JsonNull)
-            put("duration_secs", JsonNull)
+            put("duration", JsonNull)
             put("recurrence", JsonNull)
-            put("saved", false)
             put("state", buildJsonObject {
                 put("type", "backlogged")
                 put("date", JsonNull)
             })
+        }.toString()
+    }
+
+    /**
+     * Creates a new ActionTemplate from a title and returns it as a JSON string.
+     */
+    fun createActionTemplate(title: String): String {
+        val id = java.util.UUID.randomUUID().toString()
+        return buildJsonObject {
+            put("id", id)
+            put("lineage_id", id)
+            put("title", title)
+            put("content", JsonNull)
+            put("duration", JsonNull)
+            put("recurrence", JsonNull)
+        }.toString()
+    }
+
+    /**
+     * Creates a new EventTemplate from a title and duration and returns it as a JSON string.
+     */
+    fun createEventTemplate(title: String, durationNanos: Long): String {
+        val id = java.util.UUID.randomUUID().toString()
+        return buildJsonObject {
+            put("id", id)
+            put("lineage_id", id)
+            put("title", title)
+            put("content", JsonNull)
+            put("duration", durationNanos)
+            put("recurrence", JsonNull)
         }.toString()
     }
 }

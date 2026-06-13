@@ -5,13 +5,13 @@ members = [
     "crates/simple-cli",
     "crates/simple-core", "crates/simple-desktop",
     "crates/simple-parser", "crates/simple-server",
-    "crates/tui",
 ]
 resolver = "3"
 
 [workspace.dependencies]
 # Error handling
 anyhow = "1.0.100"
+thiserror = "2.0"
 
 # Async runtime
 tokio = { version = "1.48.0", features = ["full"] }

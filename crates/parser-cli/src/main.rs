@@ -3,14 +3,14 @@ mod cli;
 use anyhow::Result;
 use clap::Parser;
 use cli::{Args, Command};
-use simple_parser::{BuildTarget, build_entity, parse_action_input, parse_event_input};
+use simple_parser::{BuildTarget, build_entity, parse_action, parse_event};
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
     match args.command {
         Command::Action { input, json, build } => {
-            let draft = parse_action_input(&input)?;
+            let draft = parse_action(&input)?;
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&draft)?);
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
         }
 
         Command::Event { input, json, build } => {
-            let draft = parse_event_input(&input)?;
+            let draft = parse_event(&input)?;
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&draft)?);

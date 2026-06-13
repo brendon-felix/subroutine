@@ -12,7 +12,7 @@ use gpui::{
     MouseUpEvent, ParentElement, PinchEvent, Pixels, Point, Render, Size, Styled, Subscription,
     Window, actions, anchored, deferred, prelude::FluentBuilder, px,
 };
-use gpui_component::{ActiveTheme, input::InputState};
+use gpui_component::input::InputState;
 use gpui_component::{ElementExt, VirtualListScrollHandle, h_flex, menu::PopupMenu, v_flex};
 use uuid::Uuid;
 
@@ -55,7 +55,7 @@ actions!([
 ]);
 
 pub(super) struct TimelineView {
-    focus_handle: FocusHandle,
+    pub(super) focus_handle: FocusHandle,
     // layout: TimelineLayout,
     hour_height: Pixels,
     start: DateTime<Local>,
@@ -90,9 +90,9 @@ pub(super) struct TimelineView {
     title_edit_states: HashMap<Uuid, TitleEditState>,
     editing_items: HashSet<Uuid>,
     /// Remembered visual column fraction (0.0–1.0) for Up/Down navigation.
-    /// Stored as the left-edge fraction of the focused column so it maps
-    /// proportionally across slots with different column counts.
-    target_column_fraction: Option<f32>,
+    // /// Stored as the left-edge fraction of the focused column so it maps
+    // /// proportionally across slots with different column counts.
+    // target_column_fraction: Option<f32>,
     /// Items that have been created locally but not yet persisted to the database.
     draft_item_ids: HashSet<Uuid>,
     /// Continuous scroll speed (px/frame) applied while dragging near an edge.
@@ -103,12 +103,6 @@ pub(super) struct TimelineView {
     /// re-enqueued each frame by `update_layout` until zoom reaches the target.
     pending_zoom_reset: Option<f32>,
     _title_subscriptions: Vec<Subscription>,
-}
-
-impl Focusable for TimelineView {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
-    }
 }
 
 struct ResizeDragMouseUpHook(Entity<TimelineView>);
@@ -196,7 +190,7 @@ impl TimelineView {
 
         let zoom_state = ZoomState::new(hour_height)
             .with_zoom_factor(1.5)
-            .with_range(RangeInclusive::new(1.0_f32 / 32768.0, 32.0));
+            .with_range(RangeInclusive::new(1.0_f32 / 32768.0, 256.0));
         // Initial zoom = 1.0 → level 0 → Hour/Normal.
         let time_division_state = TimeDivisionState {
             base_division: BaseTimeDivision::Hour,
@@ -285,6 +279,7 @@ impl TimelineView {
             zoom_scroll_target: None,
             pending_zoom_transition: None,
             pending_scroll_transition: None,
+            // last_scroll_offset: px(0.),
             scroll_target: None,
             hour_list_sizes,
             scroll_handle,
@@ -294,6 +289,7 @@ impl TimelineView {
             items: vec![],
             active_drop: None,
             active_resize: None,
+            // scrolled: false,
             loaded: false,
             detached_order: Vec::new(),
             context_menu: None,
@@ -302,7 +298,7 @@ impl TimelineView {
             title_inputs: HashMap::new(),
             title_edit_states: HashMap::new(),
             editing_items: HashSet::new(),
-            target_column_fraction: None,
+            // target_column_fraction: None,
             draft_item_ids: HashSet::new(),
             edge_scroll_speed: None,
             pending_zoom_reset: None,
@@ -359,13 +355,20 @@ impl TimelineView {
     }
 }
 
+impl Focusable for TimelineView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Render for TimelineView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
         let hook_entity = entity.clone();
         self.update_layout(window, cx);
+        // self.last_scroll_offset = self.scroll_offset();
 
-        v_flex()
+        let view = v_flex()
             .track_focus(&self.focus_handle)
             // .border_t_1()
             // .border_color(cx.theme().border)
@@ -378,18 +381,18 @@ impl Render for TimelineView {
             .on_action(cx.listener(|this, _: &ZoomToMonths, _, cx| this.zoom_to(1.0 / 256.0, cx)))
             .on_action(cx.listener(|this, _: &ZoomToYears, _, cx| this.zoom_to(1.0 / 8192.0, cx)))
             .on_action(cx.listener(|this, _: &ScrollReset, _, cx| this.scroll_reset(cx)))
-            .on_action(cx.listener(|this, _: &FocusItemDown, window, cx| {
-                this.navigate_items(NavDirection::Down, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &FocusItemUp, window, cx| {
-                this.navigate_items(NavDirection::Up, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &FocusItemLeft, window, cx| {
-                this.navigate_items(NavDirection::Left, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &FocusItemRight, window, cx| {
-                this.navigate_items(NavDirection::Right, window, cx)
-            }))
+            // .on_action(cx.listener(|this, _: &FocusItemDown, window, cx| {
+            //     this.navigate_items(NavDirection::Down, window, cx)
+            // }))
+            // .on_action(cx.listener(|this, _: &FocusItemUp, window, cx| {
+            //     this.navigate_items(NavDirection::Up, window, cx)
+            // }))
+            // .on_action(cx.listener(|this, _: &FocusItemLeft, window, cx| {
+            //     this.navigate_items(NavDirection::Left, window, cx)
+            // }))
+            // .on_action(cx.listener(|this, _: &FocusItemRight, window, cx| {
+            //     this.navigate_items(NavDirection::Right, window, cx)
+            // }))
             .on_action(cx.listener(|this, _: &NextHour, _, cx| this.scroll_next_hour(cx)))
             .on_action(cx.listener(|this, _: &PreviousHour, _, cx| this.scroll_previous_hour(cx)))
             // .on_action(cx.listener(|this, _: &NextDay, _, cx| this.scroll_next_day(cx)))
@@ -409,6 +412,14 @@ impl Render for TimelineView {
                     .flex()
                     .flex_1()
                     .overflow_hidden()
+                    // .on_scroll_wheel(cx.listener(|view, event: &ScrollWheelEvent, window, cx| {
+                    //     let line_height = window.line_height();
+                    //     let delta = event.delta.pixel_delta(line_height);
+                    //     if delta.y != px(0.) {
+                    //         view.scrolled = true;
+                    //         println!("scrolled");
+                    //     }
+                    // }))
                     .on_drag_move(cx.listener(
                         |this, event: &DragMoveEvent<DragData<AnyItem>>, window, cx| {
                             let is_over = event.bounds.contains(&window.mouse_position());
@@ -474,7 +485,9 @@ impl Render for TimelineView {
                     )
                     .with_priority(1),
                 )
-            })
+            });
+
+        view
     }
 }
 

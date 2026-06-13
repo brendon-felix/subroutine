@@ -1,7 +1,8 @@
 use chrono::{DateTime, Duration as ChronoDuration, Local};
 use gpui::{
-    App, AppContext, Context, Entity, InteractiveElement, IntoElement, KeyBinding, ParentElement,
-    Render, SharedString, Styled, Subscription, Window, actions, div, prelude::FluentBuilder,
+    App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    KeyBinding, ParentElement, Render, SharedString, Styled, Window, actions, div,
+    prelude::FluentBuilder,
 };
 use gpui_component::{
     menu::{PopupMenu, PopupMenuItem},
@@ -65,6 +66,7 @@ use crate::{
 
 fn action_context_menu(
     action_id: Uuid,
+    has_template: bool,
 ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
     move |menu, _window, _cx| {
         menu.item(
@@ -97,6 +99,18 @@ fn action_context_menu(
                     });
                 }),
         )
+        .when(!has_template, |this| {
+            this.item(
+                PopupMenuItem::new("Save as template")
+                    .icon(AppIcon::Save)
+                    .on_click(move |_event, _window, cx: &mut App| {
+                        let db_store = AppDatabaseStore::global(cx);
+                        db_store.update(cx, |store, cx| {
+                            store.save_action(action_id, cx);
+                        });
+                    }),
+            )
+        })
         .separator()
         .item(
             PopupMenuItem::new("Delete action")
@@ -165,23 +179,22 @@ pub enum SelectedPipelineView {
 }
 
 pub struct PipelineView {
+    pub(crate) focus_handle: FocusHandle,
     selected_view: SelectedPipelineView,
     timeline_view: Entity<TimelineView>,
     queue_view: Entity<QueueView>,
     focus_view: Entity<FocusView>,
-    _focus_lost_subscription: Subscription,
 }
 
 impl PipelineView {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+
         cx.bind_keys([KeyBinding::new("ctrl-tab", SwitchPipelineTab, None)]);
 
         let timeline_view = cx.new(|cx| TimelineView::new(cx));
         let queue_view = cx.new(|cx| QueueView::new(cx));
         let focus_view = cx.new(|cx| FocusView::new(cx));
-
-        let selected_view = SelectedPipelineView::Queue;
-        cx.focus_view(&timeline_view, window);
 
         let db_store = AppDatabaseStore::global(cx);
         cx.subscribe(&db_store, |view, store, _: &DataChanged, cx| {
@@ -198,21 +211,12 @@ impl PipelineView {
         })
         .detach();
 
-        // When focus is dropped entirely (e.g. all items completed/removed),
-        // immediately refocus the active pipeline view so actions keep working.
-        let focus_lost_subscription =
-            cx.on_focus_lost(window, |this, window, cx| match this.selected_view {
-                SelectedPipelineView::Timeline => cx.focus_view(&this.timeline_view, window),
-                SelectedPipelineView::Queue => cx.focus_view(&this.queue_view, window),
-                SelectedPipelineView::Focus => cx.focus_view(&this.focus_view, window),
-            });
-
         Self {
-            selected_view,
+            focus_handle,
+            selected_view: SelectedPipelineView::Queue,
             timeline_view,
             queue_view,
             focus_view,
-            _focus_lost_subscription: focus_lost_subscription,
         }
     }
 
@@ -227,18 +231,26 @@ impl PipelineView {
         cx: &mut Context<Self>,
     ) {
         self.selected_view = view;
-        match view {
-            SelectedPipelineView::Timeline => cx.focus_view(&self.timeline_view, window),
-            SelectedPipelineView::Queue => cx.focus_view(&self.queue_view, window),
-            SelectedPipelineView::Focus => cx.focus_view(&self.focus_view, window),
-        }
+        let fh = match view {
+            SelectedPipelineView::Timeline => self.timeline_view.read(cx).focus_handle.clone(),
+            SelectedPipelineView::Queue => self.queue_view.read(cx).focus_handle.clone(),
+            SelectedPipelineView::Focus => self.focus_view.read(cx).focus_handle.clone(),
+        };
+        fh.focus(window, cx);
         cx.notify();
+    }
+}
+
+impl Focusable for PipelineView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
 impl Render for PipelineView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .track_focus(&self.focus_handle)
             .size_full()
             // .gap_2()
             .on_action(cx.listener(|view, _: &SwitchPipelineTab, window, cx| {
