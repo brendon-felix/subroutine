@@ -6,11 +6,11 @@ use gpui::{
     App, Context, ElementId, FocusHandle, Focusable, Hsla, IntoElement, ParentElement, Pixels,
     Render, SharedString, Styled, Window, div, px,
 };
+use gpui::{Lerp, Transition};
 use gpui_component::Colorize;
 use gpui_component::label::Label;
 use gpui_component::{ActiveTheme, animation::ease_out_cubic};
 use gpui_squircle::squircle;
-use gpui_transitions::{Lerp, Transition, WindowUseTransition};
 use simple_core::AnyItem;
 use simple_parser::{ParseDraft, parse_action, parse_event};
 use uuid::Uuid;

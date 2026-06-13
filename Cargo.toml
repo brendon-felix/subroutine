@@ -53,3 +53,8 @@ open = "5.3.3"
 palette = "0.7"
 rand = "0.9"
 bitflags = { version = "2.11.0", features = ["serde"] }
+
+[patch."https://github.com/zed-industries/zed"]
+gpui = { git = "https://github.com/brendon-felix/gpui-ce" }
+gpui_macros = { git = "https://github.com/brendon-felix/gpui-ce" }
+gpui_platform = { git = "https://github.com/brendon-felix/gpui-ce" }

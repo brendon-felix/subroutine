@@ -6,7 +6,6 @@ use gpui::{
     StyleRefinement, Styled, Window, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{ElementExt, StyledExt, h_flex};
-use gpui_transitions::WindowUseTransition;
 
 use crate::transitions::ease_in_out;
 
@@ -231,9 +230,6 @@ impl RenderOnce for PanelGroup {
             .map(|p| if p.open { right_open_px } else { px(0.) })
             .unwrap_or(px(0.));
 
-        let is_resizing_left = matches!(group_state.resizing, Some((ResizingSide::Left, _, _)));
-        let is_resizing_right = matches!(group_state.resizing, Some((ResizingSide::Right, _, _)));
-
         let prev_width = group_state.prev_container_width;
         let is_first_frame = prev_width == px(0.) && container_width > px(0.);
 
@@ -254,18 +250,6 @@ impl RenderOnce for PanelGroup {
             });
         }
 
-        // On window resize: scale the transition's start/end goals proportionally so
-        // the animation progress is preserved and no frame-coalescing can cause a
-        // jump_to to fire on the same frame as a toggle action.
-        // On the very first frame (prev=0): jump_to so the panel starts at the correct
-        // position with no spurious animation from 0.
-        // During a drag: jump_to so the handle tracks the cursor with no lag.
-        let scale = if !is_first_frame && prev_width > px(0.) && container_width != prev_width {
-            Some((container_width / prev_width).into())
-        } else {
-            None
-        };
-
         // Drive slide transitions for each side panel.
         let left_px = if self.left.is_some() {
             let left_target = left_target_px.as_f32();
@@ -277,17 +261,10 @@ impl RenderOnce for PanelGroup {
                     move |_, _| left_target,
                 )
                 .with_easing(ease_in_out);
-            if is_first_frame || is_resizing_left {
-                transition.jump_to(left_target, cx);
-            } else {
-                if let Some(ratio) = scale {
-                    transition.scale_by(ratio, cx);
-                }
-                transition.update(cx, |goal, cx| {
-                    *goal = left_target;
-                    cx.notify();
-                });
-            }
+            transition.update(cx, |goal, cx| {
+                *goal = left_target;
+                cx.notify();
+            });
             px(*transition.evaluate(window, cx))
         } else {
             px(0.)
@@ -307,17 +284,10 @@ impl RenderOnce for PanelGroup {
                     move |_, _| right_target,
                 )
                 .with_easing(ease_in_out);
-            if is_first_frame || is_resizing_right {
-                transition.jump_to(right_target, cx);
-            } else {
-                if let Some(ratio) = scale {
-                    transition.scale_by(ratio, cx);
-                }
-                transition.update(cx, |goal, cx| {
-                    *goal = right_target;
-                    cx.notify();
-                });
-            }
+            transition.update(cx, |goal, cx| {
+                *goal = right_target;
+                cx.notify();
+            });
             px(*transition.evaluate(window, cx))
         } else {
             px(0.)

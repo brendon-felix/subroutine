@@ -8,7 +8,6 @@ use gpui_component::{
     ActiveTheme, Icon, Sizable, VirtualListScrollHandle, button::Button, h_flex, label::Label,
     v_virtual_list,
 };
-use gpui_transitions::WindowUseTransition;
 use simple_core::{AnyItem, Routine};
 use uuid::Uuid;
 

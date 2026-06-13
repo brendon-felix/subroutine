@@ -1,6 +1,7 @@
 use std::{rc::Rc, time::Duration};
 
 use chrono::{DateTime, Datelike, Days, Duration as ChronoDuration, Local, LocalResult, NaiveDate};
+use gpui::Lerp;
 use gpui::{
     Along, App, Axis, ClickEvent, Context, DismissEvent, Entity, Focusable, InteractiveElement,
     IntoElement, ParentElement, Pixels, Point, Size, StatefulInteractiveElement, Styled, Window,
@@ -15,7 +16,6 @@ use gpui_component::{
     menu::{PopupMenu, PopupMenuItem},
     v_virtual_list,
 };
-use gpui_transitions::{Lerp, WindowUseTransition};
 
 use super::{
     BaseTimeDivision, HOUR_DIVIDER_HEIGHT, TimeDivisionState, TimeZoomLevel, TimelineView,
@@ -1043,7 +1043,6 @@ impl TimelineView {
             // animated.  The previous goal was in a different coordinate
             // system and would produce a spurious ease-out if left in place.
             let new_pos = self.scroll_offset();
-            scroll_transition.jump_to(new_pos, cx);
             scroll_transition.update(cx, |offset, _| {
                 *offset = new_pos;
             });
@@ -1058,7 +1057,6 @@ impl TimelineView {
         // after any buffer-shift correction so the jump uses the already-
         // compensated scroll position as the animation FROM point.
         if let Some(new_offset) = self.pending_scroll_transition.take() {
-            scroll_transition.jump_to(self.scroll_offset(), cx);
             scroll_transition.update(cx, |offset, _| {
                 *offset = new_offset;
             });
@@ -1068,7 +1066,6 @@ impl TimelineView {
         // next time a buffer correction fires after edge-scrolling stops.
         if self.edge_scroll_speed.is_some() {
             let pos = self.scroll_offset();
-            scroll_transition.jump_to(pos, cx);
             scroll_transition.update(cx, |offset, _| {
                 *offset = pos;
             });

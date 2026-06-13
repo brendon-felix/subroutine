@@ -7,7 +7,6 @@ use gpui::{
 };
 
 use gpui_component::{ActiveTheme as _, AxisExt as _};
-use gpui_transitions::WindowUseTransition;
 
 use crate::transitions::ease_in_out;
 

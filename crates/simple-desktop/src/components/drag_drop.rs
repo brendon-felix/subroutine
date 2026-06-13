@@ -135,6 +135,7 @@ impl<T: Clone + Debug + 'static> Render for DragData<T> {
                     .font_weight(FontWeight::MEDIUM)
                     .rounded_md()
                     .shadow(vec![BoxShadow {
+                        inset: false,
                         color: hsla(0.0, 0.0, 0.0, 0.3),
                         offset: point(px(0.0), px(4.0)),
                         blur_radius: px(12.0),

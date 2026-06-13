@@ -20,8 +20,6 @@ use simple_parser::{
     BuildTarget, BuiltEntity, ParseDraft, build_entity, parse::parse_routine_step,
 };
 
-use gpui_transitions::WindowUseTransition;
-
 use crate::{
     AppIcon,
     components::{CloseOverlay, OverlayPosition, overlay},
@@ -304,7 +302,6 @@ impl RoutineCreator {
             let n = item_ix + 1;
             let total_height = ITEM_HEIGHT * n as f32;
             let target = -(total_height - viewport_height).max(px(0.));
-            scroll_transition.jump_to(self.scroll_handle.offset().y, cx);
             scroll_transition.update(cx, |offset, _| *offset = target);
         }
 
