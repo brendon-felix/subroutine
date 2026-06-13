@@ -98,10 +98,13 @@ pub fn init(cx: &mut App) {
     let mut titlebar_options = if cfg!(target_os = "macos") {
         TitlebarOptions {
             traffic_light_position: Some(point(px(16.), px(16.))),
+            appears_transparent: true,
             ..Default::default()
         }
     } else {
-        TitleBar::title_bar_options()
+        let mut options = TitleBar::title_bar_options();
+        options.title = Some("Subroutine".into());
+        options
     };
     titlebar_options.title = Some("Subroutine".into());
 

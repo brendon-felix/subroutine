@@ -1,11 +1,11 @@
 use gpui::{
     App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, KeyBinding, ParentElement, Pixels, Render, StatefulInteractiveElement, Styled,
-    Window, actions, div, prelude::FluentBuilder, px,
+    IntoElement, KeyBinding, ParentElement, Render, StatefulInteractiveElement, Styled, Window,
+    actions, div, prelude::FluentBuilder, px,
 };
 use gpui_component::{
-    ActiveTheme, Colorize, Icon, IconName, Root, Sizable, TITLE_BAR_HEIGHT, TitleBar,
-    button::{Button, ButtonRounded, ButtonVariants, DropdownButton},
+    ActiveTheme, Colorize, Icon, IconName, Root, TITLE_BAR_HEIGHT, TitleBar,
+    button::{Button, ButtonVariants},
     h_flex,
     menu::AppMenuBar,
     tab::{Tab, TabBar},
@@ -349,8 +349,8 @@ impl Render for RootView {
                     .bottom_0()
                     .when_else(
                         is_macos,
-                        |this| this.top(NAVBAR_HEIGHT),
-                        |this| this.top(TITLE_BAR_HEIGHT + NAVBAR_HEIGHT),
+                        |this| this.top_0(),
+                        |this| this.top(TITLE_BAR_HEIGHT),
                     )
                     .left(
                         SidePanel::left()
@@ -467,11 +467,6 @@ impl Render for RootView {
                                         v_flex()
                                             .border_l_1()
                                             .border_color(cx.theme().border)
-                                            // .absolute()
-                                            // .top(tabbar_height)
-                                            // .bottom_0()
-                                            // .left_0()
-                                            // .right_0()
                                             .flex_1()
                                             .overflow_hidden()
                                             .child(div().flex_1().min_h_0().w_full().map(|this| {
@@ -486,123 +481,6 @@ impl Render for RootView {
                                                         this.child(self.saved_items_view.clone())
                                                     }
                                                 }
-                                            })),
-                                    ),
-                            ),
-                    ),
-            )
-            .child(
-                NavigationBar::new()
-                    .absolute()
-                    .top_0()
-                    .right_0()
-                    .left(left_panel_width)
-                    .pl(navbar_left_pad)
-                    .pr_2()
-                    .h(NAVBAR_HEIGHT)
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .bg(cx.theme().transparent.mix_oklab(cx.theme().background, 0.5))
-                    .left_panel_open(left_panel_open)
-                    .right_panel_open(right_panel_open)
-                    .on_toggle_left({
-                        let layout_state = self.layout_state.clone();
-                        move |_window, cx| {
-                            layout_state.update(cx, |state, cx| {
-                                state.toggle_left();
-                                cx.notify();
-                            });
-                        }
-                    })
-                    .on_toggle_right({
-                        let layout_state = self.layout_state.clone();
-                        move |_window, cx| {
-                            layout_state.update(cx, |state, cx| {
-                                state.toggle_right();
-                                cx.notify();
-                            });
-                        }
-                    })
-                    .gap_4()
-                    .child(
-                        h_flex()
-                            .size_full()
-                            .gap_8()
-                            .p_2()
-                            // .child(
-                            // )
-                            .child(
-                                DropdownButton::new("new-item")
-                                    .small()
-                                    .outline()
-                                    .rounded(ButtonRounded::Size(Pixels::MAX))
-                                    // .button(
-                                    //     Button::new("new-item")
-                                    //         .small()
-                                    //         .outline()
-                                    //         .icon(Icon::new(IconName::Plus))
-                                    //         .rounded_l_full()
-                                    //         .text_2xl(),
-                                    // )
-                                    .dropdown_menu(|menu, _, _| {
-                                        menu.menu("New action", Box::new(StartActionCreator))
-                                            .menu("New event", Box::new(StartEventCreator))
-                                            .menu("New routine", Box::new(StartRoutineCreator))
-                                    }),
-                            )
-                            .child(
-                                TabBar::new("main-tabbar")
-                                    .outline()
-                                    .selected_index(selected_pipeline_view as usize)
-                                    .child(
-                                        Tab::new()
-                                            .icon(Icon::new(AppIcon::Timeline))
-                                            // .label("Timeline")
-                                            .tooltip(|window, cx| {
-                                                Tooltip::new("Timeline view").build(window, cx)
-                                            })
-                                            .on_click(cx.listener(|view, _, window, cx| {
-                                                view.pipeline_view.update(cx, |pipeline, cx| {
-                                                    pipeline.select_view(
-                                                        SelectedPipelineView::Timeline,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                            })),
-                                    )
-                                    .child(
-                                        Tab::new()
-                                            .icon(Icon::new(AppIcon::ListChecks))
-                                            // .label("Queue")
-                                            .tooltip(|window, cx| {
-                                                Tooltip::new("Queue view").build(window, cx)
-                                            })
-                                            .on_click(cx.listener(|view, _, window, cx| {
-                                                view.pipeline_view.update(cx, |pipeline, cx| {
-                                                    pipeline.select_view(
-                                                        SelectedPipelineView::Queue,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                            })),
-                                    )
-                                    .child(
-                                        Tab::new()
-                                            .icon(Icon::new(AppIcon::ScanEye))
-                                            // .label("Focus")
-                                            .tooltip(|window, cx| {
-                                                Tooltip::new("Focus mode").build(window, cx)
-                                            })
-                                            .on_click(cx.listener(|view, _, window, cx| {
-                                                view.pipeline_view.update(cx, |pipeline, cx| {
-                                                    pipeline.select_view(
-                                                        SelectedPipelineView::Focus,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
                                             })),
                                     ),
                             ),
